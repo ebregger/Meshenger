@@ -1,0 +1,12 @@
+You are an expert Flutter developer. Always follow these rules:
+
+1. ARCHITECTURE: Keep files small. Never write more than 200 lines in a single file. Break UI elements down into small, reusable widgets in separate files.
+2. STATE MANAGEMENT: Use the `riverpod` package for all state management. Never use standard StatefulWidgets for complex state.
+3. NULL SAFETY: Write strictly null-safe Dart code. Handle potential null values gracefully without force-unwrapping (!).
+4. BLUETOOTH: When writing Bluetooth logic, isolate it into a dedicated service class separate from the UI.
+5. COMMENTS: Briefly comment complex logical blocks, especially regarding device discovery and peer-to-peer connection states.
+6. SERIALIZATION: Always use Protocol Buffers (Protobuf) for network payloads. Never default to JSON for over-the-air data transfer. Use the generated Dart classes for data models.
+7. DATA SYNCHRONIZATION: Treat all local database interactions as part of a Conflict-free Replicated Data Type (CRDT) system. Always account for logical timestamps (vector clocks) when creating or merging records.
+8. PLATFORM UI: Branch UI rendering based on the operating system. Use Material 3 (`colorSchemeSeed`) for Android. Use custom translucent modifiers simulating "Liquid Glass" for iOS top-level elements.
+9. PERMISSIONS: Implement strict, explicit permission checks for Bluetooth and Nearby Devices before initializing any radio services, accounting for strict privacy OS environments.
+10. CONCURRENCY: Offload heavy tasks like Protobuf serialization, chunking bitmaps, and merging CRDT database rows to Dart Isolates to prevent UI thread jank.

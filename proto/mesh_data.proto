@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package mesh_data;
+
+// Identity and metadata for a node in the mesh.
+message NodeProfile {
+  string node_id = 1;
+  string display_name = 2;
+  int64 timestamp = 3;
+}
+
+// User-visible text propagated through the mesh.
+message TextMessage {
+  string msg_id = 1;
+  string origin_node_id = 2;
+  string text_content = 3;
+  int64 timestamp = 4;
+}
+
+// Fragment of a bitmap file for chunked transfer.
+message BitmapChunk {
+  string file_id = 1;
+  int32 chunk_index = 2;
+  int32 total_chunks = 3;
+  bytes chunk_data = 4;
+}
