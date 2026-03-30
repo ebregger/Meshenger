@@ -1,13 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform, zlib;
+import 'dart:io' show zlib;
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../constants/ble_constants.dart';
 import '../providers/database_provider.dart';
+import 'native_mesh_service.dart';
 
 /// Byte budget in the ADV payload: we only send a fixed 8-char "Short Node ID".
 const int meshShortNodeIdLength = 8;
@@ -22,17 +24,12 @@ class BleDiscoveryService {
   final Ref _ref;
   final void Function()? onConnectionPhaseChanged;
 
-  /// Lets the ACL/GATT stack settle so immediate [BluetoothDevice.discoverServices] is less likely
-  /// to trip pairing heuristics on some Android OEM stacks.
-  static const Duration _kPostConnectSettle = Duration(milliseconds: 500);
-  static const Duration _kPostMtuSettle = Duration(milliseconds: 500);
   static const Duration _kPreStopScanPause = Duration(milliseconds: 200);
   static const Duration _kPostStopScanSettle = Duration(milliseconds: 500);
   static const Duration _kHandshakeCooldown = Duration(seconds: 10);
   static const Duration _kQuickScanWindow = Duration(seconds: 10);
   static const Duration _kResumeScanDelay = Duration(seconds: 2);
-  static const Duration _kPreSyncDbSettle = Duration(seconds: 1);
-
+  final NativeMeshService _nativeMesh = NativeMeshService();
   StreamSubscription<List<ScanResult>>? _scanSub;
   /// When true, scan callbacks must not start another handshake or fire discovery churn.
   bool _isConnecting = false;
@@ -51,6 +48,22 @@ class BleDiscoveryService {
   static bool advertisesMeshService(ScanResult r) {
     return r.advertisementData.serviceUuids
         .any((u) => u.str128.toLowerCase() == meshServiceUuid.str128);
+  }
+
+  static bool _isLikelyNativeMeshAdvert(ScanResult r) {
+    // Check for our specific manufacturer data flag
+    if (r.advertisementData.manufacturerData.containsKey(meshManufacturerId)) {
+      return true;
+    }
+
+    // Fallback: Safe UUID string comparison
+    for (final guid in r.advertisementData.serviceUuids) {
+      if (guid.toString().toLowerCase() ==
+          meshServiceUuid.str128.toLowerCase()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// First [meshShortNodeIdLength] characters of [fullNodeId] (fits MAN data budget).
@@ -90,19 +103,20 @@ class BleDiscoveryService {
     _wantsScan = true;
     await _scanSub?.cancel();
 
-    await FlutterBluePlus.startScan(
-      withServices: [meshServiceUuid],
-    );
+    // Do not use [withServices] filtering here: some Android stacks omit/truncate 128-bit UUIDs
+    // when the advertisement includes a device name. We'll filter manually in the listener.
+    await FlutterBluePlus.startScan();
 
     _scanSub = FlutterBluePlus.scanResults.listen((results) {
       for (final r in results) {
         if (_isConnecting) continue;
-        if (!advertisesMeshService(r)) continue;
+        if (!_isLikelyNativeMeshAdvert(r)) continue;
 
         final id = decodeMeshNodeId(r.advertisementData.manufacturerData);
         if (id == null || id.isEmpty) continue;
         if (id == shortNodeIdFromFull(myNodeId)) continue;
 
+        debugPrint('🎯 DISCOVERED MESH NODE: ${r.device.remoteId.str}');
         onDiscovered(id);
         unawaited(_runMeshInitiatorHandshake(myNodeId, id, r.device));
       }
@@ -129,61 +143,11 @@ class BleDiscoveryService {
       await FlutterBluePlus.stopScan();
       await Future<void>.delayed(_kPostStopScanSettle);
 
-      await device.connect(
-        license: License.free,
-        autoConnect: false,
-        mtu: null,
-      );
-      await Future<void>.delayed(_kPostConnectSettle);
-
-      if (!kIsWeb && Platform.isAndroid) {
-        await device.requestMtu(512);
-        await Future<void>.delayed(_kPostMtuSettle);
-      }
-
-      // Only touch mesh GATT; never subscribe (no setNotifyValue) — write-only sync.
-      final services = await device.discoverServices();
-      final chr = _findMeshCharacteristic(services);
-      if (chr != null) {
-        // Let local CRDT writes (e.g. just-sent message) finish before exporting.
-        await Future<void>.delayed(_kPreSyncDbSettle);
-        // Phase 3 handoff: compress changeset to fit within the 512-byte MTU pipe.
-        final db = await _ref.read(databaseProvider.future);
-        final changeset = await db.getSyncChangeset(null);
-        final payload = zlib.encode(utf8.encode(jsonEncode(changeset)));
-        try {
-          await chr.write(
-            payload,
-            withoutResponse: false,
-            allowLongWrite: false,
-          );
-        } catch (e) {
-          debugPrint('🔥 WRITE CRASHED: $e');
-          return;
-        }
-
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-        debugPrint('🔍 ATTEMPTING READ FROM PERIPHERAL...');
-        try {
-          final responseBytes = await chr.read();
-          if (responseBytes.isNotEmpty) {
-            try {
-              final decompressed = zlib.decode(responseBytes);
-              final responseJson = utf8.decode(decompressed);
-              final raw = jsonDecode(responseJson);
-              if (raw is Map) {
-                final responseMap = Map<String, dynamic>.from(raw);
-                final db2 = await _ref.read(databaseProvider.future);
-                await db2.mergeSyncChangeset(responseMap);
-              }
-            } catch (e) {
-              debugPrint('🔥 DECOMPRESSION FAILED: $e');
-            }
-          }
-        } catch (e) {
-          debugPrint('❌ READ FAILED: $e');
-        }
-      }
+      final db = await _ref.read(databaseProvider.future);
+      final changeset = await db.getSyncChangeset(null);
+      final payload = zlib.encode(utf8.encode(jsonEncode(changeset)));
+      final macAddress = device.remoteId.str;
+      await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload));
     } catch (_) {
       _cooldownPeer(remoteShortId);
     } finally {
@@ -196,9 +160,7 @@ class BleDiscoveryService {
       _notifyConnectionPhase();
       await Future<void>.delayed(_kResumeScanDelay);
       if (_wantsScan) {
-        await FlutterBluePlus.startScan(
-          withServices: [meshServiceUuid],
-        );
+        await FlutterBluePlus.startScan();
       }
     }
   }
@@ -207,33 +169,14 @@ class BleDiscoveryService {
   Future<void> runQuickScan() async {
     if (!_wantsScan || _isConnecting) return;
     try {
-      await FlutterBluePlus.startScan(
-        withServices: [meshServiceUuid],
-        timeout: _kQuickScanWindow,
-      );
+      await FlutterBluePlus.startScan(timeout: _kQuickScanWindow);
     } catch (_) {}
     await Future<void>.delayed(_kQuickScanWindow);
     if (_wantsScan && !_isConnecting) {
       try {
-        await FlutterBluePlus.startScan(
-          withServices: [meshServiceUuid],
-        );
+        await FlutterBluePlus.startScan();
       } catch (_) {}
     }
-  }
-
-  static BluetoothCharacteristic? _findMeshCharacteristic(
-    List<BluetoothService> services,
-  ) {
-    for (final s in services) {
-      if (s.serviceUuid.str128 != meshServiceUuid.str128) continue;
-      for (final c in s.characteristics) {
-        if (c.characteristicUuid.str128 == meshCharacteristicUuid.str128) {
-          return c;
-        }
-      }
-    }
-    return null;
   }
 
   Future<void> stopScanning() async {

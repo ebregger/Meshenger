@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io' show zlib;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -7,7 +10,7 @@ import 'package:flutter_riverpod/legacy.dart';
 
 import '../models/generated/mesh_data.pb.dart';
 import '../services/ble_discovery_service.dart';
-import '../services/ble_gatt_server.dart';
+import '../services/native_mesh_service.dart';
 import '../utils/ble_permission_result.dart';
 import '../utils/permissions_helper.dart';
 import 'ble_network_state.dart';
@@ -17,8 +20,7 @@ import 'identity_provider.dart';
 /// BLE adapter, permissions, and Phase 3 mesh discovery (scan + advertise).
 class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   BleNetworkNotifier(this._ref)
-      : _gattServer = BleGattServer(_ref),
-        super(BleNetworkState.initial) {
+      : super(BleNetworkState.initial) {
     _discovery = BleDiscoveryService(
       _ref,
       onConnectionPhaseChanged: _handleMeshConnectionPhaseChanged,
@@ -28,14 +30,15 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   final Ref _ref;
   late final BleDiscoveryService _discovery;
-  final BleGattServer _gattServer;
+  final NativeMeshService _nativeMesh = NativeMeshService();
 
   StreamSubscription<BluetoothAdapterState>? _adapterSub;
   StreamSubscription<List<TextMessage>>? _localMessagesSub;
+  StreamSubscription<Uint8List>? _nativePayloadSub;
   bool _meshSessionActive = false;
   String? _localNodeId;
-  bool _primeLocalMessageCount = true;
-  int _lastLocalMessageCount = 0;
+  bool _primeMessageListLength = true;
+  int _lastMessageListLength = 0;
 
   void _handleMeshConnectionPhaseChanged() {
     _publishRadioFlags();
@@ -108,29 +111,49 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   Future<void> _attachLocalMessageQuickScanTrigger(String myId) async {
     await _localMessagesSub?.cancel();
-    _primeLocalMessageCount = true;
-    _lastLocalMessageCount = 0;
+    _primeMessageListLength = true;
+    _lastMessageListLength = 0;
     final db = await _ref.read(databaseProvider.future);
     _localMessagesSub = db.watchTextMessages().listen((messages) {
       if (!_meshSessionActive) return;
       final self = _localNodeId;
       if (self == null || self != myId) return;
 
-      final localCount =
-          messages.where((m) => m.originNodeId == self).length;
-      if (_primeLocalMessageCount) {
-        _primeLocalMessageCount = false;
-        _lastLocalMessageCount = localCount;
+      final len = messages.length;
+      if (_primeMessageListLength) {
+        _primeMessageListLength = false;
+        _lastMessageListLength = len;
         return;
       }
-      if (localCount <= _lastLocalMessageCount) {
-        _lastLocalMessageCount = localCount;
+      if (len <= _lastMessageListLength) {
+        _lastMessageListLength = len;
         return;
       }
-      _lastLocalMessageCount = localCount;
+      _lastMessageListLength = len;
 
       if (_discovery.isConnecting) return;
       unawaited(_discovery.runQuickScan());
+    });
+  }
+
+  Future<void> _attachNativeIncomingSync() async {
+    await _nativePayloadSub?.cancel();
+    _nativePayloadSub = _nativeMesh.incomingPayloads.listen((payload) {
+      Future<void>.microtask(() async {
+        try {
+          final decompressed = zlib.decode(payload);
+          final raw = jsonDecode(utf8.decode(decompressed));
+          if (raw is! Map) return;
+          final changeset = Map<String, dynamic>.from(raw);
+          final db = await _ref.read(databaseProvider.future);
+          await db.mergeSyncChangeset(changeset);
+          if (!_discovery.isConnecting) {
+            unawaited(_discovery.runQuickScan());
+          }
+        } catch (e, st) {
+          debugPrint('NATIVE MESH INCOMING MERGE FAILED: $e\n$st');
+        }
+      });
     });
   }
 
@@ -142,7 +165,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     try {
       final myId = await _ref.read(myNodeIdProvider.future);
       _localNodeId = myId;
-      await _gattServer.start(myId);
+      await _nativeMesh.startNativeServer();
+      await _attachNativeIncomingSync();
       await _discovery.startScanning(
         myNodeId: myId,
         onDiscovered: _onPeerDiscovered,
@@ -152,7 +176,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     } catch (_) {
       _meshSessionActive = false;
       await _discovery.stopAll();
-      await _gattServer.stop();
+      await _nativePayloadSub?.cancel();
+      _nativePayloadSub = null;
       await _localMessagesSub?.cancel();
       _localMessagesSub = null;
       _publishRadioFlags();
@@ -177,10 +202,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   Future<void> _stopMeshSession() async {
     _meshSessionActive = false;
     _localNodeId = null;
+    await _nativePayloadSub?.cancel();
+    _nativePayloadSub = null;
     await _localMessagesSub?.cancel();
     _localMessagesSub = null;
     await _discovery.stopAll();
-    await _gattServer.stop();
     _publishRadioFlags();
   }
 
@@ -196,7 +222,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       await _adapterSub?.cancel();
       _adapterSub = null;
       await _discovery.stopAll();
-      await _gattServer.stop();
+      await _nativePayloadSub?.cancel();
+      _nativePayloadSub = null;
       await _localMessagesSub?.cancel();
       _localMessagesSub = null;
       _meshSessionActive = false;
@@ -220,8 +247,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   /// Restarts GAP advertising with the persisted local node id.
   Future<void> startAdvertising() async {
-    final myId = await _ref.read(myNodeIdProvider.future);
-    await _gattServer.start(myId);
+    await _nativeMesh.startNativeServer();
+    await _attachNativeIncomingSync();
     _publishRadioFlags();
   }
 
@@ -239,19 +266,20 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   /// Stops scan + peripheral advertising.
   Future<void> stopNetwork() async {
     _meshSessionActive = false;
+    await _nativePayloadSub?.cancel();
+    _nativePayloadSub = null;
     await _localMessagesSub?.cancel();
     _localMessagesSub = null;
     await _discovery.stopAll();
-    await _gattServer.stop();
     _publishRadioFlags();
   }
 
   @override
   void dispose() {
     unawaited(_adapterSub?.cancel());
+    unawaited(_nativePayloadSub?.cancel());
     unawaited(_localMessagesSub?.cancel());
     unawaited(_discovery.stopAll());
-    unawaited(_gattServer.stop());
     super.dispose();
   }
 }
