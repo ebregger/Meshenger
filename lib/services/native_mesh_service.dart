@@ -19,8 +19,16 @@ class NativeMeshService {
 
   Stream<Uint8List> get incomingPayloads => _incomingPayloads;
 
-  Future<void> startNativeServer() async {
-    await _bleMethodChannel.invokeMethod<void>('start_server');
+  Future<void> startNativeServer(Uint8List currentHash) async {
+    await _bleMethodChannel.invokeMethod<void>('start_server', <String, Object?>{
+      'hash': currentHash,
+    });
+  }
+
+  Future<void> updateAdvertiserHash(Uint8List newHash) async {
+    await _bleMethodChannel.invokeMethod<void>('update_hash', <String, Object?>{
+      'hash': newHash,
+    });
   }
 
   Future<void> sendPayload(String macAddress, Uint8List payload) async {

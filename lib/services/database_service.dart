@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' show md5;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite_crdt/sqlite_crdt.dart';
@@ -62,6 +64,24 @@ class DatabaseService {
   Future<void> dispose() async {
     await _db?.close();
     _db = null;
+  }
+
+  /// Short "sync token" representing current DB state.
+  ///
+  /// Fast path: hash all live `msg_id`s deterministically (order by msg_id),
+  /// MD5, then return the first 8 bytes.
+  Future<Uint8List> getDatabaseHash() async {
+    await init();
+    final rows = await _crdt.query(
+      'SELECT msg_id FROM messages WHERE is_deleted = 0 ORDER BY msg_id ASC',
+    );
+    final buf = StringBuffer();
+    for (final row in rows) {
+      final id = row['msg_id'];
+      if (id is String) buf.write(id);
+    }
+    final digest = md5.convert(utf8.encode(buf.toString())).bytes;
+    return Uint8List.fromList(digest.take(8).toList(growable: false));
   }
 
   /// Returns a CRDT changeset modified strictly after [lastHlc].

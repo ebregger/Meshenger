@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io' show zlib;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, listEquals;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -24,18 +24,12 @@ class BleDiscoveryService {
   final Ref _ref;
   final void Function()? onConnectionPhaseChanged;
 
-  static const Duration _kPreStopScanPause = Duration(milliseconds: 200);
-  static const Duration _kPostStopScanSettle = Duration(milliseconds: 500);
-  static const Duration _kHandshakeCooldown = Duration(seconds: 10);
-  static const Duration _kQuickScanWindow = Duration(seconds: 10);
-  static const Duration _kResumeScanDelay = Duration(seconds: 2);
   final NativeMeshService _nativeMesh = NativeMeshService();
+  Uint8List? _localHash;
   StreamSubscription<List<ScanResult>>? _scanSub;
   /// When true, scan callbacks must not start another handshake or fire discovery churn.
   bool _isConnecting = false;
-  /// False after [stopScanning]/[stopAll] so [finally] does not restart scanning.
-  bool _wantsScan = false;
-  final Map<String, DateTime> _handshakeCooldownUntil = {};
+  final Map<String, DateTime> _hashCooldowns = {};
 
   /// Exposed for UI / notifier guards while a GATT sync is in flight.
   bool get isConnecting => _isConnecting;
@@ -50,9 +44,24 @@ class BleDiscoveryService {
         .any((u) => u.str128.toLowerCase() == meshServiceUuid.str128);
   }
 
-  static bool _isLikelyNativeMeshAdvert(ScanResult r) {
+  void setLocalHash(Uint8List value) {
+    _localHash = value;
+  }
+
+  Uint8List? _tryGetRemoteHash(ScanResult r) {
+    final raw = r.advertisementData.manufacturerData[meshManufacturerId];
+    if (raw == null || raw.isEmpty) return null;
+    return Uint8List.fromList(raw);
+  }
+
+  bool _isLikelyNativeMeshAdvert(ScanResult r) {
     // Check for our specific manufacturer data flag
-    if (r.advertisementData.manufacturerData.containsKey(meshManufacturerId)) {
+    final remoteHashRaw = r.advertisementData.manufacturerData[meshManufacturerId];
+    if (remoteHashRaw != null && remoteHashRaw.isNotEmpty) {
+      final local = _localHash;
+      if (local != null && listEquals(remoteHashRaw, local)) {
+        return false;
+      }
       return true;
     }
 
@@ -75,32 +84,16 @@ class BleDiscoveryService {
     return fullNodeId.substring(0, meshShortNodeIdLength);
   }
 
-  bool _isPeerOnCooldown(String shortId) {
-    final until = _handshakeCooldownUntil[shortId];
-    if (until == null) return false;
-    if (DateTime.now().isAfter(until)) {
-      _handshakeCooldownUntil.remove(shortId);
-      return false;
-    }
-    return true;
-  }
-
-  void _cooldownPeer(String shortId) {
-    _handshakeCooldownUntil[shortId] =
-        DateTime.now().add(_kHandshakeCooldown);
-  }
-
   /// Scans for advertisers that include [meshServiceUuid] in the payload.
   Future<void> startScanning({
     required String myNodeId,
     required void Function(String shortNodeId) onDiscovered,
   }) async {
     _isConnecting = false;
-    _handshakeCooldownUntil.clear();
+    _hashCooldowns.clear();
     _notifyConnectionPhase();
     debugPrint('🔓 BLE scan session reset (lock + cooldowns cleared)');
 
-    _wantsScan = true;
     await _scanSub?.cancel();
 
     // Do not use [withServices] filtering here: some Android stacks omit/truncate 128-bit UUIDs
@@ -112,13 +105,18 @@ class BleDiscoveryService {
         if (_isConnecting) continue;
         if (!_isLikelyNativeMeshAdvert(r)) continue;
 
-        final id = decodeMeshNodeId(r.advertisementData.manufacturerData);
-        if (id == null || id.isEmpty) continue;
-        if (id == shortNodeIdFromFull(myNodeId)) continue;
+        final remoteHash = _tryGetRemoteHash(r);
+        if (remoteHash == null) continue;
+        final remoteHashStr = base64Encode(remoteHash);
+        final last = _hashCooldowns[remoteHashStr];
+        if (last != null && DateTime.now().difference(last).inSeconds < 10) {
+          continue;
+        }
+        _hashCooldowns[remoteHashStr] = DateTime.now();
 
         debugPrint('🎯 DISCOVERED MESH NODE: ${r.device.remoteId.str}');
-        onDiscovered(id);
-        unawaited(_runMeshInitiatorHandshake(myNodeId, id, r.device));
+        onDiscovered(r.device.remoteId.str);
+        unawaited(_runMeshInitiatorHandshake(myNodeId, remoteHashStr, r.device));
       }
     });
   }
@@ -130,26 +128,20 @@ class BleDiscoveryService {
     BluetoothDevice device,
   ) async {
     if (_isConnecting) return;
-    if (shortNodeIdFromFull(myNodeId).compareTo(remoteShortId) <= 0) {
-      return;
-    }
-    if (_isPeerOnCooldown(remoteShortId)) return;
-
+    // Even if the connection fails/cancels, keep a short cooldown for this remote hash so
+    // we don't spam connect() attempts to stale/cached advertisers.
+    _hashCooldowns[remoteShortId] = DateTime.now();
     _isConnecting = true;
     _notifyConnectionPhase();
     try {
-      await Future<void>.delayed(_kPreStopScanPause);
-
-      await FlutterBluePlus.stopScan();
-      await Future<void>.delayed(_kPostStopScanSettle);
-
       final db = await _ref.read(databaseProvider.future);
       final changeset = await db.getSyncChangeset(null);
       final payload = zlib.encode(utf8.encode(jsonEncode(changeset)));
       final macAddress = device.remoteId.str;
       await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload));
     } catch (_) {
-      _cooldownPeer(remoteShortId);
+      // Cooldown is handled at scan time by advertised remote hash.
+      _hashCooldowns[remoteShortId] = DateTime.now();
     } finally {
       if (device.isConnected) {
         try {
@@ -158,29 +150,17 @@ class BleDiscoveryService {
       }
       _isConnecting = false;
       _notifyConnectionPhase();
-      await Future<void>.delayed(_kResumeScanDelay);
-      if (_wantsScan) {
-        await FlutterBluePlus.startScan();
-      }
     }
   }
 
   /// Burst scan to pick up peers after a local DB write; resumes continuous scan after.
   Future<void> runQuickScan() async {
-    if (!_wantsScan || _isConnecting) return;
-    try {
-      await FlutterBluePlus.startScan(timeout: _kQuickScanWindow);
-    } catch (_) {}
-    await Future<void>.delayed(_kQuickScanWindow);
-    if (_wantsScan && !_isConnecting) {
-      try {
-        await FlutterBluePlus.startScan();
-      } catch (_) {}
-    }
+    // Deprecated: scanning stays continuously enabled to avoid Android scan rate limits.
+    // Keep method for any legacy callers; it is now a no-op.
+    return;
   }
 
   Future<void> stopScanning() async {
-    _wantsScan = false;
     await _scanSub?.cancel();
     _scanSub = null;
     await FlutterBluePlus.stopScan();
@@ -190,13 +170,4 @@ class BleDiscoveryService {
     await stopScanning();
   }
 
-  /// Decodes the Short Node ID (UTF-8, up to [meshShortNodeIdLength] chars).
-  static String? decodeMeshNodeId(Map<int, List<int>> manufacturerData) {
-    final raw = manufacturerData[meshManufacturerId];
-    if (raw == null || raw.isEmpty) return null;
-    final decoded = utf8.decode(raw, allowMalformed: true).trim();
-    if (decoded.isEmpty) return null;
-    final runes = decoded.runes.take(meshShortNodeIdLength).toList();
-    return String.fromCharCodes(runes);
-  }
 }

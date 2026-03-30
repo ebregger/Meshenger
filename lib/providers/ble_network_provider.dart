@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io' show zlib;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, listEquals;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
@@ -35,10 +35,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   StreamSubscription<BluetoothAdapterState>? _adapterSub;
   StreamSubscription<List<TextMessage>>? _localMessagesSub;
   StreamSubscription<Uint8List>? _nativePayloadSub;
+  final List<int> _incomingBuffer = <int>[];
   bool _meshSessionActive = false;
   String? _localNodeId;
   bool _primeMessageListLength = true;
-  int _lastMessageListLength = 0;
+  String? _lastAdvertisedHashB64;
 
   void _handleMeshConnectionPhaseChanged() {
     _publishRadioFlags();
@@ -112,48 +113,76 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   Future<void> _attachLocalMessageQuickScanTrigger(String myId) async {
     await _localMessagesSub?.cancel();
     _primeMessageListLength = true;
-    _lastMessageListLength = 0;
     final db = await _ref.read(databaseProvider.future);
     _localMessagesSub = db.watchTextMessages().listen((messages) {
       if (!_meshSessionActive) return;
       final self = _localNodeId;
       if (self == null || self != myId) return;
 
-      final len = messages.length;
       if (_primeMessageListLength) {
         _primeMessageListLength = false;
-        _lastMessageListLength = len;
         return;
       }
-      if (len <= _lastMessageListLength) {
-        _lastMessageListLength = len;
-        return;
-      }
-      _lastMessageListLength = len;
 
-      if (_discovery.isConnecting) return;
-      unawaited(_discovery.runQuickScan());
+      Future<void>.microtask(() async {
+        try {
+          final hash = await db.getDatabaseHash();
+          final b64 = base64Encode(hash);
+          if (b64 != _lastAdvertisedHashB64) {
+            _lastAdvertisedHashB64 = b64;
+            await _nativeMesh.updateAdvertiserHash(hash);
+            _discovery.setLocalHash(hash);
+          }
+        } catch (e, st) {
+          debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
+        }
+      });
+
+      // Scanner stays on; advertiser hash update is enough.
     });
   }
 
   Future<void> _attachNativeIncomingSync() async {
     await _nativePayloadSub?.cancel();
-    _nativePayloadSub = _nativeMesh.incomingPayloads.listen((payload) {
-      Future<void>.microtask(() async {
-        try {
-          final decompressed = zlib.decode(payload);
-          final raw = jsonDecode(utf8.decode(decompressed));
-          if (raw is! Map) return;
-          final changeset = Map<String, dynamic>.from(raw);
-          final db = await _ref.read(databaseProvider.future);
-          await db.mergeSyncChangeset(changeset);
-          if (!_discovery.isConnecting) {
-            unawaited(_discovery.runQuickScan());
+    _nativePayloadSub = _nativeMesh.incomingPayloads.listen((chunk) {
+      final eofMarker = utf8.encode('||EOF||');
+
+      if (chunk.length == eofMarker.length && listEquals(chunk, eofMarker)) {
+        if (_incomingBuffer.isEmpty) return;
+
+        Future<void>.microtask(() async {
+          try {
+            final decompressed = zlib.decode(_incomingBuffer);
+            final String jsonStr = utf8.decode(decompressed);
+            final raw = jsonDecode(jsonStr);
+            if (raw is! Map) return;
+            final changeset = Map<String, dynamic>.from(raw);
+
+            final db = await _ref.read(databaseProvider.future);
+            await db.mergeSyncChangeset(changeset);
+
+            try {
+              final hash = await db.getDatabaseHash();
+              final b64 = base64Encode(hash);
+              if (b64 != _lastAdvertisedHashB64) {
+                _lastAdvertisedHashB64 = b64;
+                await _nativeMesh.updateAdvertiserHash(hash);
+                _discovery.setLocalHash(hash);
+              }
+            } catch (e, st) {
+              debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
+            }
+
+            // Scanner stays on; advertiser hash update is enough.
+          } catch (e) {
+            debugPrint('Mesh merge error: $e');
+          } finally {
+            _incomingBuffer.clear();
           }
-        } catch (e, st) {
-          debugPrint('NATIVE MESH INCOMING MERGE FAILED: $e\n$st');
-        }
-      });
+        });
+      } else {
+        _incomingBuffer.addAll(chunk);
+      }
     });
   }
 
@@ -165,7 +194,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     try {
       final myId = await _ref.read(myNodeIdProvider.future);
       _localNodeId = myId;
-      await _nativeMesh.startNativeServer();
+      final db = await _ref.read(databaseProvider.future);
+      final hash = await db.getDatabaseHash();
+      _lastAdvertisedHashB64 = base64Encode(hash);
+      _discovery.setLocalHash(hash);
+      await _nativeMesh.startNativeServer(hash);
       await _attachNativeIncomingSync();
       await _discovery.startScanning(
         myNodeId: myId,
@@ -247,7 +280,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   /// Restarts GAP advertising with the persisted local node id.
   Future<void> startAdvertising() async {
-    await _nativeMesh.startNativeServer();
+    final db = await _ref.read(databaseProvider.future);
+    final hash = await db.getDatabaseHash();
+    _lastAdvertisedHashB64 = base64Encode(hash);
+    _discovery.setLocalHash(hash);
+    await _nativeMesh.startNativeServer(hash);
     await _attachNativeIncomingSync();
     _publishRadioFlags();
   }

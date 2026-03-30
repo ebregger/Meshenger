@@ -37,6 +37,8 @@ class MainActivity : FlutterActivity() {
   private var bluetoothGattServer: BluetoothGattServer? = null
   private var advertiser: BluetoothLeAdvertiser? = null
   private var advertiseCallback: AdvertiseCallback? = null
+  private var advertiseSettings: AdvertiseSettings? = null
+  private var currentAdvertiserHash: ByteArray = byteArrayOf(1)
 
   private val SERVICE_UUID = UUID.fromString("c7e4f1a2-9b3d-4a8e-a1f6-2d5e8b9c0a4f")
   private val CHARACTERISTIC_UUID =
@@ -65,7 +67,10 @@ class MainActivity : FlutterActivity() {
     methodChannel.setMethodCallHandler { call, result ->
       when (call.method) {
         "start_server" -> {
-          startNativeServer(result)
+          startNativeServer(call, result)
+        }
+        "update_hash" -> {
+          updateAdvertiserHash(call, result)
         }
         "send_payload" -> {
           sendPayloadToPeer(call, result)
@@ -97,7 +102,7 @@ class MainActivity : FlutterActivity() {
   }
 
   @SuppressLint("MissingPermission")
-  private fun startNativeServer(result: MethodChannel.Result) {
+  private fun startNativeServer(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
     try {
       if (bluetoothGattServer != null) {
         result.success(null)
@@ -151,16 +156,19 @@ class MainActivity : FlutterActivity() {
         return
       }
 
+      val hashBytes = coercePayloadBytes(call.argument<Any?>("hash"))
+      if (hashBytes != null && hashBytes.isNotEmpty()) {
+        currentAdvertiserHash = hashBytes
+      }
+
       val settings = AdvertiseSettings.Builder()
         .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
         .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
         .setConnectable(true)
         .build()
+      advertiseSettings = settings
 
-      val data = AdvertiseData.Builder()
-        .addServiceUuid(ParcelUuid(SERVICE_UUID))
-        .addManufacturerData(0xFFE0, byteArrayOf(1))
-        .build()
+      val data = buildAdvertiseData(currentAdvertiserHash)
 
       advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
@@ -199,6 +207,38 @@ class MainActivity : FlutterActivity() {
   }
 
   @SuppressLint("MissingPermission")
+  private fun updateAdvertiserHash(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
+    val newHash = coercePayloadBytes(call.argument<Any?>("hash"))
+    if (newHash == null || newHash.isEmpty()) {
+      result.error("bad_args", "hash is required", null)
+      return
+    }
+    currentAdvertiserHash = newHash
+
+    val adv = advertiser
+    val cb = advertiseCallback
+    val settings = advertiseSettings
+    if (adv == null || cb == null || settings == null) {
+      result.error("not_started", "Advertiser not started yet", null)
+      return
+    }
+
+    try {
+      adv.stopAdvertising(cb)
+    } catch (_: Throwable) {}
+
+    val data = buildAdvertiseData(currentAdvertiserHash)
+    adv.startAdvertising(settings, data, cb)
+    result.success(null)
+  }
+
+  private fun buildAdvertiseData(hash: ByteArray): AdvertiseData {
+    return AdvertiseData.Builder()
+      .addManufacturerData(0xFFE0, hash)
+      .build()
+  }
+
+  @SuppressLint("MissingPermission")
   private fun sendPayloadToPeer(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
     val macAddress = call.argument<String>("macAddress")
     if (macAddress.isNullOrBlank()) {
@@ -206,8 +246,8 @@ class MainActivity : FlutterActivity() {
       return
     }
 
-    val payloadBytes = coercePayloadBytes(call.argument<Any?>("payload"))
-    if (payloadBytes == null) {
+    val payload = coercePayloadBytes(call.argument<Any?>("payload"))
+    if (payload == null) {
       result.error("bad_args", "payload must be a ByteArray/Uint8List", null)
       return
     }
@@ -216,17 +256,22 @@ class MainActivity : FlutterActivity() {
     val adapter: BluetoothAdapter = bluetoothManager.adapter
     val device = adapter.getRemoteDevice(macAddress)
 
-    var completed = false
-    fun finishSuccess() {
-      if (completed) return
-      completed = true
-      result.success(null)
+    val isCompleted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    fun completeSuccessOnMain() {
+      Handler(Looper.getMainLooper()).post {
+        if (isCompleted.compareAndSet(false, true)) {
+          result.success(null)
+        }
+      }
     }
 
-    fun finishError(code: String, message: String) {
-      if (completed) return
-      completed = true
-      result.error(code, message, null)
+    fun completeErrorOnMain(code: String, message: String) {
+      Handler(Looper.getMainLooper()).post {
+        if (isCompleted.compareAndSet(false, true)) {
+          result.error(code, message, null)
+        }
+      }
     }
 
     val gattCallback = object : BluetoothGattCallback() {
@@ -238,12 +283,11 @@ class MainActivity : FlutterActivity() {
           val ok = gatt.requestMtu(512)
           Log.d(TAG, "requestMtu initiated: $ok")
         } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-          // If we disconnect before finishing write, still close and finish.
-          if (!completed) {
+          if (!isCompleted.get()) {
             try {
               gatt.close()
             } catch (_: Throwable) {}
-            finishSuccess()
+            completeErrorOnMain("DISCONNECTED", "Disconnected before write completed")
           }
         }
       }
@@ -256,65 +300,85 @@ class MainActivity : FlutterActivity() {
         } else {
           gatt.disconnect()
           gatt.close()
-          finishSuccess()
+          completeErrorOnMain("MTU_FAILED", "Failed to request MTU")
         }
       }
 
       override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
         super.onServicesDiscovered(gatt, status)
         if (gatt == null) return
-        if (status != BluetoothGatt.GATT_SUCCESS) {
-          gatt.disconnect()
-          gatt.close()
-          finishSuccess()
-          return
-        }
 
-        val characteristic = gatt.services
-          .flatMap { it.characteristics }
-          .firstOrNull { it.uuid == CHARACTERISTIC_UUID }
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+          val service = gatt.getService(UUID.fromString("c7e4f1a2-9b3d-4a8e-a1f6-2d5e8b9c0a4f"))
+          val characteristic = service?.getCharacteristic(UUID.fromString("6b2e8f1a-4c9d-4e7b-b3a5-9f8e7d6c5b4a"))
 
-        if (characteristic == null) {
-          gatt.disconnect()
-          gatt.close()
-          finishError("char_not_found", "Characteristic UUID not found on peer")
-          return
-        }
+          if (characteristic != null) {
+            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            Thread {
+                val chunkSize = 500
+                var offset = 0
+                while (offset < payload.size) {
+                    val length = Math.min(chunkSize, payload.size - offset)
+                    val chunk = ByteArray(length)
+                    System.arraycopy(payload, offset, chunk, 0, length)
 
-        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-        characteristic.value = payloadBytes
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        gatt.writeCharacteristic(characteristic, chunk, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        characteristic.value = chunk
+                        @Suppress("DEPRECATION")
+                        gatt.writeCharacteristic(characteristic)
+                    }
+                    Thread.sleep(15) // Give the radio buffer time to clear
+                    offset += length
+                }
 
-        gatt.writeCharacteristic(characteristic)
+                // Send EOF marker
+                val eof = "||EOF||".toByteArray()
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    gatt.writeCharacteristic(characteristic, eof, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    characteristic.value = eof
+                    @Suppress("DEPRECATION")
+                    gatt.writeCharacteristic(characteristic)
+                }
 
-        // Blind write: wait a fixed budget before disconnect.
-        Handler(Looper.getMainLooper()).postDelayed({
-          try {
+                Thread.sleep(400)
+                gatt.disconnect()
+                gatt.close()
+                completeSuccessOnMain()
+            }.start()
+          } else {
             gatt.disconnect()
-          } catch (_: Throwable) {}
-          try {
             gatt.close()
-          } catch (_: Throwable) {}
-          finishSuccess()
-        }, 400)
+            completeErrorOnMain("CHAR_NOT_FOUND", "Mesh characteristic not found")
+          }
+        } else {
+          gatt.disconnect()
+          gatt.close()
+          completeErrorOnMain("DISCOVERY_FAILED", "Failed to discover services")
+        }
       }
     }
 
     val gatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     if (gatt == null) {
-      result.error("connect_failed", "connectGatt returned null", null)
+      completeErrorOnMain("connect_failed", "connectGatt returned null")
       return
     }
 
     // Watchdog: avoid leaving the Dart Future pending forever.
     Handler(Looper.getMainLooper()).postDelayed({
-      if (!completed) {
+      if (isCompleted.compareAndSet(false, true)) {
         try {
           gatt.disconnect()
         } catch (_: Throwable) {}
         try {
           gatt.close()
         } catch (_: Throwable) {}
-        finishError("timeout", "Timed out waiting for MTU/services/write")
+        result.error("timeout", "Timed out waiting for MTU/services/write", null)
       }
     }, 10000)
   }
