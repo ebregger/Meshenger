@@ -13,9 +13,7 @@ import '../screens/config_screen.dart';
 import '../widgets/chat/chat_bubble.dart';
 import '../widgets/chat/chat_input_dock.dart';
 import '../widgets/chat/device_chip.dart';
-import '../providers/ble_network_state.dart';
 import '../widgets/home/liquid_glass_app_bar.dart';
-import '../widgets/home/mesh_radio_status_dot.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -89,8 +87,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       for (var i = 0; i < peers.length; i++) {
                         final s = peers[i];
                         final label = profileMap[s.id] ?? s.name;
-                        final isDirect = s.isDirect;
-                        final inGrace = s.inGrace;
+                        Color chipColor;
+                        switch (s.status) {
+                          case PeerStatus.direct:
+                            chipColor = Colors.green;
+                            break;
+                          case PeerStatus.indirect:
+                            chipColor = Colors.yellow;
+                            break;
+                          case PeerStatus.disconnected:
+                            chipColor = Colors.grey;
+                            break;
+                        }
                         if (i > 0) out.add(const SizedBox(width: 10));
                         out.add(
                           InkWell(
@@ -98,10 +106,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             onTap: () => _showNodeDetailsDialog(context, s),
                             child: DeviceChip(
                               label: label,
-                              accentColor: inGrace
-                                  ? Colors.grey
-                                  : (isDirect ? Colors.green : Colors.yellow),
-                              faded: !isDirect,
+                              accentColor: chipColor,
+                              faded: s.status != PeerStatus.direct,
                             ),
                           ),
                         );
@@ -188,12 +194,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final useLiquidBar = defaultTargetPlatformIsIos;
     final topInset = MediaQuery.paddingOf(context).top;
-    final ble = ref.watch(bleNetworkProvider);
-
-    final radioDot = MeshRadioStatusDot(
-      connecting: ble.radioMeshConnecting,
-      advertising: ble.radioMeshAdvertising && ble.adapterStatus == BleAdapterStatus.on,
-    );
 
     ref.listen(chatProvider, (previous, next) {
       final prevLen = previous?.value?.length;
@@ -213,17 +213,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ? LiquidGlassAppBar(
                 title: 'Messages',
                 statusBarHeight: topInset,
-                trailing: radioDot,
               )
             : AppBar(
                 title: const Text('Messages'),
                 centerTitle: true,
-                actions: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: radioDot,
-                  ),
-                ],
               ))
         : AppBar(
             title: const Text('Configuration'),
@@ -258,122 +251,192 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _showNodeDetailsDialog(BuildContext context, MeshNodeState state) {
-    showDialog<void>(
+    showDialog(
       context: context,
-      builder: (context) => _NodeDetailsDialog(state: state),
+      builder: (context) => NodeDetailsDialog(initialState: state),
     );
   }
 }
 
-class _NodeDetailsDialog extends ConsumerStatefulWidget {
-  const _NodeDetailsDialog({required this.state});
+class NodeDetailsDialog extends StatefulWidget {
+  final MeshNodeState initialState;
 
-  final MeshNodeState state;
+  const NodeDetailsDialog({super.key, required this.initialState});
 
   @override
-  ConsumerState<_NodeDetailsDialog> createState() => _NodeDetailsDialogState();
+  State<NodeDetailsDialog> createState() => _NodeDetailsDialogState();
 }
 
-class _NodeDetailsDialogState extends ConsumerState<_NodeDetailsDialog> {
-  Timer? _ticker;
+class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
+  late DateTime trackedLastSeen;
+  late int localSecondsAgo;
+  String? currentRouteName;
+  String? currentMacAddress;
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
-      setState(() {});
+    // Lock in the baseline state once, safely protected from outer rebuilds
+    trackedLastSeen = widget.initialState.lastSeen;
+    localSecondsAgo = DateTime.now().difference(trackedLastSeen).inSeconds;
+    currentRouteName = widget.initialState.routeViaName;
+    currentMacAddress = widget.initialState.macAddress;
+
+    // The Autonomous Stopwatch
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        setState(() {
+          localSecondsAgo = DateTime.now().difference(trackedLastSeen).inSeconds;
+        });
+      }
     });
   }
 
   @override
   void dispose() {
-    _ticker?.cancel();
+    _timer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final snapshot = widget.state;
-    final peersAsync = ref.watch(activePeersProvider);
-    MeshNodeState state = snapshot;
-    final peers = peersAsync.asData?.value;
-    if (peers != null) {
-      for (final e in peers) {
-        if (e.id == snapshot.id) {
-          state = e;
-          break;
-        }
-      }
-    }
-
     final scheme = Theme.of(context).colorScheme;
-    final statusText = state.inGrace
-        ? 'Disconnected'
-        : (state.isDirect ? 'Directly Connected' : 'Indirectly Connected');
-    final statusColor = state.inGrace
-        ? Colors.grey
-        : (state.isDirect ? Colors.green : Colors.yellow);
-    final secondsAgo = DateTime.now().difference(state.lastSeen).inSeconds;
-    final lastSeenText =
-        secondsAgo == 0 ? 'Just now' : '$secondsAgo seconds ago';
 
-    return AlertDialog(
-      title: Text(state.name),
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.timer, size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Text('Last Seen: $lastSeenText'),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Text('Node ID'),
-            const SizedBox(height: 4),
-            SelectableText(
-              state.id,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            ),
-            const SizedBox(height: 14),
-            Text('MAC Address'),
-            const SizedBox(height: 4),
-            SelectableText(
-              state.macAddress ?? 'Unknown (Out of Range)',
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Icon(Icons.circle, size: 10, color: statusColor),
-                const SizedBox(width: 8),
-                Text(statusText),
-              ],
-            ),
-            if (state.routeViaName != null) ...[
-              const SizedBox(height: 14),
-              Row(
+    return PopScope(
+      onPopInvokedWithResult: (_, _) => _timer?.cancel(),
+      child: AlertDialog(
+        title: Text(
+          widget.initialState.name,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: Consumer(
+          builder: (context, ref, child) {
+            final nodes =
+                ref.watch(activePeersProvider).asData?.value ?? const [];
+
+            // Look for background updates
+            MeshNodeState? liveNode;
+            for (final n in nodes) {
+              if (n.id == widget.initialState.id) {
+                liveNode = n;
+                break;
+              }
+            }
+
+            final PeerStatus currentStatus;
+            if (liveNode == null) {
+              // The stream pruned it entirely (> 75s). It is permanently dead.
+              currentStatus = PeerStatus.disconnected;
+            } else {
+              // It is still in the stream. Use the stream's exact truth.
+              currentStatus = liveNode.status;
+
+              // Update route even if lastSeen didn't advance.
+              currentRouteName = liveNode.routeViaName;
+              if (liveNode.macAddress != null) {
+                currentMacAddress = liveNode.macAddress;
+              }
+
+              // Update our local stopwatch baseline if a newer ping arrived
+              if (liveNode.lastSeen.isAfter(trackedLastSeen)) {
+                trackedLastSeen = liveNode.lastSeen;
+                localSecondsAgo =
+                    DateTime.now().difference(trackedLastSeen).inSeconds;
+              }
+            }
+
+            // Map the UI
+            final String statusText;
+            final Color statusColor;
+
+            switch (currentStatus) {
+              case PeerStatus.disconnected:
+                statusText = 'Disconnected';
+                statusColor = Colors.grey;
+                break;
+              case PeerStatus.direct:
+                statusText = 'Directly Connected';
+                statusColor = Colors.green;
+                break;
+              case PeerStatus.indirect:
+                statusText = 'Indirectly Connected';
+                statusColor = Colors.yellow;
+                break;
+            }
+
+            final lastSeenText = localSecondsAgo < 5
+                ? 'Just now'
+                : '$localSecondsAgo seconds ago';
+
+            return SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.route, size: 18, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text('Connected through: ${state.routeViaName}'),
+                  Row(
+                    children: [
+                      const Icon(Icons.timer, size: 16, color: Colors.grey),
+                      const SizedBox(width: 8),
+                      Text('Last Seen: $lastSeenText'),
+                    ],
                   ),
+                  const SizedBox(height: 14),
+                  const Text('Node ID'),
+                  const SizedBox(height: 4),
+                  SelectableText(
+                    widget.initialState.id,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text('MAC Address'),
+                  const SizedBox(height: 4),
+                  SelectableText(
+                    currentMacAddress ?? 'Unknown (Out of Range)',
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Icon(Icons.circle, size: 10, color: statusColor),
+                      const SizedBox(width: 8),
+                      Text(statusText),
+                    ],
+                  ),
+                  if (statusText == 'Indirectly Connected' &&
+                      currentRouteName != null) ...[
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Icon(Icons.route, size: 18, color: scheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text('Connected through: $currentRouteName'),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
-            ],
-          ],
+            );
+          },
         ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _timer?.cancel();
+              Navigator.of(context).pop();
+            },
+            child: const Text('Close'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
-        ),
-      ],
     );
   }
 }

@@ -58,10 +58,16 @@ class BleDiscoveryService {
   /// Neighbor IDs seen in the last 60 seconds (expired entries are pruned).
   List<String> get currentNeighborIds {
     final now = DateTime.now();
-    localSeenNodes.removeWhere((_, lastSeen) {
-      return now.difference(lastSeen) > const Duration(seconds: 60);
+    // Retain presence entries longer than the active gossip window so UI can render
+    // tombstones (60-75s) without the data disappearing prematurely.
+    localSeenNodes.removeWhere((_, time) {
+      return now.difference(time).inSeconds > 85;
     });
-    final ids = localSeenNodes.keys.toList(growable: false);
+
+    final ids = localSeenNodes.entries
+        .where((e) => now.difference(e.value).inSeconds <= 60)
+        .map((e) => e.key)
+        .toList(growable: false);
     ids.sort();
     return ids;
   }
@@ -152,7 +158,7 @@ class BleDiscoveryService {
           final lastOk = lastFullSync[mac];
           if (lastOk != null &&
               DateTime.now().difference(lastOk) <=
-                  const Duration(seconds: 60)) {
+                  const Duration(seconds: 15)) {
             localSeenNodes[mapped] = DateTime.now();
           }
         }
@@ -164,7 +170,7 @@ class BleDiscoveryService {
           final lastOk = lastFullSync[mac];
           if (lastOk != null &&
               DateTime.now().difference(lastOk) <=
-                  const Duration(seconds: 60)) {
+                  const Duration(seconds: 15)) {
             localSeenNodes[stableNodeId] = DateTime.now();
           }
         }

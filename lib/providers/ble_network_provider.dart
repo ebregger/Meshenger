@@ -43,6 +43,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   String? _lastAdvertisedHashB64;
 
   int? _lastLocalProfileTimestampMs;
+  final Map<String, String> _nameById = <String, String>{};
 
   /// NodeID -> its advertised physical neighbors (gossip-based topology).
   final Map<String, Set<String>> _meshTopology = {};
@@ -129,33 +130,31 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     while (true) {
       // Either periodic tick or an explicit bump (e.g. after payload receive).
       await Future.any([
-        Future<void>.delayed(const Duration(seconds: 3)),
+        Future<void>.delayed(const Duration(seconds: 1)),
         _presenceBump.stream.first,
       ]);
 
       final now = DateTime.now();
       final out = <MeshNodeState>[];
 
-      final db = await _ref.read(databaseProvider.future);
-      final profiles = await db.fetchNodeProfiles();
-      final nameById = <String, String>{
-        for (final p in profiles)
-          if (p.displayName.trim().isNotEmpty) p.nodeId: p.displayName.trim(),
-      };
-      final allUsers = await db.getAllUserIds();
       final self = _localNodeId;
+      final nameById = Map<String, String>.from(_nameById);
 
-      // Prune stale direct presence (keep 10s grace beyond 60s).
+      // Retain presence entries long enough for tombstones to render.
       BleDiscoveryService.localSeenNodes.removeWhere((_, t) {
-        return now.difference(t) > const Duration(seconds: 70);
+        return now.difference(t).inSeconds > 85;
       });
 
-      // Prune stale gossip presence (keep 10s grace beyond 60s).
+      // Retain gossip entries long enough for tombstones to render.
       networkLastSeen.removeWhere((_, t) {
-        return now.difference(t) > const Duration(seconds: 70);
+        return now.difference(t).inSeconds > 85;
       });
 
       final directNodes = BleDiscoveryService.localSeenNodes.keys.toSet();
+      final allUsers = <String>{
+        ...BleDiscoveryService.localSeenNodes.keys,
+        ...networkLastSeen.keys,
+      };
 
       for (final id in allUsers) {
         if (self != null && id == self) continue;
@@ -163,18 +162,28 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         final localTime = BleDiscoveryService.localSeenNodes[id];
         final networkTime = networkLastSeen[id];
 
-        final localAgeS = localTime == null ? null : now.difference(localTime).inSeconds;
-        final netAgeS = networkTime == null ? null : now.difference(networkTime).inSeconds;
+        final secondsSinceLocal =
+            localTime != null ? now.difference(localTime).inSeconds : 9999;
+        final secondsSinceNetwork =
+            networkTime != null ? now.difference(networkTime).inSeconds : 9999;
 
-        final isDirect = localAgeS != null && localAgeS <= 60;
-        final isIndirect = !isDirect && netAgeS != null && netAgeS <= 60;
+        PeerStatus? status;
+        // 0 to 60 Seconds: Node is Active (Green or Yellow)
+        if (secondsSinceLocal <= 60) {
+          status = PeerStatus.direct;
+        } else if (secondsSinceNetwork <= 60) {
+          // Pruning-race guard: ignore "microscopic" self-gossip near disconnect.
+          if (localTime == null ||
+              networkTime!.difference(localTime).inSeconds > 2) {
+            status = PeerStatus.indirect;
+          }
+        }
+        // 61 to 75 Seconds: Node is Offline/Tombstoned (Gray)
+        else if (secondsSinceLocal <= 75 || secondsSinceNetwork <= 75) {
+          status = PeerStatus.disconnected;
+        }
 
-        final inGrace = !isDirect &&
-            !isIndirect &&
-            ((localAgeS != null && localAgeS <= 70) ||
-                (netAgeS != null && netAgeS <= 70));
-
-        if (!isDirect && !isIndirect && !inGrace) continue;
+        if (status == null) continue;
 
         var latestTime = localTime ?? DateTime.fromMillisecondsSinceEpoch(0);
         if (networkTime != null && networkTime.isAfter(latestTime)) {
@@ -183,7 +192,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
         final name = nameById[id] ?? (id.length <= 8 ? id : id.substring(0, 8));
         final mac = BleDiscoveryService.nodeIdToMac[id];
-        final routeViaId = isDirect ? null : _findRoute(id, directNodes);
+        final routeViaId =
+            status == PeerStatus.indirect ? _findRoute(id, directNodes) : null;
         final routeViaName =
             routeViaId == null ? null : (nameById[routeViaId] ?? routeViaId);
 
@@ -192,8 +202,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             id: id,
             name: name,
             macAddress: mac,
-            isDirect: isDirect,
-            inGrace: inGrace,
+            status: status,
             lastSeen: latestTime,
             routeViaId: routeViaId,
             routeViaName: routeViaName,
@@ -295,6 +304,13 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
     _localProfilesSub = db.watchNodeProfiles().listen((profiles) {
       if (!_meshSessionActive) return;
+      _nameById
+        ..clear()
+        ..addAll({
+          for (final p in profiles)
+            if (p.displayName.trim().isNotEmpty) p.nodeId: p.displayName.trim(),
+        });
+
       final matches = profiles.where((p) => p.nodeId == myId).toList();
       if (matches.isEmpty) return;
       final profile = matches.first;
@@ -676,8 +692,7 @@ class MeshNodeState {
     required this.id,
     required this.name,
     this.macAddress,
-    required this.isDirect,
-    required this.inGrace,
+    required this.status,
     required this.lastSeen,
     this.routeViaId,
     this.routeViaName,
@@ -686,8 +701,7 @@ class MeshNodeState {
   final String id;
   final String name;
   final String? macAddress;
-  final bool isDirect;
-  final bool inGrace;
+  final PeerStatus status;
   final DateTime lastSeen;
   final String? routeViaId;
   final String? routeViaName;
@@ -697,3 +711,5 @@ final activePeersProvider = StreamProvider<List<MeshNodeState>>((ref) async* {
   final notifier = ref.watch(bleNetworkProvider.notifier);
   yield* notifier.watchActivePeers();
 });
+
+enum PeerStatus { direct, indirect, disconnected }
