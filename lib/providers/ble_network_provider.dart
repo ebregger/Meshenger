@@ -437,7 +437,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 Uint8List.fromList(outBytes),
               );
               if (delta.isNotEmpty) {
-                debugPrint('📤 Mesh delta sent: tables=${delta.length}');
               }
               return;
             }
@@ -489,9 +488,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               if (dataRaw is! Map) return;
               final changeset = Map<String, dynamic>.from(dataRaw);
               if (changeset.isNotEmpty) {
-                debugPrint('📥 Mesh delta received: tables=${changeset.length}');
+                await db.mergeSyncChangeset(changeset);
               }
-              await db.mergeSyncChangeset(changeset);
 
               try {
                 final hashBytes = await db.getDatabaseHashBytes();

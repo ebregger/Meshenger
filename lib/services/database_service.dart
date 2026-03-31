@@ -17,6 +17,10 @@ class DatabaseService {
   SqliteCrdt? _db;
   Future<void>? _initTask;
 
+  // Stage 2: DB hash is expensive; cache it and invalidate on known writes/merges.
+  int? _cachedDbHashU32;
+  bool _dbHashDirty = true;
+
   Future<void> init() => _initTask ??= _initialize();
 
   Future<void> _initialize() async {
@@ -157,6 +161,9 @@ class DatabaseService {
   /// Uses CRDT HLC values so the token tracks true logical progress.
   Future<int> getDatabaseHash() async {
     await init();
+    if (!_dbHashDirty && _cachedDbHashU32 != null) {
+      return _cachedDbHashU32!;
+    }
     final result = await _crdt.query('''
       SELECT hlc FROM messages WHERE is_deleted = 0
       UNION ALL
@@ -193,7 +200,10 @@ class DatabaseService {
     }
 
     // Normalize into an unsigned 32-bit space.
-    return hash & 0xFFFFFFFF;
+    final out = hash & 0xFFFFFFFF;
+    _cachedDbHashU32 = out;
+    _dbHashDirty = false;
+    return out;
   }
 
   /// 4-byte big-endian representation of [getDatabaseHash].
@@ -239,6 +249,7 @@ class DatabaseService {
   /// [Hlc] instances — required by [Crdt.validateChangeset].
   Future<void> mergeSyncChangeset(Map<String, dynamic> changeset) async {
     await init();
+    _dbHashDirty = true;
     final hydrated = _decodeChangeset(jsonEncode(changeset));
     await _crdt.merge(_castChangeset(hydrated));
     await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -281,6 +292,7 @@ class DatabaseService {
 
   Future<void> upsertNodeProfile(NodeProfile value) async {
     await init();
+    _dbHashDirty = true;
     await _crdt.execute(
       '''
       INSERT INTO users (mesh_node_id, display_name, timestamp)
@@ -312,11 +324,11 @@ class DatabaseService {
         .watch(
           'SELECT mesh_node_id, display_name, timestamp FROM users WHERE is_deleted = 0 ORDER BY timestamp DESC',
         )
-        .map(
-          (rows) => rows
+        .map((rows) {
+          return rows
               .map((r) => nodeProfileFromRow(r.cast<String, Object?>()))
-              .toList(growable: false),
-        );
+              .toList(growable: false);
+        });
   }
 
   Future<List<String>> getAllUserIds() async {
@@ -349,6 +361,7 @@ class DatabaseService {
     if (trimmed.isEmpty) return;
 
     final nodeId = await IdentityService().getOrCreateMyNodeId();
+    _dbHashDirty = true;
     await _crdt.execute(
       '''
       INSERT INTO users (mesh_node_id, display_name, timestamp)
@@ -364,6 +377,7 @@ class DatabaseService {
   /// Uses [_crdt.execute] so sql_crdt injects `hlc` / `modified` and advances the clock.
   Future<void> upsertTextMessage(TextMessage value) async {
     await init();
+    _dbHashDirty = true;
     await _crdt.execute(
       '''
       INSERT INTO messages (msg_id, origin_node_id, text_content, timestamp)
@@ -404,7 +418,6 @@ class DatabaseService {
       final list = rows
           .map((r) => textMessageFromRow(r.cast<String, Object?>()))
           .toList(growable: false);
-      debugPrint('📺 STREAM EMITTED: ${list.length} messages');
       return list;
     });
   }
@@ -451,6 +464,7 @@ class DatabaseService {
 
   Future<void> upsertBitmapChunk(BitmapChunk value) async {
     await init();
+    _dbHashDirty = true;
     await _crdt.execute(
       '''
       INSERT INTO bitmap_chunks (file_id, chunk_index, total_chunks, chunk_data)
