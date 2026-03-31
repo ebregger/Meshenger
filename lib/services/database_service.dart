@@ -239,19 +239,9 @@ class DatabaseService {
   /// [Hlc] instances — required by [Crdt.validateChangeset].
   Future<void> mergeSyncChangeset(Map<String, dynamic> changeset) async {
     await init();
-    final rowsRaw = changeset['messages'];
-    if (rowsRaw is List) {
-      for (final row in rowsRaw) {
-        if (row is! Map) continue;
-        final id = row['msg_id'];
-        debugPrint("📥 MERGING MSG: $id");
-      }
-    }
     final hydrated = _decodeChangeset(jsonEncode(changeset));
-    debugPrint('💾 ATTEMPTING MERGE...');
     await _crdt.merge(_castChangeset(hydrated));
     await Future<void>.delayed(const Duration(milliseconds: 100));
-    debugPrint('✅ MERGE SUCCESSFUL');
   }
 
   /// Parses mesh sync JSON and restores hybrid logical clocks for CRDT merge.

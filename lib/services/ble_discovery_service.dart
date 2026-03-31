@@ -165,7 +165,6 @@ class BleDiscoveryService {
     deadMacUntil.clear();
     deadHashUntil.clear();
     _notifyConnectionPhase();
-    debugPrint('🔓 BLE scan session reset (lock + cooldowns cleared)');
 
     await _scanSub?.cancel();
 
@@ -254,7 +253,6 @@ class BleDiscoveryService {
 
         _hashCooldowns[remoteHashInt] = DateTime.now();
 
-        debugPrint('🎯 DISCOVERED MESH NODE: $discoveredId');
         onDiscovered(discoveredId);
         unawaited(_runMeshInitiatorHandshake(myNodeId, remoteHashInt, r.device));
       }

@@ -405,8 +405,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               // 2) Respond with an offer delta (surgical changeset).
               if (senderHash == null || vectorRaw is! Map) return;
               final remoteVector = Map<String, dynamic>.from(vectorRaw);
-
-              debugPrint('🤝 Received Offer. Calculating Delta...');
               // Prefer direct MAC from native GATT callback (more reliable than scan routing).
               final targetMac =
                   senderMac != '<unknown>' ? senderMac : BleDiscoveryService.hashToMac[senderHash];
@@ -438,11 +436,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 targetMac,
                 Uint8List.fromList(outBytes),
               );
-
               if (delta.isNotEmpty) {
-                debugPrint('🚀 Sent Surgical Delta to $targetMac');
-              } else {
-                debugPrint('📨 Sent Gossip Delta to $targetMac');
+                debugPrint('📤 Mesh delta sent: tables=${delta.length}');
               }
               return;
             }
@@ -493,8 +488,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               final dataRaw = root['data'] ?? root['changes'];
               if (dataRaw is! Map) return;
               final changeset = Map<String, dynamic>.from(dataRaw);
-
-              debugPrint('📥 Merging Delta Payload...');
+              if (changeset.isNotEmpty) {
+                debugPrint('📥 Mesh delta received: tables=${changeset.length}');
+              }
               await db.mergeSyncChangeset(changeset);
 
               try {
@@ -581,8 +577,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             shortNodeId == BleDiscoveryService.shortNodeIdFromFull(self))) {
       return;
     }
-
-    debugPrint('🎯 DISCOVERED MESH NODE: $shortNodeId');
 
     final ids = Set<String>.from(state.discoveredNodeIds)..add(shortNodeId);
     state = state.copyWith(discoveredNodeIds: ids);
