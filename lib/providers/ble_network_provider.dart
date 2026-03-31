@@ -154,26 +154,67 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           try {
             final decompressed = zlib.decode(_incomingBuffer);
             final String jsonStr = utf8.decode(decompressed);
-            final raw = jsonDecode(jsonStr);
-            if (raw is! Map) return;
-            final changeset = Map<String, dynamic>.from(raw);
+            final decodedJson = jsonDecode(jsonStr);
+            if (decodedJson is! Map) return;
+            final root = Map<String, dynamic>.from(decodedJson);
+            final type = root['type'] as String?;
 
             final db = await _ref.read(databaseProvider.future);
-            await db.mergeSyncChangeset(changeset);
 
-            try {
-              final hash = await db.getDatabaseHash();
-              final b64 = base64Encode(hash);
-              if (b64 != _lastAdvertisedHashB64) {
-                _lastAdvertisedHashB64 = b64;
-                await _nativeMesh.updateAdvertiserHash(hash);
-                _discovery.setLocalHash(hash);
+            if (type == 'offer') {
+              final senderHash = root['sender_hash'] as String?;
+              final vectorRaw = root['vector'];
+              if (senderHash == null || vectorRaw is! Map) return;
+              final remoteVector = Map<String, dynamic>.from(vectorRaw);
+
+              debugPrint('🤝 Received Offer. Calculating Delta...');
+              final targetMac = BleDiscoveryService.hashToMac[senderHash];
+              if (targetMac == null) {
+                debugPrint('⚠️ Offer: no hash route for sender_hash=$senderHash');
+                return;
               }
-            } catch (e, st) {
-              debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
+
+              final delta = await db.getDeltaChangeset(remoteVector);
+              if (delta.isNotEmpty) {
+                final deltaEnvelope = <String, dynamic>{
+                  'type': 'delta',
+                  'sender_id': db.localNodeId,
+                  'data': delta,
+                };
+                final outBytes = zlib.encode(
+                  utf8.encode(jsonEncode(deltaEnvelope)),
+                );
+                await _nativeMesh.sendPayload(
+                  targetMac,
+                  Uint8List.fromList(outBytes),
+                );
+                debugPrint('🚀 Sent Surgical Delta to $targetMac');
+              } else {
+                debugPrint('✅ Remote is already up to date.');
+              }
+              return;
             }
 
-            // Scanner stays on; advertiser hash update is enough.
+            if (type == 'delta' || type == null) {
+              final dataRaw = root['data'];
+              if (dataRaw is! Map) return;
+              final changeset = Map<String, dynamic>.from(dataRaw);
+
+              debugPrint('📥 Merging Delta Payload...');
+              await db.mergeSyncChangeset(changeset);
+
+              try {
+                final hash = await db.getDatabaseHash();
+                final b64 = base64Encode(hash);
+                if (b64 != _lastAdvertisedHashB64) {
+                  _lastAdvertisedHashB64 = b64;
+                  await _nativeMesh.updateAdvertiserHash(hash);
+                  _discovery.setLocalHash(hash);
+                }
+              } catch (e, st) {
+                debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
+              }
+            }
           } catch (e) {
             debugPrint('Mesh merge error: $e');
           } finally {

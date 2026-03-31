@@ -61,6 +61,90 @@ class DatabaseService {
     return db;
   }
 
+  /// Underlying sql_crdt node id (canonical HLC identity).
+  String get localNodeId => _crdt.nodeId;
+
+  /// Global max HLC per logical node across mesh CRDT tables (live rows only).
+  Future<Map<String, String>> getVersionVector() async {
+    await init();
+    final result = await _crdt.query('''
+      SELECT node_id, MAX(hlc) AS max_hlc
+      FROM (
+        SELECT node_id, hlc FROM messages WHERE is_deleted = 0
+        UNION ALL
+        SELECT node_id, hlc FROM users WHERE is_deleted = 0
+        UNION ALL
+        SELECT node_id, hlc FROM bitmap_chunks WHERE is_deleted = 0
+      )
+      WHERE node_id IS NOT NULL
+      GROUP BY node_id
+    ''');
+    return {
+      for (final row in result)
+        if (row['node_id'] != null && row['max_hlc'] != null)
+          row['node_id']! as String: row['max_hlc']! as String,
+    };
+  }
+
+  static Map<String, String> _normalizeRemoteVector(
+    Map<String, dynamic> remoteVector,
+  ) {
+    return {
+      for (final e in remoteVector.entries)
+        if (e.value != null) e.key.toString(): e.value.toString(),
+    };
+  }
+
+  static String? _nodeIdForDeltaRow(Map<String, Object?> row, String rHlc) {
+    var actualNodeId = row['node_id'];
+    String? id =
+        actualNodeId is String ? actualNodeId : actualNodeId?.toString();
+    if (id != null && id.isEmpty) id = null;
+    if (id == null) {
+      try {
+        id = Hlc.parse(rHlc).nodeId;
+      } catch (_) {
+        return null;
+      }
+    }
+    return id;
+  }
+
+  /// Rows strictly newer than [remoteVector] per node (column or HLC-derived id).
+  Future<Map<String, dynamic>> getDeltaChangeset(
+    Map<String, dynamic> remoteVector,
+  ) async {
+    await init();
+    final remote = _normalizeRemoteVector(remoteVector);
+    final fullChangeset = await _crdt.getChangeset();
+    final delta = <String, dynamic>{};
+
+    fullChangeset.forEach((table, records) {
+      final filtered = records.where((r) {
+        final row = Map<String, Object?>.from(
+          (r as Map).map((k, v) => MapEntry(k.toString(), v)),
+        );
+        final rHlcRaw = row['hlc'];
+        if (rHlcRaw == null) return true;
+
+        final rHlc = rHlcRaw is String ? rHlcRaw : rHlcRaw.toString();
+        if (rHlc.isEmpty) return true;
+
+        final actualNodeId = _nodeIdForDeltaRow(row, rHlc);
+        if (actualNodeId == null) return true;
+
+        final remoteMaxHlc = remote[actualNodeId];
+        if (remoteMaxHlc == null) return true;
+
+        return rHlc.compareTo(remoteMaxHlc) > 0;
+      }).toList();
+
+      if (filtered.isNotEmpty) delta[table] = filtered;
+    });
+
+    return delta;
+  }
+
   Future<void> dispose() async {
     await _db?.close();
     _db = null;

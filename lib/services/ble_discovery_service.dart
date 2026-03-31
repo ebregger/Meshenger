@@ -16,6 +16,9 @@ const int meshShortNodeIdLength = 8;
 
 /// Mesh discovery: central scanning via [FlutterBluePlus]; GAP advertise lives in [BleGattServer].
 class BleDiscoveryService {
+  /// Advertised DB hash (base64) → last seen BLE [BluetoothDevice.remoteId] for offer replies.
+  static final Map<String, String> hashToMac = {};
+
   BleDiscoveryService(
     this._ref, {
     this.onConnectionPhaseChanged,
@@ -91,6 +94,7 @@ class BleDiscoveryService {
   }) async {
     _isConnecting = false;
     _hashCooldowns.clear();
+    hashToMac.clear();
     _notifyConnectionPhase();
     debugPrint('🔓 BLE scan session reset (lock + cooldowns cleared)');
 
@@ -108,6 +112,7 @@ class BleDiscoveryService {
         final remoteHash = _tryGetRemoteHash(r);
         if (remoteHash == null) continue;
         final remoteHashStr = base64Encode(remoteHash);
+        hashToMac[remoteHashStr] = r.device.remoteId.str;
         final last = _hashCooldowns[remoteHashStr];
         if (last != null && DateTime.now().difference(last).inSeconds < 10) {
           continue;
@@ -135,8 +140,15 @@ class BleDiscoveryService {
     _notifyConnectionPhase();
     try {
       final db = await _ref.read(databaseProvider.future);
-      final changeset = await db.getSyncChangeset(null);
-      final payload = zlib.encode(utf8.encode(jsonEncode(changeset)));
+      final vector = await db.getVersionVector();
+      final myHashBytes = await db.getDatabaseHash();
+      final envelope = <String, dynamic>{
+        'type': 'offer',
+        'sender_id': db.localNodeId,
+        'sender_hash': base64Encode(myHashBytes),
+        'vector': vector,
+      };
+      final payload = zlib.encode(utf8.encode(jsonEncode(envelope)));
       final macAddress = device.remoteId.str;
       await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload));
     } catch (_) {
