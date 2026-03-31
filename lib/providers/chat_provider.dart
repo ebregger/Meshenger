@@ -5,15 +5,16 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/generated/mesh_data.pb.dart';
+import '../models/text_message_with_author.dart';
 import 'database_provider.dart';
 import 'identity_provider.dart';
 
 /// Live messages from the local CRDT store (updates when the DB changes or mesh merges).
 ///
 /// Single global [StreamProvider] (no `.family`) so the whole app shares one subscription.
-final chatProvider = StreamProvider<List<TextMessage>>((ref) async* {
+final chatProvider = StreamProvider<List<TextMessageWithAuthor>>((ref) async* {
   final db = await ref.watch(databaseProvider.future);
-  await for (final batch in db.watchTextMessages()) {
+  await for (final batch in db.watchTextMessagesWithAuthors()) {
     yield batch;
   }
 });

@@ -3,10 +3,12 @@ class ChatMessage {
   const ChatMessage({
     required this.id,
     required this.body,
+    required this.authorName,
     required this.isSent,
   });
 
   final String id;
   final String body;
+  final String authorName;
   final bool isSent;
 }

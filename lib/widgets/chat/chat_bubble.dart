@@ -45,12 +45,29 @@ class ChatBubble extends StatelessWidget {
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Text(
-              message.body,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: textColor,
-                height: 1.35,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!isSent && message.authorName.trim().isNotEmpty) ...[
+                  Text(
+                    message.authorName,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: textColor.withValues(alpha: 0.9),
+                      fontWeight: FontWeight.w600,
+                      height: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                Text(
+                  message.body,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: textColor,
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ),
           ),
         ),

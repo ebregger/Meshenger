@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:fixnum/fixnum.dart' show Int64;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite_crdt/sqlite_crdt.dart';
 
 import '../models/generated/mesh_data.pb.dart';
+import '../models/text_message_with_author.dart';
+import 'identity_service.dart';
 import 'database_mappers.dart';
 
 class DatabaseService {
@@ -306,6 +309,48 @@ class DatabaseService {
         );
   }
 
+  Future<List<String>> getAllUserIds() async {
+    await init();
+    final rows = await _crdt.query(
+      'SELECT mesh_node_id FROM users WHERE is_deleted = 0',
+    );
+    return rows
+        .map((r) => r['mesh_node_id']?.toString() ?? '')
+        .where((s) => s.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<NodeProfile?> fetchNodeProfile(String nodeId) async {
+    await init();
+    final rows = await _crdt.query(
+      'SELECT mesh_node_id, display_name, timestamp FROM users WHERE is_deleted = 0 AND mesh_node_id = ?1 ORDER BY timestamp DESC',
+      [nodeId],
+    );
+    if (rows.isEmpty) return null;
+    return nodeProfileFromRow(rows.first);
+  }
+
+  /// Updates the local display name in the CRDT-synced `users` table.
+  ///
+  /// This uses [IdentityService] so the user key matches `messages.origin_node_id`.
+  Future<void> setLocalDisplayName(String name) async {
+    await init();
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+
+    final nodeId = await IdentityService().getOrCreateMyNodeId();
+    await _crdt.execute(
+      '''
+      INSERT INTO users (mesh_node_id, display_name, timestamp)
+      VALUES (?1, ?2, ?3)
+      ON CONFLICT(mesh_node_id) DO UPDATE SET
+        display_name = excluded.display_name,
+        timestamp = excluded.timestamp
+      ''',
+      [nodeId, trimmed, DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
   /// Uses [_crdt.execute] so sql_crdt injects `hlc` / `modified` and advances the clock.
   Future<void> upsertTextMessage(TextMessage value) async {
     await init();
@@ -351,6 +396,46 @@ class DatabaseService {
           .toList(growable: false);
       debugPrint('📺 STREAM EMITTED: ${list.length} messages');
       return list;
+    });
+  }
+
+  /// Same as [watchTextMessages], but joins `messages` + `users` to include
+  /// the author's display name.
+  Stream<List<TextMessageWithAuthor>> watchTextMessagesWithAuthors() async* {
+    await init();
+    const sql = '''
+      SELECT
+        m.msg_id,
+        m.origin_node_id,
+        m.text_content,
+        m.timestamp,
+        COALESCE(u.display_name, SUBSTR(m.origin_node_id, 1, 8)) AS author_name
+      FROM messages m
+      LEFT JOIN users u ON m.origin_node_id = u.mesh_node_id
+      WHERE m.is_deleted = 0
+      ORDER BY m.timestamp ASC
+    ''';
+    yield* _crdt.watch(sql).map((rows) {
+      return rows.map((r) {
+        final msgId = r['msg_id']?.toString() ?? '';
+        final originNodeId = r['origin_node_id']?.toString() ?? '';
+        final textContent = r['text_content']?.toString() ?? '';
+        final timestampRaw = r['timestamp'];
+        final timestampMs = timestampRaw is Int64
+            ? timestampRaw.toInt()
+            : int.tryParse(timestampRaw?.toString() ?? '') ?? 0;
+        final authorName = r['author_name']?.toString() ?? '';
+        final shortId = originNodeId.length <= 8
+            ? originNodeId
+            : originNodeId.substring(0, 8);
+        return TextMessageWithAuthor(
+          msgId: msgId,
+          originNodeId: originNodeId,
+          textContent: textContent,
+          timestamp: Int64(timestampMs),
+          authorName: authorName.isNotEmpty ? authorName : shortId,
+        );
+      }).toList(growable: false);
     });
   }
 

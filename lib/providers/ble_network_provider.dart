@@ -34,6 +34,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   StreamSubscription<BluetoothAdapterState>? _adapterSub;
   StreamSubscription<List<TextMessage>>? _localMessagesSub;
+  StreamSubscription<List<NodeProfile>>? _localProfilesSub;
   StreamSubscription<Uint8List>? _nativePayloadSub;
   final List<int> _incomingBuffer = <int>[];
   bool _meshSessionActive = false;
@@ -41,11 +42,19 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   bool _primeMessageListLength = true;
   String? _lastAdvertisedHashB64;
 
+  int? _lastLocalProfileTimestampMs;
+
   /// NodeID -> its advertised physical neighbors (gossip-based topology).
   final Map<String, Set<String>> _meshTopology = {};
 
+  /// Stable nodeId -> last time we've heard about it via gossip (presence window).
+  final Map<String, DateTime> networkLastSeen = {};
+
   /// Periodically refreshes UI classification from the Active Neighbor Table.
   Timer? _neighborRefreshTimer;
+
+  final StreamController<void> _presenceBump =
+      StreamController<void>.broadcast();
 
   void _handleMeshConnectionPhaseChanged() {
     _publishRadioFlags();
@@ -86,6 +95,115 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       directNeighborIds: direct,
       indirectNeighborIds: indirect,
     );
+  }
+
+  String? _findRoute(String targetId, Set<String> directNodes) {
+    if (directNodes.contains(targetId)) return null;
+
+    // 1-Hop check
+    for (final d in directNodes) {
+      if (_meshTopology[d]?.contains(targetId) == true) return d;
+    }
+
+    // Multi-hop BFS: track which direct node is acting as the bridge.
+    final visited = Set<String>.from(directNodes);
+    final queue = directNodes.map((d) => MapEntry(d, d)).toList(growable: true);
+
+    while (queue.isNotEmpty) {
+      final curr = queue.removeAt(0);
+      final neighbors = _meshTopology[curr.key] ?? const <String>{};
+
+      if (neighbors.contains(targetId)) return curr.value;
+
+      for (final n in neighbors) {
+        if (!visited.contains(n)) {
+          visited.add(n);
+          queue.add(MapEntry(n, curr.value));
+        }
+      }
+    }
+    return null;
+  }
+
+  Stream<List<MeshNodeState>> watchActivePeers() async* {
+    while (true) {
+      // Either periodic tick or an explicit bump (e.g. after payload receive).
+      await Future.any([
+        Future<void>.delayed(const Duration(seconds: 3)),
+        _presenceBump.stream.first,
+      ]);
+
+      final now = DateTime.now();
+      final out = <MeshNodeState>[];
+
+      final db = await _ref.read(databaseProvider.future);
+      final profiles = await db.fetchNodeProfiles();
+      final nameById = <String, String>{
+        for (final p in profiles)
+          if (p.displayName.trim().isNotEmpty) p.nodeId: p.displayName.trim(),
+      };
+      final allUsers = await db.getAllUserIds();
+      final self = _localNodeId;
+
+      // Prune stale direct presence (keep 10s grace beyond 60s).
+      BleDiscoveryService.localSeenNodes.removeWhere((_, t) {
+        return now.difference(t) > const Duration(seconds: 70);
+      });
+
+      // Prune stale gossip presence (keep 10s grace beyond 60s).
+      networkLastSeen.removeWhere((_, t) {
+        return now.difference(t) > const Duration(seconds: 70);
+      });
+
+      final directNodes = BleDiscoveryService.localSeenNodes.keys.toSet();
+
+      for (final id in allUsers) {
+        if (self != null && id == self) continue;
+
+        final localTime = BleDiscoveryService.localSeenNodes[id];
+        final networkTime = networkLastSeen[id];
+
+        final localAgeS = localTime == null ? null : now.difference(localTime).inSeconds;
+        final netAgeS = networkTime == null ? null : now.difference(networkTime).inSeconds;
+
+        final isDirect = localAgeS != null && localAgeS <= 60;
+        final isIndirect = !isDirect && netAgeS != null && netAgeS <= 60;
+
+        final inGrace = !isDirect &&
+            !isIndirect &&
+            ((localAgeS != null && localAgeS <= 70) ||
+                (netAgeS != null && netAgeS <= 70));
+
+        if (!isDirect && !isIndirect && !inGrace) continue;
+
+        var latestTime = localTime ?? DateTime.fromMillisecondsSinceEpoch(0);
+        if (networkTime != null && networkTime.isAfter(latestTime)) {
+          latestTime = networkTime;
+        }
+
+        final name = nameById[id] ?? (id.length <= 8 ? id : id.substring(0, 8));
+        final mac = BleDiscoveryService.nodeIdToMac[id];
+        final routeViaId = isDirect ? null : _findRoute(id, directNodes);
+        final routeViaName =
+            routeViaId == null ? null : (nameById[routeViaId] ?? routeViaId);
+
+        out.add(
+          MeshNodeState(
+            id: id,
+            name: name,
+            macAddress: mac,
+            isDirect: isDirect,
+            inGrace: inGrace,
+            lastSeen: latestTime,
+            routeViaId: routeViaId,
+            routeViaName: routeViaName,
+          ),
+        );
+      }
+
+      out.sort((a, b) => a.name.compareTo(b.name));
+      yield out;
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -170,6 +288,37 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     });
   }
 
+  Future<void> _attachLocalUserProfileHashUpdateTrigger(String myId) async {
+    await _localProfilesSub?.cancel();
+    _lastLocalProfileTimestampMs = null;
+    final db = await _ref.read(databaseProvider.future);
+
+    _localProfilesSub = db.watchNodeProfiles().listen((profiles) {
+      if (!_meshSessionActive) return;
+      final matches = profiles.where((p) => p.nodeId == myId).toList();
+      if (matches.isEmpty) return;
+      final profile = matches.first;
+
+      final tsMs = profile.timestamp.toInt();
+      if (_lastLocalProfileTimestampMs == tsMs) return;
+      _lastLocalProfileTimestampMs = tsMs;
+
+      Future<void>.microtask(() async {
+        try {
+          final hashBytes = await db.getDatabaseHashBytes();
+          final b64 = base64Encode(hashBytes);
+          if (b64 != _lastAdvertisedHashB64) {
+            _lastAdvertisedHashB64 = b64;
+            await _nativeMesh.updateAdvertiserHash(hashBytes);
+            _discovery.setLocalHash(hashBytes);
+          }
+        } catch (e, st) {
+          debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
+        }
+      });
+    });
+  }
+
   Future<void> _attachNativeIncomingSync() async {
     await _nativePayloadSub?.cancel();
     _nativePayloadSub = _nativeMesh.incomingPayloads.listen((chunk) {
@@ -190,17 +339,25 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             final db = await _ref.read(databaseProvider.future);
 
             if (type == 'offer') {
-              final senderHash = root['sender_hash'] as String?;
+              final senderHash = root['sender_hash'] as int?;
               final senderId = root['sender_id'] as String?;
               final neighborsRaw = root['neighbors'];
               final vectorRaw = root['vector'];
 
               // 1) Store topology for the sender (offer gossip).
               if (senderId != null) {
+                final now = DateTime.now();
+                // The sender physically transmitted this payload: treat as Direct immediately.
+                BleDiscoveryService.localSeenNodes[senderId] = now;
+                networkLastSeen[senderId] = now;
+
                 final neighborSet = <String>{};
                 if (neighborsRaw is List) {
                   for (final n in neighborsRaw) {
-                    if (n is String) neighborSet.add(n);
+                    if (n is String) {
+                      neighborSet.add(n);
+                      networkLastSeen[n] = now;
+                    }
                   }
                 }
                 _meshTopology[senderId] = neighborSet;
@@ -208,8 +365,20 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 // Also teach neighbor-table routing: advertised hash -> node id.
                 if (senderHash != null) {
                   BleDiscoveryService.hashToNodeId[senderHash] = senderId;
+                  final mac = BleDiscoveryService.hashToMac[senderHash];
+                  if (mac != null) {
+                    BleDiscoveryService.macToNodeId[mac] = senderId;
+
+                    // Upgrade UI "discovered" label from MAC -> nodeId.
+                    final ids = Set<String>.from(state.discoveredNodeIds);
+                    if (ids.remove(mac)) {
+                      ids.add(senderId);
+                      state = state.copyWith(discoveredNodeIds: ids);
+                    }
+                  }
                 }
                 _refreshNeighborClassification();
+                _presenceBump.add(null);
               }
 
               // 2) Respond with an offer delta (surgical changeset).
@@ -227,14 +396,14 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
               final delta = await db.getDeltaChangeset(remoteVector);
 
-              final ourHashBytes = await db.getDatabaseHashBytes();
-              final ourSenderHash = base64Encode(ourHashBytes);
+              final ourSenderHash = await db.getDatabaseHash();
+              final localId = _localNodeId ?? db.localNodeId;
 
               // Always send back a delta envelope so the initiator receives our
               // neighbor gossip even when no changes are needed.
               final deltaEnvelope = <String, dynamic>{
                 'type': 'delta',
-                'sender_id': db.localNodeId,
+                'sender_id': localId,
                 'sender_hash': ourSenderHash,
                 'neighbors': _discovery.currentNeighborIds,
                 'data': delta,
@@ -258,22 +427,41 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             if (type == 'delta' || type == null) {
               // Update topology for delta gossip.
               if (type == 'delta') {
-                final senderHash = root['sender_hash'] as String?;
+                final senderHash = root['sender_hash'] as int?;
                 final senderId = root['sender_id'] as String?;
                 final neighborsRaw = root['neighbors'];
 
                 if (senderId != null) {
+                  final now = DateTime.now();
+                  // The sender physically transmitted this payload: treat as Direct immediately.
+                  BleDiscoveryService.localSeenNodes[senderId] = now;
+                  networkLastSeen[senderId] = now;
+
                   final neighborSet = <String>{};
                   if (neighborsRaw is List) {
                     for (final n in neighborsRaw) {
-                      if (n is String) neighborSet.add(n);
+                      if (n is String) {
+                        neighborSet.add(n);
+                        networkLastSeen[n] = now;
+                      }
                     }
                   }
                   _meshTopology[senderId] = neighborSet;
                   if (senderHash != null) {
                     BleDiscoveryService.hashToNodeId[senderHash] = senderId;
+                    final mac = BleDiscoveryService.hashToMac[senderHash];
+                    if (mac != null) {
+                      BleDiscoveryService.macToNodeId[mac] = senderId;
+
+                      final ids = Set<String>.from(state.discoveredNodeIds);
+                      if (ids.remove(mac)) {
+                        ids.add(senderId);
+                        state = state.copyWith(discoveredNodeIds: ids);
+                      }
+                    }
                   }
                   _refreshNeighborClassification();
+                  _presenceBump.add(null);
                 }
               }
 
@@ -333,6 +521,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         onDiscovered: _onPeerDiscovered,
       );
       await _attachLocalMessageQuickScanTrigger(myId);
+      await _attachLocalUserProfileHashUpdateTrigger(myId);
       _publishRadioFlags();
       _refreshNeighborClassification();
       _neighborRefreshTimer?.cancel();
@@ -349,6 +538,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       _nativePayloadSub = null;
       await _localMessagesSub?.cancel();
       _localMessagesSub = null;
+      await _localProfilesSub?.cancel();
+      _localProfilesSub = null;
       _publishRadioFlags();
     }
   }
@@ -383,6 +574,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     _nativePayloadSub = null;
     await _localMessagesSub?.cancel();
     _localMessagesSub = null;
+    await _localProfilesSub?.cancel();
+    _localProfilesSub = null;
     await _discovery.stopAll();
     _publishRadioFlags();
   }
@@ -403,6 +596,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       _nativePayloadSub = null;
       await _localMessagesSub?.cancel();
       _localMessagesSub = null;
+      await _localProfilesSub?.cancel();
+      _localProfilesSub = null;
       _meshSessionActive = false;
       _publishRadioFlags();
       return outcome;
@@ -441,6 +636,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       onDiscovered: _onPeerDiscovered,
     );
     await _attachLocalMessageQuickScanTrigger(myId);
+    await _attachLocalUserProfileHashUpdateTrigger(myId);
     _publishRadioFlags();
   }
 
@@ -451,6 +647,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     _nativePayloadSub = null;
     await _localMessagesSub?.cancel();
     _localMessagesSub = null;
+    await _localProfilesSub?.cancel();
+    _localProfilesSub = null;
     await _discovery.stopAll();
     _publishRadioFlags();
   }
@@ -460,6 +658,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     unawaited(_adapterSub?.cancel());
     unawaited(_nativePayloadSub?.cancel());
     unawaited(_localMessagesSub?.cancel());
+    unawaited(_localProfilesSub?.cancel());
+    _presenceBump.close();
     unawaited(_discovery.stopAll());
     super.dispose();
   }
@@ -470,3 +670,30 @@ final bleNetworkProvider =
     StateNotifierProvider<BleNetworkNotifier, BleNetworkState>(
   (ref) => BleNetworkNotifier(ref),
 );
+
+class MeshNodeState {
+  const MeshNodeState({
+    required this.id,
+    required this.name,
+    this.macAddress,
+    required this.isDirect,
+    required this.inGrace,
+    required this.lastSeen,
+    this.routeViaId,
+    this.routeViaName,
+  });
+
+  final String id;
+  final String name;
+  final String? macAddress;
+  final bool isDirect;
+  final bool inGrace;
+  final DateTime lastSeen;
+  final String? routeViaId;
+  final String? routeViaName;
+}
+
+final activePeersProvider = StreamProvider<List<MeshNodeState>>((ref) async* {
+  final notifier = ref.watch(bleNetworkProvider.notifier);
+  yield* notifier.watchActivePeers();
+});

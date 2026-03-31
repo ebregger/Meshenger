@@ -2,16 +2,27 @@ import 'package:flutter/material.dart';
 
 /// Compact “connected device” tile for the horizontal strip.
 class DeviceChip extends StatelessWidget {
-  const DeviceChip({super.key, required this.label});
+  const DeviceChip({
+    super.key,
+    required this.label,
+    this.accentColor,
+    this.faded = false,
+  });
 
   final String label;
+  final Color? accentColor;
+  final bool faded;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final iconColor = accentColor ?? scheme.primary;
+    final opacity = faded ? 0.55 : 1.0;
 
-    return Material(
+    return Opacity(
+      opacity: opacity,
+      child: Material(
       elevation: 0,
       color: scheme.surfaceContainerHigh.withValues(alpha: 0.95),
       shape: RoundedRectangleBorder(
@@ -29,7 +40,7 @@ class DeviceChip extends StatelessWidget {
             Icon(
               Icons.bluetooth_connected_rounded,
               size: 18,
-              color: scheme.primary,
+              color: iconColor,
             ),
             const SizedBox(width: 8),
             Text(
@@ -41,6 +52,7 @@ class DeviceChip extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
