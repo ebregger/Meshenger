@@ -39,6 +39,8 @@ class MainActivity : FlutterActivity() {
   private var advertiseCallback: AdvertiseCallback? = null
   private var advertiseSettings: AdvertiseSettings? = null
   private var currentAdvertiserHash: ByteArray = byteArrayOf(1)
+  private val MESH_MFG_ID = 0xFFE0
+  private val MESH_MAGIC: ByteArray = byteArrayOf(0x4D, 0x45, 0x53, 0x48) // 'M''E''S''H'
 
   private val SERVICE_UUID = UUID.fromString("c7e4f1a2-9b3d-4a8e-a1f6-2d5e8b9c0a4f")
   private val CHARACTERISTIC_UUID =
@@ -125,7 +127,12 @@ class MainActivity : FlutterActivity() {
             if (characteristic.uuid != CHARACTERISTIC_UUID) return
             val bytes = value ?: ByteArray(0)
             Handler(Looper.getMainLooper()).post {
-              eventSink?.success(bytes)
+              // Include sender MAC so Dart can reply even if scan routing isn't ready.
+              val payload: HashMap<String, Any> = hashMapOf(
+                "mac" to device.address,
+                "bytes" to bytes
+              )
+              eventSink?.success(payload)
             }
           } catch (t: Throwable) {
             Log.e(TAG, "Failed pushing payload to Flutter", t)
@@ -149,16 +156,37 @@ class MainActivity : FlutterActivity() {
           return
         }
 
-      // Start BLE advertising so FlutterBluePlus can scan/filter by SERVICE_UUID.
+      val hashBytes = coercePayloadBytes(call.argument<Any?>("hash"))
+      if (hashBytes != null && hashBytes.isNotEmpty()) {
+        currentAdvertiserHash = hashBytes
+      }
+
+      // Ensure the GATT service exists before we advertise.
+      val writeNoResponseCharacteristic = BluetoothGattCharacteristic(
+        CHARACTERISTIC_UUID,
+        // Support both write-with-response (client reliability) and no-response.
+        // Still strictly PERMISSION_WRITE (no reads, no encryption requirements).
+        BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE or BluetoothGattCharacteristic.PROPERTY_WRITE,
+        BluetoothGattCharacteristic.PERMISSION_WRITE
+      )
+
+      val service = BluetoothGattService(
+        SERVICE_UUID,
+        BluetoothGattService.SERVICE_TYPE_PRIMARY
+      )
+      service.addCharacteristic(writeNoResponseCharacteristic)
+
+      val added = bluetoothGattServer?.addService(service) ?: false
+      if (!added) {
+        result.error("service_add_failed", "Failed to add GATT service", null)
+        return
+      }
+
+      // Start BLE advertising (manufacturer payload) after service is registered.
       advertiser = adapter.bluetoothLeAdvertiser
       if (advertiser == null) {
         result.error("advertiser_unavailable", "BluetoothLeAdvertiser is null", null)
         return
-      }
-
-      val hashBytes = coercePayloadBytes(call.argument<Any?>("hash"))
-      if (hashBytes != null && hashBytes.isNotEmpty()) {
-        currentAdvertiserHash = hashBytes
       }
 
       val settings = AdvertiseSettings.Builder()
@@ -181,24 +209,6 @@ class MainActivity : FlutterActivity() {
       }
 
       advertiser?.startAdvertising(settings, data, advertiseCallback)
-
-      val writeNoResponseCharacteristic = BluetoothGattCharacteristic(
-        CHARACTERISTIC_UUID,
-        BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
-        BluetoothGattCharacteristic.PERMISSION_WRITE
-      )
-
-      val service = BluetoothGattService(
-        SERVICE_UUID,
-        BluetoothGattService.SERVICE_TYPE_PRIMARY
-      )
-      service.addCharacteristic(writeNoResponseCharacteristic)
-
-      val added = bluetoothGattServer?.addService(service) ?: false
-      if (!added) {
-        result.error("service_add_failed", "Failed to add GATT service", null)
-        return
-      }
 
       result.success(null)
     } catch (t: Throwable) {
@@ -233,8 +243,11 @@ class MainActivity : FlutterActivity() {
   }
 
   private fun buildAdvertiseData(hash: ByteArray): AdvertiseData {
+    val payload = ByteArray(MESH_MAGIC.size + hash.size)
+    System.arraycopy(MESH_MAGIC, 0, payload, 0, MESH_MAGIC.size)
+    System.arraycopy(hash, 0, payload, MESH_MAGIC.size, hash.size)
     return AdvertiseData.Builder()
-      .addManufacturerData(0xFFE0, hash)
+      .addManufacturerData(MESH_MFG_ID, payload)
       .build()
   }
 
@@ -274,12 +287,17 @@ class MainActivity : FlutterActivity() {
       }
     }
 
+    val lock = Object()
+    var lastWriteOk: Boolean? = null
+    var phase: String = "connecting"
+
     val gattCallback = object : BluetoothGattCallback() {
       override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
         super.onConnectionStateChange(gatt, status, newState)
         if (gatt == null) return
 
         if (newState == BluetoothProfile.STATE_CONNECTED) {
+          phase = "request_mtu"
           val ok = gatt.requestMtu(512)
           Log.d(TAG, "requestMtu initiated: $ok")
         } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -287,7 +305,7 @@ class MainActivity : FlutterActivity() {
             try {
               gatt.close()
             } catch (_: Throwable) {}
-            completeErrorOnMain("DISCONNECTED", "Disconnected before write completed")
+            completeErrorOnMain("DISCONNECTED", "Disconnected during phase=$phase status=$status")
           }
         }
       }
@@ -296,6 +314,7 @@ class MainActivity : FlutterActivity() {
         super.onMtuChanged(gatt, mtu, status)
         if (gatt == null) return
         if (status == BluetoothGatt.GATT_SUCCESS) {
+          phase = "discover_services"
           gatt.discoverServices()
         } else {
           gatt.disconnect()
@@ -309,56 +328,108 @@ class MainActivity : FlutterActivity() {
         if (gatt == null) return
 
         if (status == BluetoothGatt.GATT_SUCCESS) {
-          val service = gatt.getService(UUID.fromString("c7e4f1a2-9b3d-4a8e-a1f6-2d5e8b9c0a4f"))
-          val characteristic = service?.getCharacteristic(UUID.fromString("6b2e8f1a-4c9d-4e7b-b3a5-9f8e7d6c5b4a"))
+          phase = "services_discovered"
+          val service = gatt.getService(SERVICE_UUID)
+          val characteristic = service?.getCharacteristic(CHARACTERISTIC_UUID)
 
           if (characteristic != null) {
-            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
             Thread {
+              try {
+                phase = "writing"
+                // Use write-with-response so we can deterministically know when each chunk is accepted.
+                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+
+                fun writeBlocking(bytes: ByteArray): Boolean {
+                  synchronized(lock) { lastWriteOk = null }
+
+                  val started: Boolean = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    val rc = gatt.writeCharacteristic(characteristic, bytes, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                    rc == BluetoothGatt.GATT_SUCCESS
+                  } else {
+                    @Suppress("DEPRECATION")
+                    characteristic.value = bytes
+                    @Suppress("DEPRECATION")
+                    gatt.writeCharacteristic(characteristic)
+                  }
+
+                  if (!started) return false
+
+                  val deadlineMs = System.currentTimeMillis() + 8000L
+                  synchronized(lock) {
+                    while (lastWriteOk == null && System.currentTimeMillis() < deadlineMs) {
+                      lock.wait(250L)
+                    }
+                    return lastWriteOk == true
+                  }
+                }
+
                 val chunkSize = 500
                 var offset = 0
                 while (offset < payload.size) {
-                    val length = Math.min(chunkSize, payload.size - offset)
-                    val chunk = ByteArray(length)
-                    System.arraycopy(payload, offset, chunk, 0, length)
-
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                        gatt.writeCharacteristic(characteristic, chunk, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        characteristic.value = chunk
-                        @Suppress("DEPRECATION")
-                        gatt.writeCharacteristic(characteristic)
-                    }
-                    Thread.sleep(15) // Give the radio buffer time to clear
-                    offset += length
+                  val length = Math.min(chunkSize, payload.size - offset)
+                  val chunk = ByteArray(length)
+                  System.arraycopy(payload, offset, chunk, 0, length)
+                  val ok = writeBlocking(chunk)
+                  if (!ok) {
+                    try { gatt.disconnect() } catch (_: Throwable) {}
+                    try { gatt.close() } catch (_: Throwable) {}
+                    completeErrorOnMain("WRITE_FAILED", "Write chunk failed at offset=$offset len=$length")
+                    return@Thread
+                  }
+                  offset += length
                 }
 
-                // Send EOF marker
+                // EOF marker
                 val eof = "||EOF||".toByteArray()
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                    gatt.writeCharacteristic(characteristic, eof, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-                } else {
-                    @Suppress("DEPRECATION")
-                    characteristic.value = eof
-                    @Suppress("DEPRECATION")
-                    gatt.writeCharacteristic(characteristic)
+                val eofOk = writeBlocking(eof)
+                if (!eofOk) {
+                  try { gatt.disconnect() } catch (_: Throwable) {}
+                  try { gatt.close() } catch (_: Throwable) {}
+                  completeErrorOnMain("WRITE_FAILED", "Write EOF failed")
+                  return@Thread
                 }
 
-                Thread.sleep(400)
-                gatt.disconnect()
-                gatt.close()
+                try { gatt.disconnect() } catch (_: Throwable) {}
+                try { gatt.close() } catch (_: Throwable) {}
                 completeSuccessOnMain()
+              } catch (t: Throwable) {
+                try { gatt.disconnect() } catch (_: Throwable) {}
+                try { gatt.close() } catch (_: Throwable) {}
+                completeErrorOnMain("SEND_EXCEPTION", t.message ?: "send exception")
+              }
             }.start()
           } else {
             gatt.disconnect()
             gatt.close()
-            completeErrorOnMain("CHAR_NOT_FOUND", "Mesh characteristic not found")
+            val discovered = try {
+              gatt.services?.joinToString(separator = ";") { s ->
+                val chars = s.characteristics?.joinToString(separator = ",") { c -> c.uuid.toString() } ?: ""
+                "${s.uuid}[$chars]"
+              } ?: "<no-services>"
+            } catch (_: Throwable) {
+              "<services-enum-failed>"
+            }
+            completeErrorOnMain(
+              "CHAR_NOT_FOUND",
+              "Mesh characteristic not found. expectedService=$SERVICE_UUID expectedChar=$CHARACTERISTIC_UUID discovered=$discovered"
+            )
           }
         } else {
           gatt.disconnect()
           gatt.close()
           completeErrorOnMain("DISCOVERY_FAILED", "Failed to discover services")
+        }
+      }
+
+      override fun onCharacteristicWrite(
+        gatt: BluetoothGatt?,
+        characteristic: BluetoothGattCharacteristic?,
+        status: Int
+      ) {
+        super.onCharacteristicWrite(gatt, characteristic, status)
+        synchronized(lock) {
+          lastWriteOk = status == BluetoothGatt.GATT_SUCCESS
+          lock.notifyAll()
         }
       }
     }

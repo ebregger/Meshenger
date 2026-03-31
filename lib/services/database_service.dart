@@ -165,11 +165,31 @@ class DatabaseService {
       SELECT hlc FROM bitmap_chunks WHERE is_deleted = 0
     ''');
 
-    var hash = 0;
+    // IMPORTANT: Do NOT use Dart's `String.hashCode` here.
+    // It is randomized per process and not stable across devices, which breaks
+    // hash-based sync skipping and hash routing.
+    const fnvOffsetBasis = 0x811C9DC5; // 2166136261
+    const fnvPrime = 0x01000193; // 16777619
+
+    // Deterministic order: stable across query implementations.
+    final hlcs = <String>[];
     for (final row in result) {
       final hlcString = row['hlc'];
       if (hlcString is! String || hlcString.isEmpty) continue;
-      hash ^= hlcString.hashCode;
+      hlcs.add(hlcString);
+    }
+    hlcs.sort();
+
+    var hash = fnvOffsetBasis;
+    for (final h in hlcs) {
+      final bytes = utf8.encode(h);
+      for (final b in bytes) {
+        hash ^= b & 0xFF;
+        hash = (hash * fnvPrime) & 0xFFFFFFFF;
+      }
+      // Delimiter to avoid accidental concatenation ambiguity.
+      hash ^= 0x00;
+      hash = (hash * fnvPrime) & 0xFFFFFFFF;
     }
 
     // Normalize into an unsigned 32-bit space.

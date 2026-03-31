@@ -35,8 +35,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   StreamSubscription<BluetoothAdapterState>? _adapterSub;
   StreamSubscription<List<TextMessage>>? _localMessagesSub;
   StreamSubscription<List<NodeProfile>>? _localProfilesSub;
-  StreamSubscription<Uint8List>? _nativePayloadSub;
-  final List<int> _incomingBuffer = <int>[];
+  StreamSubscription<IncomingBleChunk>? _nativePayloadSub;
+  final Map<String, List<int>> _incomingBuffersByMac = <String, List<int>>{};
   bool _meshSessionActive = false;
   String? _localNodeId;
   bool _primeMessageListLength = true;
@@ -337,15 +337,20 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   Future<void> _attachNativeIncomingSync() async {
     await _nativePayloadSub?.cancel();
-    _nativePayloadSub = _nativeMesh.incomingPayloads.listen((chunk) {
+    _nativePayloadSub = _nativeMesh.incomingPayloads.listen((incoming) {
       final eofMarker = utf8.encode('||EOF||');
+      final senderMac = incoming.macAddress;
+      final chunk = incoming.bytes;
+
+      final buffer =
+          _incomingBuffersByMac.putIfAbsent(senderMac, () => <int>[]);
 
       if (chunk.length == eofMarker.length && listEquals(chunk, eofMarker)) {
-        if (_incomingBuffer.isEmpty) return;
+        if (buffer.isEmpty) return;
 
         Future<void>.microtask(() async {
           try {
-            final decompressed = zlib.decode(_incomingBuffer);
+            final decompressed = zlib.decode(buffer);
             final String jsonStr = utf8.decode(decompressed);
             final decodedJson = jsonDecode(jsonStr);
             if (decodedJson is! Map) return;
@@ -402,7 +407,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               final remoteVector = Map<String, dynamic>.from(vectorRaw);
 
               debugPrint('🤝 Received Offer. Calculating Delta...');
-              final targetMac = BleDiscoveryService.hashToMac[senderHash];
+              // Prefer direct MAC from native GATT callback (more reliable than scan routing).
+              final targetMac =
+                  senderMac != '<unknown>' ? senderMac : BleDiscoveryService.hashToMac[senderHash];
               if (targetMac == null) {
                 debugPrint(
                   '⚠️ Offer: no hash route for sender_hash=$senderHash',
@@ -441,47 +448,49 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             }
 
             if (type == 'delta' || type == null) {
-              // Update topology for delta gossip.
-              if (type == 'delta') {
-                final senderHash = root['sender_hash'] as int?;
-                final senderId = root['sender_id'] as String?;
-                final neighborsRaw = root['neighbors'];
+              // Update topology/presence for delta gossip.
+              final senderHash = root['sender_hash'] as int?;
+              final senderId = root['sender_id'] as String?;
+              final neighborsRaw = root['neighbors'];
 
-                if (senderId != null) {
-                  final now = DateTime.now();
-                  // The sender physically transmitted this payload: treat as Direct immediately.
-                  BleDiscoveryService.localSeenNodes[senderId] = now;
-                  networkLastSeen[senderId] = now;
+              // Even legacy packets (type == null) can still teach identity/presence if they
+              // include sender fields.
+              if (senderId != null) {
+                final now = DateTime.now();
+                // The sender physically transmitted this payload: treat as Direct immediately.
+                BleDiscoveryService.localSeenNodes[senderId] = now;
+                networkLastSeen[senderId] = now;
 
-                  final neighborSet = <String>{};
-                  if (neighborsRaw is List) {
-                    for (final n in neighborsRaw) {
-                      if (n is String) {
-                        neighborSet.add(n);
-                        networkLastSeen[n] = now;
-                      }
+                final neighborSet = <String>{};
+                if (neighborsRaw is List) {
+                  for (final n in neighborsRaw) {
+                    if (n is String) {
+                      neighborSet.add(n);
+                      networkLastSeen[n] = now;
                     }
                   }
-                  _meshTopology[senderId] = neighborSet;
-                  if (senderHash != null) {
-                    BleDiscoveryService.hashToNodeId[senderHash] = senderId;
-                    final mac = BleDiscoveryService.hashToMac[senderHash];
-                    if (mac != null) {
-                      BleDiscoveryService.macToNodeId[mac] = senderId;
-
-                      final ids = Set<String>.from(state.discoveredNodeIds);
-                      if (ids.remove(mac)) {
-                        ids.add(senderId);
-                        state = state.copyWith(discoveredNodeIds: ids);
-                      }
-                    }
-                  }
-                  _refreshNeighborClassification();
-                  _presenceBump.add(null);
                 }
+                _meshTopology[senderId] = neighborSet;
+
+                if (senderHash != null) {
+                  BleDiscoveryService.hashToNodeId[senderHash] = senderId;
+                  final mac = BleDiscoveryService.hashToMac[senderHash];
+                  if (mac != null) {
+                    BleDiscoveryService.macToNodeId[mac] = senderId;
+
+                    final ids = Set<String>.from(state.discoveredNodeIds);
+                    if (ids.remove(mac)) {
+                      ids.add(senderId);
+                      state = state.copyWith(discoveredNodeIds: ids);
+                    }
+                  }
+                }
+
+                _refreshNeighborClassification();
+                _presenceBump.add(null);
               }
 
-              final dataRaw = root['data'];
+              final dataRaw = root['data'] ?? root['changes'];
               if (dataRaw is! Map) return;
               final changeset = Map<String, dynamic>.from(dataRaw);
 
@@ -503,11 +512,14 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           } catch (e) {
             debugPrint('Mesh merge error: $e');
           } finally {
-            _incomingBuffer.clear();
+            buffer.clear();
+            if (buffer.isEmpty) {
+              _incomingBuffersByMac.remove(senderMac);
+            }
           }
         });
       } else {
-        _incomingBuffer.addAll(chunk);
+        buffer.addAll(chunk);
       }
     });
   }

@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show zlib;
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 
 import '../constants/ble_constants.dart';
 import '../providers/database_provider.dart';
@@ -34,6 +35,9 @@ class BleDiscoveryService {
   /// MAC -> suppress presence until this time (failed/uncallable peer).
   static final Map<String, DateTime> deadMacUntil = {};
 
+  /// Advertised hash -> suppress attempts until this time (handles MAC randomization / phantom MACs).
+  static final Map<int, DateTime> deadHashUntil = {};
+
   /// Best-effort MAC → stable nodeId mapping (filled after first offer/delta).
   static final Map<String, String> macToNodeId = {};
 
@@ -54,6 +58,28 @@ class BleDiscoveryService {
 
   /// Exposed for UI / notifier guards while a GATT sync is in flight.
   bool get isConnecting => _isConnecting;
+
+  Duration _deadlistDurationForError(Object error) {
+    // Default: short cooldown for transient radio flakiness.
+    var d = const Duration(seconds: 10);
+    if (error is PlatformException) {
+      switch (error.code) {
+        case 'CHAR_NOT_FOUND':
+          // Likely not our mesh GATT (ghost advertiser / stale cache).
+          d = const Duration(seconds: 60);
+          break;
+        case 'timeout':
+          // Transient; keep short so real peers recover quickly.
+          d = const Duration(seconds: 10);
+          break;
+        case 'DISCONNECTED':
+          // Often HCI 133 / connection churn. Medium cooldown.
+          d = const Duration(seconds: 30);
+          break;
+      }
+    }
+    return d;
+  }
 
   /// Neighbor IDs seen in the last 60 seconds (expired entries are pruned).
   List<String> get currentNeighborIds {
@@ -89,14 +115,29 @@ class BleDiscoveryService {
   Uint8List? _tryGetRemoteHash(ScanResult r) {
     final raw = r.advertisementData.manufacturerData[meshManufacturerId];
     if (raw == null || raw.isEmpty) return null;
-    return Uint8List.fromList(raw);
+    final bytes = Uint8List.fromList(raw);
+    // Manufacturer payload format:
+    // [0..3]="MESH", [4..7]=uint32 hash (big endian)
+    if (bytes.length < 8) return null;
+    if (bytes[0] != 0x4D || // M
+        bytes[1] != 0x45 || // E
+        bytes[2] != 0x53 || // S
+        bytes[3] != 0x48) { // H
+      return null;
+    }
+    return bytes.sublist(4, 8);
   }
 
   bool _isLikelyNativeMeshAdvert(ScanResult r) {
     // Only accept devices running our mesh program:
-    // they must advertise our manufacturer payload (0xFFE0) containing a 4-byte hash.
+    // they must advertise our manufacturer payload (0xFFE0) containing a magic header + 4-byte hash.
     final raw = r.advertisementData.manufacturerData[meshManufacturerId];
-    return raw != null && raw.length >= 4;
+    if (raw == null) return false;
+    if (raw.length < 8) return false;
+    return raw[0] == 0x4D && // M
+        raw[1] == 0x45 && // E
+        raw[2] == 0x53 && // S
+        raw[3] == 0x48; // H
   }
 
   /// First [meshShortNodeIdLength] characters of [fullNodeId] (fits MAN data budget).
@@ -122,6 +163,7 @@ class BleDiscoveryService {
     nodeIdToMac.clear();
     lastFullSync.clear();
     deadMacUntil.clear();
+    deadHashUntil.clear();
     _notifyConnectionPhase();
     debugPrint('🔓 BLE scan session reset (lock + cooldowns cleared)');
 
@@ -143,6 +185,11 @@ class BleDiscoveryService {
             ByteData.sublistView(remoteHash).getUint32(0, Endian.big);
         final mac = r.device.remoteId.str;
         hashToMac[remoteHashInt] = mac;
+
+        final deadHashTime = deadHashUntil[remoteHashInt];
+        if (deadHashTime != null && DateTime.now().isBefore(deadHashTime)) {
+          continue;
+        }
 
         final deadUntil = deadMacUntil[mac];
         if (deadUntil != null && DateTime.now().isBefore(deadUntil)) {
@@ -226,8 +273,21 @@ class BleDiscoveryService {
     _hashCooldowns[remoteHashInt] = DateTime.now();
     _isConnecting = true;
     _notifyConnectionPhase();
+    final targetMac = device.remoteId.str;
+
+    StreamSubscription<BluetoothConnectionState>? stateSub;
     try {
-      final targetMac = device.remoteId.str;
+      // Best-effort state listener: we no longer use FlutterBluePlus for the actual GATT
+      // transfer, but this can still reveal unexpected stack transitions.
+      stateSub = device.connectionState.listen((BluetoothConnectionState state) {
+        if (state == BluetoothConnectionState.connected) {
+        } else if (state == BluetoothConnectionState.disconnected) {
+        }
+      });
+    } catch (_) {
+      // Some platform implementations may not support this stream reliably.
+    }
+    try {
       final db = await _ref.read(databaseProvider.future);
       final vector = await db.getVersionVector();
       final myHashInt = await db.getDatabaseHash();
@@ -245,13 +305,14 @@ class BleDiscoveryService {
       await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload));
       // Mark successful anti-entropy sync time.
       lastFullSync[targetMac] = DateTime.now();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('🟥 Connection/GATT failed for $targetMac: $e');
       // Cooldown is handled at scan time by advertised remote hash.
       _hashCooldowns[remoteHashInt] = DateTime.now();
-      final targetMac = device.remoteId.str;
-      // If we can't connect, treat this as stale/cached advertising for a while.
-      deadMacUntil[targetMac] =
-          DateTime.now().add(const Duration(seconds: 60));
+      // If we can't connect, suppress this peer briefly (hash-based handles MAC randomization).
+      final duration = _deadlistDurationForError(e);
+      deadMacUntil[targetMac] = DateTime.now().add(duration);
+      deadHashUntil[remoteHashInt] = DateTime.now().add(duration);
       // Best-effort: remove from direct presence so UI can drop it.
       final mapped = macToNodeId[targetMac];
       if (mapped != null) {
@@ -263,6 +324,9 @@ class BleDiscoveryService {
           await device.disconnect();
         } catch (_) {}
       }
+      try {
+        await stateSub?.cancel();
+      } catch (_) {}
       _isConnecting = false;
       _notifyConnectionPhase();
     }
