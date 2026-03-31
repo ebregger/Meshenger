@@ -23,6 +23,8 @@ class BleNetworkState {
     required this.adapterStatus,
     this.lastPermissionResult,
     required this.discoveredNodeIds,
+    this.directNeighborIds = const <String>{},
+    this.indirectNeighborIds = const <String>{},
     this.radioMeshConnecting = false,
     this.radioMeshAdvertising = false,
   });
@@ -35,6 +37,12 @@ class BleNetworkState {
   /// Peer mesh node IDs observed via scan manufacturer payloads.
   final Set<String> discoveredNodeIds;
 
+  /// Actively reachable neighbors (seen via Active Neighbor Table within 60s).
+  final Set<String> directNeighborIds;
+
+  /// Nodes referenced by neighbors we have been told about by other nodes.
+  final Set<String> indirectNeighborIds;
+
   /// Central-role GATT mesh sync in progress (scanner paused / ACL up).
   final bool radioMeshConnecting;
 
@@ -45,6 +53,8 @@ class BleNetworkState {
     adapterStatus: BleAdapterStatus.unknown,
     lastPermissionResult: null,
     discoveredNodeIds: <String>{},
+    directNeighborIds: <String>{},
+    indirectNeighborIds: <String>{},
     radioMeshConnecting: false,
     radioMeshAdvertising: false,
   );
@@ -53,6 +63,8 @@ class BleNetworkState {
     BleAdapterStatus? adapterStatus,
     BlePermissionRequestResult? lastPermissionResult,
     Set<String>? discoveredNodeIds,
+    Set<String>? directNeighborIds,
+    Set<String>? indirectNeighborIds,
     bool? radioMeshConnecting,
     bool? radioMeshAdvertising,
   }) {
@@ -61,6 +73,8 @@ class BleNetworkState {
       lastPermissionResult:
           lastPermissionResult ?? this.lastPermissionResult,
       discoveredNodeIds: discoveredNodeIds ?? this.discoveredNodeIds,
+      directNeighborIds: directNeighborIds ?? this.directNeighborIds,
+      indirectNeighborIds: indirectNeighborIds ?? this.indirectNeighborIds,
       radioMeshConnecting: radioMeshConnecting ?? this.radioMeshConnecting,
       radioMeshAdvertising: radioMeshAdvertising ?? this.radioMeshAdvertising,
     );

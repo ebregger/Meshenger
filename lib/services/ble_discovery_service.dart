@@ -138,6 +138,7 @@ class BleDiscoveryService {
         if (stableNodeId != null) {
           _liveNeighbors[stableNodeId] = DateTime.now();
         }
+        final discoveredId = stableNodeId ?? r.device.remoteId.str;
 
         final last = _hashCooldowns[remoteHashStr];
         if (last != null && DateTime.now().difference(last).inSeconds < 10) {
@@ -171,8 +172,8 @@ class BleDiscoveryService {
 
         _hashCooldowns[remoteHashStr] = DateTime.now();
 
-        debugPrint('🎯 DISCOVERED MESH NODE: ${r.device.remoteId.str}');
-        onDiscovered(r.device.remoteId.str);
+        debugPrint('🎯 DISCOVERED MESH NODE: $discoveredId');
+        onDiscovered(discoveredId);
         unawaited(_runMeshInitiatorHandshake(myNodeId, remoteHashStr, r.device));
       }
     });

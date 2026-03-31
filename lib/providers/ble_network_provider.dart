@@ -41,6 +41,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   bool _primeMessageListLength = true;
   String? _lastAdvertisedHashB64;
 
+  /// NodeID -> its advertised physical neighbors (gossip-based topology).
+  final Map<String, Set<String>> _meshTopology = {};
+
+  /// Periodically refreshes UI classification from the Active Neighbor Table.
+  Timer? _neighborRefreshTimer;
+
   void _handleMeshConnectionPhaseChanged() {
     _publishRadioFlags();
   }
@@ -57,6 +63,28 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     state = state.copyWith(
       radioMeshConnecting: connecting,
       radioMeshAdvertising: advertising,
+    );
+  }
+
+  void _refreshNeighborClassification() {
+    if (!_meshSessionActive) return;
+
+    final direct = _discovery.currentNeighborIds.toSet();
+    final self = _localNodeId;
+
+    final indirect = <String>{};
+    for (final neighbors in _meshTopology.values) {
+      for (final id in neighbors) {
+        if (self != null && id == self) continue;
+        if (!direct.contains(id)) {
+          indirect.add(id);
+        }
+      }
+    }
+
+    state = state.copyWith(
+      directNeighborIds: direct,
+      indirectNeighborIds: indirect,
     );
   }
 
@@ -163,39 +191,92 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
             if (type == 'offer') {
               final senderHash = root['sender_hash'] as String?;
+              final senderId = root['sender_id'] as String?;
+              final neighborsRaw = root['neighbors'];
               final vectorRaw = root['vector'];
+
+              // 1) Store topology for the sender (offer gossip).
+              if (senderId != null) {
+                final neighborSet = <String>{};
+                if (neighborsRaw is List) {
+                  for (final n in neighborsRaw) {
+                    if (n is String) neighborSet.add(n);
+                  }
+                }
+                _meshTopology[senderId] = neighborSet;
+
+                // Also teach neighbor-table routing: advertised hash -> node id.
+                if (senderHash != null) {
+                  BleDiscoveryService.hashToNodeId[senderHash] = senderId;
+                }
+                _refreshNeighborClassification();
+              }
+
+              // 2) Respond with an offer delta (surgical changeset).
               if (senderHash == null || vectorRaw is! Map) return;
               final remoteVector = Map<String, dynamic>.from(vectorRaw);
 
               debugPrint('🤝 Received Offer. Calculating Delta...');
               final targetMac = BleDiscoveryService.hashToMac[senderHash];
               if (targetMac == null) {
-                debugPrint('⚠️ Offer: no hash route for sender_hash=$senderHash');
+                debugPrint(
+                  '⚠️ Offer: no hash route for sender_hash=$senderHash',
+                );
                 return;
               }
 
               final delta = await db.getDeltaChangeset(remoteVector);
+
+              final ourHashBytes = await db.getDatabaseHashBytes();
+              final ourSenderHash = base64Encode(ourHashBytes);
+
+              // Always send back a delta envelope so the initiator receives our
+              // neighbor gossip even when no changes are needed.
+              final deltaEnvelope = <String, dynamic>{
+                'type': 'delta',
+                'sender_id': db.localNodeId,
+                'sender_hash': ourSenderHash,
+                'neighbors': _discovery.currentNeighborIds,
+                'data': delta,
+              };
+              final outBytes = zlib.encode(
+                utf8.encode(jsonEncode(deltaEnvelope)),
+              );
+              await _nativeMesh.sendPayload(
+                targetMac,
+                Uint8List.fromList(outBytes),
+              );
+
               if (delta.isNotEmpty) {
-                final deltaEnvelope = <String, dynamic>{
-                  'type': 'delta',
-                  'sender_id': db.localNodeId,
-                  'data': delta,
-                };
-                final outBytes = zlib.encode(
-                  utf8.encode(jsonEncode(deltaEnvelope)),
-                );
-                await _nativeMesh.sendPayload(
-                  targetMac,
-                  Uint8List.fromList(outBytes),
-                );
                 debugPrint('🚀 Sent Surgical Delta to $targetMac');
               } else {
-                debugPrint('✅ Remote is already up to date.');
+                debugPrint('📨 Sent Gossip Delta to $targetMac');
               }
               return;
             }
 
             if (type == 'delta' || type == null) {
+              // Update topology for delta gossip.
+              if (type == 'delta') {
+                final senderHash = root['sender_hash'] as String?;
+                final senderId = root['sender_id'] as String?;
+                final neighborsRaw = root['neighbors'];
+
+                if (senderId != null) {
+                  final neighborSet = <String>{};
+                  if (neighborsRaw is List) {
+                    for (final n in neighborsRaw) {
+                      if (n is String) neighborSet.add(n);
+                    }
+                  }
+                  _meshTopology[senderId] = neighborSet;
+                  if (senderHash != null) {
+                    BleDiscoveryService.hashToNodeId[senderHash] = senderId;
+                  }
+                  _refreshNeighborClassification();
+                }
+              }
+
               final dataRaw = root['data'];
               if (dataRaw is! Map) return;
               final changeset = Map<String, dynamic>.from(dataRaw);
@@ -232,6 +313,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       return;
     }
     _meshSessionActive = true;
+    _meshTopology.clear();
+    state = state.copyWith(
+      discoveredNodeIds: const <String>{},
+      directNeighborIds: const <String>{},
+      indirectNeighborIds: const <String>{},
+    );
     try {
       final myId = await _ref.read(myNodeIdProvider.future);
       _localNodeId = myId;
@@ -247,9 +334,17 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       );
       await _attachLocalMessageQuickScanTrigger(myId);
       _publishRadioFlags();
+      _refreshNeighborClassification();
+      _neighborRefreshTimer?.cancel();
+      _neighborRefreshTimer = Timer.periodic(
+        const Duration(seconds: 2),
+        (_) => _refreshNeighborClassification(),
+      );
     } catch (_) {
       _meshSessionActive = false;
       await _discovery.stopAll();
+      _neighborRefreshTimer?.cancel();
+      _neighborRefreshTimer = null;
       await _nativePayloadSub?.cancel();
       _nativePayloadSub = null;
       await _localMessagesSub?.cancel();
@@ -263,7 +358,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
     final self = _localNodeId;
     if (self != null &&
-        shortNodeId == BleDiscoveryService.shortNodeIdFromFull(self)) {
+        (shortNodeId == self ||
+            shortNodeId == BleDiscoveryService.shortNodeIdFromFull(self))) {
       return;
     }
 
@@ -276,6 +372,13 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   Future<void> _stopMeshSession() async {
     _meshSessionActive = false;
     _localNodeId = null;
+    _neighborRefreshTimer?.cancel();
+    _neighborRefreshTimer = null;
+    _meshTopology.clear();
+    state = state.copyWith(
+      directNeighborIds: const <String>{},
+      indirectNeighborIds: const <String>{},
+    );
     await _nativePayloadSub?.cancel();
     _nativePayloadSub = null;
     await _localMessagesSub?.cancel();
