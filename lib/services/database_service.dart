@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart' show md5;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite_crdt/sqlite_crdt.dart';
@@ -150,22 +149,37 @@ class DatabaseService {
     _db = null;
   }
 
-  /// Short "sync token" representing current DB state.
+  /// XOR-based "sync token" representing current DB state.
   ///
-  /// Fast path: hash all live `msg_id`s deterministically (order by msg_id),
-  /// MD5, then return the first 8 bytes.
-  Future<Uint8List> getDatabaseHash() async {
+  /// Uses CRDT HLC values so the token tracks true logical progress.
+  Future<int> getDatabaseHash() async {
     await init();
-    final rows = await _crdt.query(
-      'SELECT msg_id FROM messages WHERE is_deleted = 0 ORDER BY msg_id ASC',
-    );
-    final buf = StringBuffer();
-    for (final row in rows) {
-      final id = row['msg_id'];
-      if (id is String) buf.write(id);
+    final result = await _crdt.query('''
+      SELECT hlc FROM messages WHERE is_deleted = 0
+      UNION ALL
+      SELECT hlc FROM users WHERE is_deleted = 0
+      UNION ALL
+      SELECT hlc FROM bitmap_chunks WHERE is_deleted = 0
+    ''');
+
+    var hash = 0;
+    for (final row in result) {
+      final hlcString = row['hlc'];
+      if (hlcString is! String || hlcString.isEmpty) continue;
+      hash ^= hlcString.hashCode;
     }
-    final digest = md5.convert(utf8.encode(buf.toString())).bytes;
-    return Uint8List.fromList(digest.take(8).toList(growable: false));
+
+    // Normalize into an unsigned 32-bit space.
+    return hash & 0xFFFFFFFF;
+  }
+
+  /// 4-byte big-endian representation of [getDatabaseHash].
+  Future<Uint8List> getDatabaseHashBytes() async {
+    final hashInt = await getDatabaseHash();
+    final bytes = Uint8List(4);
+    final bd = ByteData.view(bytes.buffer);
+    bd.setUint32(0, hashInt, Endian.big);
+    return bytes;
   }
 
   /// Returns a CRDT changeset modified strictly after [lastHlc].

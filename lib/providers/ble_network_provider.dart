@@ -126,12 +126,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
       Future<void>.microtask(() async {
         try {
-          final hash = await db.getDatabaseHash();
-          final b64 = base64Encode(hash);
+          final hashBytes = await db.getDatabaseHashBytes();
+          final b64 = base64Encode(hashBytes);
           if (b64 != _lastAdvertisedHashB64) {
             _lastAdvertisedHashB64 = b64;
-            await _nativeMesh.updateAdvertiserHash(hash);
-            _discovery.setLocalHash(hash);
+            await _nativeMesh.updateAdvertiserHash(hashBytes);
+            _discovery.setLocalHash(hashBytes);
           }
         } catch (e, st) {
           debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
@@ -204,12 +204,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               await db.mergeSyncChangeset(changeset);
 
               try {
-                final hash = await db.getDatabaseHash();
-                final b64 = base64Encode(hash);
+                final hashBytes = await db.getDatabaseHashBytes();
+                final b64 = base64Encode(hashBytes);
                 if (b64 != _lastAdvertisedHashB64) {
                   _lastAdvertisedHashB64 = b64;
-                  await _nativeMesh.updateAdvertiserHash(hash);
-                  _discovery.setLocalHash(hash);
+                  await _nativeMesh.updateAdvertiserHash(hashBytes);
+                  _discovery.setLocalHash(hashBytes);
                 }
               } catch (e, st) {
                 debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
@@ -236,10 +236,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       final myId = await _ref.read(myNodeIdProvider.future);
       _localNodeId = myId;
       final db = await _ref.read(databaseProvider.future);
-      final hash = await db.getDatabaseHash();
-      _lastAdvertisedHashB64 = base64Encode(hash);
-      _discovery.setLocalHash(hash);
-      await _nativeMesh.startNativeServer(hash);
+      final hashBytes = await db.getDatabaseHashBytes();
+      _lastAdvertisedHashB64 = base64Encode(hashBytes);
+      _discovery.setLocalHash(hashBytes);
+      await _nativeMesh.startNativeServer(hashBytes);
       await _attachNativeIncomingSync();
       await _discovery.startScanning(
         myNodeId: myId,
@@ -322,10 +322,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   /// Restarts GAP advertising with the persisted local node id.
   Future<void> startAdvertising() async {
     final db = await _ref.read(databaseProvider.future);
-    final hash = await db.getDatabaseHash();
-    _lastAdvertisedHashB64 = base64Encode(hash);
-    _discovery.setLocalHash(hash);
-    await _nativeMesh.startNativeServer(hash);
+    final hashBytes = await db.getDatabaseHashBytes();
+    _lastAdvertisedHashB64 = base64Encode(hashBytes);
+    _discovery.setLocalHash(hashBytes);
+    await _nativeMesh.startNativeServer(hashBytes);
     await _attachNativeIncomingSync();
     _publishRadioFlags();
   }

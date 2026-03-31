@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io' show zlib;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint, listEquals;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -18,6 +18,9 @@ const int meshShortNodeIdLength = 8;
 class BleDiscoveryService {
   /// Advertised DB hash (base64) → last seen BLE [BluetoothDevice.remoteId] for offer replies.
   static final Map<String, String> hashToMac = {};
+
+  /// Advertised DB hash (base64) → stable CRDT `nodeId` (used for neighbor tables).
+  static final Map<String, String> hashToNodeId = {};
 
   BleDiscoveryService(
     this._ref, {
@@ -34,8 +37,25 @@ class BleDiscoveryService {
   bool _isConnecting = false;
   final Map<String, DateTime> _hashCooldowns = {};
 
+  /// Stable neighbor node IDs (last seen within 60 seconds).
+  final Map<String, DateTime> _liveNeighbors = {};
+
+  /// Tracks when we last performed a successful full sync attempt per remote hash-id.
+  final Map<String, DateTime> _lastFullSync = {};
+
   /// Exposed for UI / notifier guards while a GATT sync is in flight.
   bool get isConnecting => _isConnecting;
+
+  /// Neighbor IDs seen in the last 60 seconds (expired entries are pruned).
+  List<String> get currentNeighborIds {
+    final now = DateTime.now();
+    _liveNeighbors.removeWhere((_, lastSeen) {
+      return now.difference(lastSeen) > const Duration(seconds: 60);
+    });
+    final ids = _liveNeighbors.keys.toList(growable: false);
+    ids.sort();
+    return ids;
+  }
 
   void _notifyConnectionPhase() {
     onConnectionPhaseChanged?.call();
@@ -61,10 +81,6 @@ class BleDiscoveryService {
     // Check for our specific manufacturer data flag
     final remoteHashRaw = r.advertisementData.manufacturerData[meshManufacturerId];
     if (remoteHashRaw != null && remoteHashRaw.isNotEmpty) {
-      final local = _localHash;
-      if (local != null && listEquals(remoteHashRaw, local)) {
-        return false;
-      }
       return true;
     }
 
@@ -95,6 +111,9 @@ class BleDiscoveryService {
     _isConnecting = false;
     _hashCooldowns.clear();
     hashToMac.clear();
+    hashToNodeId.clear();
+    _liveNeighbors.clear();
+    _lastFullSync.clear();
     _notifyConnectionPhase();
     debugPrint('🔓 BLE scan session reset (lock + cooldowns cleared)');
 
@@ -113,10 +132,43 @@ class BleDiscoveryService {
         if (remoteHash == null) continue;
         final remoteHashStr = base64Encode(remoteHash);
         hashToMac[remoteHashStr] = r.device.remoteId.str;
+
+        // Update active neighbor table using the stable nodeId mapped from the advertised hash.
+        final stableNodeId = hashToNodeId[remoteHashStr];
+        if (stableNodeId != null) {
+          _liveNeighbors[stableNodeId] = DateTime.now();
+        }
+
         final last = _hashCooldowns[remoteHashStr];
         if (last != null && DateTime.now().difference(last).inSeconds < 10) {
           continue;
         }
+
+        // Skip peers that advertise the exact same hash as our local DB.
+        // Put matching hashes on cooldown too, to avoid re-filtering repeatedly.
+        final needsFullSync = (() {
+          final lastOk = _lastFullSync[remoteHashStr];
+          if (lastOk == null) return true;
+          return DateTime.now().difference(lastOk) > const Duration(minutes: 5);
+        })();
+
+        if (_localHash != null &&
+            remoteHash.length >= 4 &&
+            _localHash!.length >= 4) {
+          final remoteU32 =
+              ByteData.sublistView(remoteHash).getUint32(0, Endian.big);
+          final localU32 = ByteData.sublistView(_localHash!)
+              .getUint32(0, Endian.big);
+          if (remoteU32 == localU32) {
+            // Hashes match; normally we'd skip, but anti-entropy refreshes if we
+            // haven't successfully connected to this peer in 5+ minutes.
+            if (!needsFullSync) {
+              _hashCooldowns[remoteHashStr] = DateTime.now();
+              continue;
+            }
+          }
+        }
+
         _hashCooldowns[remoteHashStr] = DateTime.now();
 
         debugPrint('🎯 DISCOVERED MESH NODE: ${r.device.remoteId.str}');
@@ -132,7 +184,10 @@ class BleDiscoveryService {
     String remoteShortId,
     BluetoothDevice device,
   ) async {
-    if (_isConnecting) return;
+    final lastOk = _lastFullSync[remoteShortId];
+    final needsFullSync = lastOk == null ||
+        DateTime.now().difference(lastOk) > const Duration(minutes: 5);
+    if (_isConnecting && !needsFullSync) return;
     // Even if the connection fails/cancels, keep a short cooldown for this remote hash so
     // we don't spam connect() attempts to stale/cached advertisers.
     _hashCooldowns[remoteShortId] = DateTime.now();
@@ -141,16 +196,18 @@ class BleDiscoveryService {
     try {
       final db = await _ref.read(databaseProvider.future);
       final vector = await db.getVersionVector();
-      final myHashBytes = await db.getDatabaseHash();
+      final myHashBytes = await db.getDatabaseHashBytes();
       final envelope = <String, dynamic>{
         'type': 'offer',
         'sender_id': db.localNodeId,
         'sender_hash': base64Encode(myHashBytes),
         'vector': vector,
+        'neighbors': currentNeighborIds,
       };
       final payload = zlib.encode(utf8.encode(jsonEncode(envelope)));
       final macAddress = device.remoteId.str;
       await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload));
+      _lastFullSync[remoteShortId] = DateTime.now();
     } catch (_) {
       // Cooldown is handled at scan time by advertised remote hash.
       _hashCooldowns[remoteShortId] = DateTime.now();
