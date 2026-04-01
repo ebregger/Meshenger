@@ -156,6 +156,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         ...networkLastSeen.keys,
       };
 
+      final remotePeerIds =
+          allUsers.where((id) => self == null || id != self).toList();
+      final singleRemotePeerTopology = remotePeerIds.length == 1;
+
       for (final id in allUsers) {
         if (self != null && id == self) continue;
 
@@ -168,19 +172,31 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             networkTime != null ? now.difference(networkTime).inSeconds : 9999;
 
         PeerStatus? status;
-        // 0 to 60 Seconds: Node is Active (Green or Yellow)
-        if (secondsSinceLocal <= 60) {
-          status = PeerStatus.direct;
-        } else if (secondsSinceNetwork <= 60) {
-          // Pruning-race guard: ignore "microscopic" self-gossip near disconnect.
-          if (localTime == null ||
-              networkTime!.difference(localTime).inSeconds > 2) {
-            status = PeerStatus.indirect;
+
+        if (singleRemotePeerTopology) {
+          // Exactly one other node in presence maps: there is no multi-hop path.
+          // Gossip can refresh [networkLastSeen] (e.g. via `neighbors` lists) without
+          // refreshing [localSeenNodes], which previously produced spurious INDIRECT.
+          if (secondsSinceLocal <= 60 || secondsSinceNetwork <= 60) {
+            status = PeerStatus.direct;
+          } else if (secondsSinceLocal <= 75 || secondsSinceNetwork <= 75) {
+            status = PeerStatus.disconnected;
           }
-        }
-        // 61 to 75 Seconds: Node is Offline/Tombstoned (Gray)
-        else if (secondsSinceLocal <= 75 || secondsSinceNetwork <= 75) {
-          status = PeerStatus.disconnected;
+        } else {
+          // 0 to 60 Seconds: Node is Active (Green or Yellow)
+          if (secondsSinceLocal <= 60) {
+            status = PeerStatus.direct;
+          } else if (secondsSinceNetwork <= 60) {
+            // Pruning-race guard: ignore "microscopic" self-gossip near disconnect.
+            if (localTime == null ||
+                networkTime!.difference(localTime).inSeconds > 2) {
+              status = PeerStatus.indirect;
+            }
+          }
+          // 61 to 75 Seconds: Node is Offline/Tombstoned (Gray)
+          else if (secondsSinceLocal <= 75 || secondsSinceNetwork <= 75) {
+            status = PeerStatus.disconnected;
+          }
         }
 
         if (status == null) continue;
