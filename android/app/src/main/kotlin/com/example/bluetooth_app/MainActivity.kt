@@ -360,6 +360,10 @@ class MainActivity : FlutterActivity() {
       var lastWriteOk: Boolean? = null
       var phase: String = "connecting"
       var gatt: BluetoothGatt? = null
+      // Track the MTU negotiated by the OS. Android doesn't guarantee 512;
+      // the peer may negotiate down to 256 or stay at the 23-byte default.
+      // We subtract 3 for the ATT protocol header (opcode + handle = 3 bytes).
+      var negotiatedChunkSize: Int = 20 // safe conservative default (23 - 3)
 
       val connectionWatchdog = Runnable {
         if (isCompleted.compareAndSet(false, true)) {
@@ -419,6 +423,12 @@ class MainActivity : FlutterActivity() {
             Log.d(TAG, "[GATT] onMtuChanged mtu=$mtu status=$status mac=$macAddress")
             if (g == null) return
             if (status == BluetoothGatt.GATT_SUCCESS) {
+              // Subtract 3 bytes for the ATT protocol header (1 opcode + 2 handle).
+              // Also clamp to 512: Android's GATT stack hard-caps attribute writes at 512 bytes
+              // regardless of the negotiated MTU. Some devices report mtu=517 (L2CAP frame size)
+              // which would cause writeCharacteristic to throw if we naively use mtu-3=514.
+              negotiatedChunkSize = (mtu - 3).coerceIn(20, 512)
+              Log.d(TAG, "[GATT] Effective chunk size: $negotiatedChunkSize bytes mac=$macAddress")
               phase = "discover_services"
               Handler(Looper.getMainLooper()).postDelayed({
                 if (!isCompleted.get()) {
@@ -477,10 +487,12 @@ class MainActivity : FlutterActivity() {
                       }
                     }
 
-                    val chunkSize = 500
+                    // Use the MTU negotiated with this specific peer, not a hardcoded constant.
+                    // Android is not guaranteed to grant 512; it may stay at 23 bytes (default) on some devices.
                     var offset = 0
+                    Log.d(TAG, "[GATT] Starting chunked write: ${payload.size} bytes in chunks of $negotiatedChunkSize mac=$macAddress")
                     while (offset < payload.size) {
-                      val length = Math.min(chunkSize, payload.size - offset)
+                      val length = minOf(negotiatedChunkSize, payload.size - offset)
                       val chunk = ByteArray(length)
                       System.arraycopy(payload, offset, chunk, 0, length)
                       val ok = writeBlocking(chunk)

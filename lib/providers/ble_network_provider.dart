@@ -60,12 +60,14 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       StreamController<void>.broadcast();
 
   Uint8List _buildAdvertiserPayload(Uint8List hashBytes) {
-    final payloadBytes = Uint8List(8);
-    payloadBytes.setRange(0, 4, hashBytes);
+    // Payload layout: [8 bytes: 64-bit FNV hash][4 bytes: node ID prefix] = 12 bytes total.
+    // Increased from 4→8 hash bytes to prevent Birthday Paradox collisions at scale.
+    final payloadBytes = Uint8List(12);
+    payloadBytes.setRange(0, 8, hashBytes);
     final myId = _localNodeId ?? '';
     final myIdSubstring = myId.length >= 4 ? myId.substring(0, 4) : myId.padRight(4, '0');
     final myIdBytes = utf8.encode(myIdSubstring);
-    payloadBytes.setRange(4, 8, myIdBytes);
+    payloadBytes.setRange(8, 12, myIdBytes);
     return payloadBytes;
   }
 

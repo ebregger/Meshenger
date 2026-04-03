@@ -196,12 +196,13 @@ class BleDiscoveryService {
 
         final remotePayload = _tryGetRemoteHash(r);
         if (remotePayload == null) continue;
-        if (remotePayload.length < 4) continue;
-        
-        // CRITICAL: Extract 4-byte node ID prefix (if present) and skip if it's our own advertisement!
-        if (remotePayload.length >= 8) {
+        if (remotePayload.length < 8) continue; // Need at least 8 bytes for the 64-bit hash
+
+        // CRITICAL: Extract 4-byte node ID prefix (at bytes 8-11) and skip if it's our own advertisement!
+        // Payload layout: [8 bytes hash][4 bytes nodeId prefix]
+        if (remotePayload.length >= 12) {
           try {
-            final remoteNodeIdStr = utf8.decode(remotePayload.sublist(4, 8), allowMalformed: true);
+            final remoteNodeIdStr = utf8.decode(remotePayload.sublist(8, 12), allowMalformed: true);
             final localNodeIdPrefix = myNodeId.length >= 4 ? myNodeId.substring(0, 4) : myNodeId.padRight(4, '0');
             if (remoteNodeIdStr == localNodeIdPrefix) {
               continue; // Drop self-advertisement completely
@@ -209,8 +210,11 @@ class BleDiscoveryService {
           } catch (_) {}
         }
 
-        final remoteHashInt =
-            ByteData.sublistView(remotePayload).getUint32(0, Endian.big);
+        // Read 64-bit hash as two big-endian uint32 words (Dart ByteData has no getUint64).
+        final bd = ByteData.sublistView(remotePayload);
+        final hashHigh = bd.getUint32(0, Endian.big);
+        final hashLow = bd.getUint32(4, Endian.big);
+        final remoteHashInt = (hashHigh << 32) | hashLow;
 
         hashToMac[remoteHashInt] = mac;
 
@@ -258,8 +262,10 @@ class BleDiscoveryService {
         }
 
         final localHashBytes = _localHash;
-        final localHashInt = (localHashBytes != null && localHashBytes.length >= 4)
-            ? ByteData.sublistView(localHashBytes).getUint32(0, Endian.big)
+        // Read local hash as 64-bit (two uint32 words) to match new 8-byte payload format.
+        final localHashInt = (localHashBytes != null && localHashBytes.length >= 8)
+            ? (ByteData.sublistView(localHashBytes).getUint32(0, Endian.big) << 32) |
+              ByteData.sublistView(localHashBytes).getUint32(4, Endian.big)
             : null;
 
         // 50s anti-entropy heartbeat: even if hashes match, force a connection periodically.
@@ -271,14 +277,6 @@ class BleDiscoveryService {
         if (localHashInt != null && remoteHashInt == localHashInt && !needsAntiEntropy) {
           _hashCooldowns[remoteHashInt] = DateTime.now();
           continue;
-        }
-
-        if (_localHash != null && _localHash!.length >= 4) {
-          final localU32 = ByteData.sublistView(_localHash!)
-              .getUint32(0, Endian.big);
-          if (remoteHashInt == localU32) {
-            // Hashes match; anti-entropy handled above.
-          }
         }
 
         onDiscovered(discoveredId);

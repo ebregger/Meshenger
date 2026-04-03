@@ -156,9 +156,11 @@ class DatabaseService {
     _db = null;
   }
 
-  /// XOR-based "sync token" representing current DB state.
+  /// FNV-1a 64-bit hash of all live HLC values — the "fingerprint" of this node's database state.
   ///
-  /// Uses CRDT HLC values so the token tracks true logical progress.
+  /// 64-bit gives ~5 billion unique combinations before the Birthday Paradox reaches 50%,
+  /// versus ~77,000 for the old 32-bit hash. Two nodes with different data will almost
+  /// never produce the same token, preventing them from permanently ignoring each other.
   Future<int> getDatabaseHash() async {
     await init();
     if (!_dbHashDirty && _cachedDbHashU32 != null) {
@@ -172,11 +174,10 @@ class DatabaseService {
       SELECT hlc FROM bitmap_chunks WHERE is_deleted = 0
     ''');
 
-    // IMPORTANT: Do NOT use Dart's `String.hashCode` here.
-    // It is randomized per process and not stable across devices, which breaks
-    // hash-based sync skipping and hash routing.
-    const fnvOffsetBasis = 0x811C9DC5; // 2166136261
-    const fnvPrime = 0x01000193; // 16777619
+    // FNV-1a 64-bit: offset basis and prime from the FNV spec.
+    // Using Int64 from the fixnum package to avoid Dart's 53-bit JS integer limit.
+    var hash = Int64.parseHex('cbf29ce484222325');
+    const fnvPrime64 = 0x00000100000001B3;
 
     // Deterministic order: stable across query implementations.
     final hlcs = <String>[];
@@ -187,31 +188,34 @@ class DatabaseService {
     }
     hlcs.sort();
 
-    var hash = fnvOffsetBasis;
     for (final h in hlcs) {
       final bytes = utf8.encode(h);
       for (final b in bytes) {
-        hash ^= b & 0xFF;
-        hash = (hash * fnvPrime) & 0xFFFFFFFF;
+        hash = hash ^ Int64(b & 0xFF);
+        hash = hash * Int64(fnvPrime64);
       }
       // Delimiter to avoid accidental concatenation ambiguity.
-      hash ^= 0x00;
-      hash = (hash * fnvPrime) & 0xFFFFFFFF;
+      hash = hash ^ Int64(0x00);
+      hash = hash * Int64(fnvPrime64);
     }
 
-    // Normalize into an unsigned 32-bit space.
-    final out = hash & 0xFFFFFFFF;
+    final out = hash.toInt();
     _cachedDbHashU32 = out;
     _dbHashDirty = false;
     return out;
   }
 
-  /// 4-byte big-endian representation of [getDatabaseHash].
+  /// 8-byte big-endian representation of [getDatabaseHash].
+  ///
+  /// The full 64-bit hash is advertised over BLE. Receivers compare these 8 bytes
+  /// against their own local hash to decide whether to initiate a sync.
   Future<Uint8List> getDatabaseHashBytes() async {
     final hashInt = await getDatabaseHash();
-    final bytes = Uint8List(4);
+    final bytes = Uint8List(8);
     final bd = ByteData.view(bytes.buffer);
-    bd.setUint32(0, hashInt, Endian.big);
+    // Write as two 32-bit big-endian words since ByteData has no setUint64.
+    bd.setUint32(0, (hashInt >> 32) & 0xFFFFFFFF, Endian.big);
+    bd.setUint32(4, hashInt & 0xFFFFFFFF, Endian.big);
     return bytes;
   }
 
