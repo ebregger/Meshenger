@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show zlib;
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint, listEquals;
@@ -9,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 import '../models/generated/mesh_data.pb.dart';
+import '../services/api_service.dart';
 import '../services/ble_discovery_service.dart';
 import '../services/native_mesh_service.dart';
 import '../utils/ble_permission_result.dart';
@@ -56,6 +58,16 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   final StreamController<void> _presenceBump =
       StreamController<void>.broadcast();
+
+  Uint8List _buildAdvertiserPayload(Uint8List hashBytes) {
+    final payloadBytes = Uint8List(8);
+    payloadBytes.setRange(0, 4, hashBytes);
+    final myId = _localNodeId ?? '';
+    final myIdSubstring = myId.length >= 4 ? myId.substring(0, 4) : myId.padRight(4, '0');
+    final myIdBytes = utf8.encode(myIdSubstring);
+    payloadBytes.setRange(4, 8, myIdBytes);
+    return payloadBytes;
+  }
 
   void _handleMeshConnectionPhaseChanged() {
     _publishRadioFlags();
@@ -300,9 +312,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           final hashBytes = await db.getDatabaseHashBytes();
           final b64 = base64Encode(hashBytes);
           if (b64 != _lastAdvertisedHashB64) {
+            debugPrint('📡 [ADV] Hash changed to $b64 (triggered by messages)');
             _lastAdvertisedHashB64 = b64;
-            await _nativeMesh.updateAdvertiserHash(hashBytes);
-            _discovery.setLocalHash(hashBytes);
+            final payload = _buildAdvertiserPayload(hashBytes);
+            await _nativeMesh.updateAdvertiserHash(payload);
+            _discovery.setLocalHash(payload);
           }
         } catch (e, st) {
           debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
@@ -340,9 +354,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           final hashBytes = await db.getDatabaseHashBytes();
           final b64 = base64Encode(hashBytes);
           if (b64 != _lastAdvertisedHashB64) {
+            debugPrint('📡 [ADV] Hash changed to $b64 (triggered by profiles)');
             _lastAdvertisedHashB64 = b64;
-            await _nativeMesh.updateAdvertiserHash(hashBytes);
-            _discovery.setLocalHash(hashBytes);
+            final payload = _buildAdvertiserPayload(hashBytes);
+            await _nativeMesh.updateAdvertiserHash(payload);
+            _discovery.setLocalHash(payload);
           }
         } catch (e, st) {
           debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
@@ -358,20 +374,36 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       final senderMac = incoming.macAddress;
       final chunk = incoming.bytes;
 
+      if (ApiService.ignoreMac != null && senderMac == ApiService.ignoreMac) {
+        return; // Simulating out of range
+      }
+      if (ApiService.dropRate > 0 && Random().nextDouble() < ApiService.dropRate) {
+        return; // Simulating packet drop
+      }
+
       final buffer =
           _incomingBuffersByMac.putIfAbsent(senderMac, () => <int>[]);
 
       if (chunk.length == eofMarker.length && listEquals(chunk, eofMarker)) {
-        if (buffer.isEmpty) return;
+        debugPrint('📥 [SYNC] EOF received from $senderMac — buffer=${buffer.length} bytes');
+        if (buffer.isEmpty) {
+          debugPrint('⚠️ [SYNC] Empty buffer at EOF from $senderMac — ignoring');
+          return;
+        }
 
         Future<void>.microtask(() async {
           try {
+            debugPrint('🔄 [SYNC] Decompressing payload from $senderMac (${buffer.length} bytes)...');
             final decompressed = zlib.decode(buffer);
             final String jsonStr = utf8.decode(decompressed);
             final decodedJson = jsonDecode(jsonStr);
-            if (decodedJson is! Map) return;
+            if (decodedJson is! Map) {
+              debugPrint('❌ [SYNC] Decoded JSON is not a Map from $senderMac');
+              return;
+            }
             final root = Map<String, dynamic>.from(decodedJson);
             final type = root['type'] as String?;
+            debugPrint('📦 [SYNC] Received type=$type from $senderMac');
 
             final db = await _ref.read(databaseProvider.future);
 
@@ -419,7 +451,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               }
 
               // 2) Respond with an offer delta (surgical changeset).
-              if (senderHash == null || vectorRaw is! Map) return;
+              if (senderHash == null || vectorRaw is! Map) {
+                debugPrint('⚠️ [SYNC] Offer missing senderHash or vector from $senderMac — skipping reply');
+                return;
+              }
               final remoteVector = Map<String, dynamic>.from(vectorRaw);
               // Prefer direct MAC from native GATT callback (more reliable than scan routing).
               final targetMac =
@@ -431,7 +466,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 return;
               }
 
+              debugPrint('📤 [SYNC] Computing delta for offer from senderId=$senderId...');
               final delta = await db.getDeltaChangeset(remoteVector);
+              debugPrint('📤 [SYNC] Delta has ${delta.length} entries — replying to $targetMac');
 
               final ourSenderHash = await db.getDatabaseHash();
               final localId = _localNodeId ?? db.localNodeId;
@@ -452,6 +489,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 targetMac,
                 Uint8List.fromList(outBytes),
               );
+              debugPrint('✅ [SYNC] Delta reply sent to $targetMac (${outBytes.length} bytes)');
               if (delta.isNotEmpty) {
               }
               return;
@@ -501,10 +539,19 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               }
 
               final dataRaw = root['data'] ?? root['changes'];
-              if (dataRaw is! Map) return;
+              if (dataRaw is! Map) {
+                debugPrint('⚠️ [SYNC] Delta from $senderMac has no data/changes field');
+                return;
+              }
               final changeset = Map<String, dynamic>.from(dataRaw);
+              final rowCounts = changeset.map((t, rows) => MapEntry(t, (rows as List).length));
+              final totalRows = rowCounts.values.fold(0, (a, b) => a + b);
+              debugPrint('📥 [SYNC] Merging delta from $senderMac — $totalRows rows across ${changeset.length} tables: $rowCounts');
               if (changeset.isNotEmpty) {
                 await db.mergeSyncChangeset(changeset);
+                debugPrint('✅ [SYNC] Merged $totalRows rows from $senderMac');
+              } else {
+                debugPrint('ℹ️ [SYNC] Empty changeset from $senderMac — nothing to merge');
               }
 
               try {
@@ -512,15 +559,16 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 final b64 = base64Encode(hashBytes);
                 if (b64 != _lastAdvertisedHashB64) {
                   _lastAdvertisedHashB64 = b64;
-                  await _nativeMesh.updateAdvertiserHash(hashBytes);
-                  _discovery.setLocalHash(hashBytes);
+                  final payload = _buildAdvertiserPayload(hashBytes);
+                  await _nativeMesh.updateAdvertiserHash(payload);
+                  _discovery.setLocalHash(payload);
                 }
               } catch (e, st) {
                 debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
               }
             }
-          } catch (e) {
-            debugPrint('Mesh merge error: $e');
+          } catch (e, st) {
+            debugPrint('❌ [SYNC] Mesh processing error from $senderMac: $e\n$st');
           } finally {
             buffer.clear();
             if (buffer.isEmpty) {
@@ -530,6 +578,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         });
       } else {
         buffer.addAll(chunk);
+        debugPrint('📡 [SYNC] Chunk from $senderMac: ${chunk.length} bytes (total buffer: ${buffer.length})');
       }
     });
   }
@@ -551,11 +600,16 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       final db = await _ref.read(databaseProvider.future);
       final hashBytes = await db.getDatabaseHashBytes();
       _lastAdvertisedHashB64 = base64Encode(hashBytes);
-      _discovery.setLocalHash(hashBytes);
-      await _nativeMesh.startNativeServer(hashBytes);
+      final payload = _buildAdvertiserPayload(hashBytes);
+      _discovery.setLocalHash(payload);
+      final ownMac = await _nativeMesh.startNativeServer(payload);
+      if (ownMac != null && ownMac.isNotEmpty) {
+        debugPrint('[MESH] Own BLE MAC: $ownMac (will filter from scan results)');
+      }
       await _attachNativeIncomingSync();
       await _discovery.startScanning(
         myNodeId: myId,
+        ownMac: ownMac,
         onDiscovered: _onPeerDiscovered,
       );
       await _attachLocalMessageQuickScanTrigger(myId);
@@ -658,8 +712,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     final db = await _ref.read(databaseProvider.future);
     final hashBytes = await db.getDatabaseHashBytes();
     _lastAdvertisedHashB64 = base64Encode(hashBytes);
-    _discovery.setLocalHash(hashBytes);
-    await _nativeMesh.startNativeServer(hashBytes);
+    final payload = _buildAdvertiserPayload(hashBytes);
+    _discovery.setLocalHash(payload);
+    final ownMac = await _nativeMesh.startNativeServer(payload);
     await _attachNativeIncomingSync();
     _publishRadioFlags();
   }

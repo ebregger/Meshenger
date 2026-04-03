@@ -61,20 +61,20 @@ class BleDiscoveryService {
 
   Duration _deadlistDurationForError(Object error) {
     // Default: short cooldown for transient radio flakiness.
-    var d = const Duration(seconds: 10);
+    var d = const Duration(seconds: 5);
     if (error is PlatformException) {
       switch (error.code) {
         case 'CHAR_NOT_FOUND':
           // Likely not our mesh GATT (ghost advertiser / stale cache).
-          d = const Duration(seconds: 60);
+          d = const Duration(seconds: 30);
           break;
         case 'timeout':
-          // Transient; keep short so real peers recover quickly.
-          d = const Duration(seconds: 10);
+          // Transient; keep very short so real peers get retried quickly.
+          d = const Duration(seconds: 5);
           break;
         case 'DISCONNECTED':
-          // Often HCI 133 / connection churn. Medium cooldown.
-          d = const Duration(seconds: 30);
+          // Often HCI 133 / connection churn. Short cooldown now.
+          d = const Duration(seconds: 10);
           break;
       }
     }
@@ -125,7 +125,7 @@ class BleDiscoveryService {
         bytes[3] != 0x48) { // H
       return null;
     }
-    return bytes.sublist(4, 8);
+    return bytes.sublist(4);
   }
 
   bool _isLikelyNativeMeshAdvert(ScanResult r) {
@@ -152,6 +152,7 @@ class BleDiscoveryService {
   /// Scans for advertisers that include [meshServiceUuid] in the payload.
   Future<void> startScanning({
     required String myNodeId,
+    String? ownMac,
     required void Function(String shortNodeId) onDiscovered,
   }) async {
     _isConnecting = false;
@@ -168,21 +169,49 @@ class BleDiscoveryService {
 
     await _scanSub?.cancel();
 
+    final ownMacUpper = ownMac?.toUpperCase();
+
     // Do not use [withServices] filtering here: some Android stacks omit/truncate 128-bit UUIDs
     // when the advertisement includes a device name. We'll filter manually in the listener.
     await FlutterBluePlus.startScan();
 
     _scanSub = FlutterBluePlus.scanResults.listen((results) {
-      for (final r in results) {
+      // CRITICAL: Sort by timestamp descending. FBP maintains a growing historical List.
+      // Dead/ghost MACs will fall to the bottom, ensuring we process actively broadcasting peers first,
+      // avoiding catastrophic 12s timeout deadlocks trying to connect to dead iterations of ourselves.
+      final sortedResults = results.toList()
+        ..sort((a, b) => b.timeStamp.compareTo(a.timeStamp));
+
+      for (final r in sortedResults) {
         if (_isConnecting) continue;
         if (!_isLikelyNativeMeshAdvert(r)) continue;
 
-        final remoteHash = _tryGetRemoteHash(r);
-        if (remoteHash == null) continue;
-        if (remoteHash.length < 4) continue;
-        final remoteHashInt =
-            ByteData.sublistView(remoteHash).getUint32(0, Endian.big);
         final mac = r.device.remoteId.str;
+
+        // CRITICAL: skip self-advertisements. Android can see its own BLE advertisement
+        // in scan results. Connecting to self causes a loopback that wastes all attempts.
+        if (ownMacUpper != null && mac.toUpperCase() == ownMacUpper) {
+          continue;
+        }
+
+        final remotePayload = _tryGetRemoteHash(r);
+        if (remotePayload == null) continue;
+        if (remotePayload.length < 4) continue;
+        
+        // CRITICAL: Extract 4-byte node ID prefix (if present) and skip if it's our own advertisement!
+        if (remotePayload.length >= 8) {
+          try {
+            final remoteNodeIdStr = utf8.decode(remotePayload.sublist(4, 8), allowMalformed: true);
+            final localNodeIdPrefix = myNodeId.length >= 4 ? myNodeId.substring(0, 4) : myNodeId.padRight(4, '0');
+            if (remoteNodeIdStr == localNodeIdPrefix) {
+              continue; // Drop self-advertisement completely
+            }
+          } catch (_) {}
+        }
+
+        final remoteHashInt =
+            ByteData.sublistView(remotePayload).getUint32(0, Endian.big);
+
         hashToMac[remoteHashInt] = mac;
 
         final deadHashTime = deadHashUntil[remoteHashInt];
@@ -223,7 +252,8 @@ class BleDiscoveryService {
         final discoveredId = stableNodeId ?? mac;
 
         final last = _hashCooldowns[remoteHashInt];
-        if (last != null && DateTime.now().difference(last).inSeconds < 10) {
+        // Short timeout for hash so we don't spam attempts to ghost MACs even when sorted
+        if (last != null && DateTime.now().difference(last).inSeconds < 12) {
           continue;
         }
 
@@ -250,8 +280,6 @@ class BleDiscoveryService {
             // Hashes match; anti-entropy handled above.
           }
         }
-
-        _hashCooldowns[remoteHashInt] = DateTime.now();
 
         onDiscovered(discoveredId);
         unawaited(_runMeshInitiatorHandshake(myNodeId, remoteHashInt, r.device));
@@ -287,20 +315,27 @@ class BleDiscoveryService {
     }
     try {
       final db = await _ref.read(databaseProvider.future);
-      final vector = await db.getVersionVector();
+      // Always send our full changeset as a delta (no offer/reply round-trip).
+      // BLE advertisements only carry a hash, not a vector, so we can't know exactly
+      // what the remote has. Sending everything is safe — the CRDT merge is idempotent.
+      final remoteVector = <String, dynamic>{};
+      final delta = await db.getDeltaChangeset(remoteVector);
       final myHashInt = await db.getDatabaseHash();
+      final myNodeId2 = myNodeId;
+      debugPrint('📤 [DISCOVERY] Sending full delta to $targetMac — ${delta.length} tables (${delta.values.fold(0, (s, e) => s + (e as List).length)} rows)');
       final envelope = <String, dynamic>{
-        'type': 'offer',
-        // Use application-layer node UUID (IdentityService) so it matches `users.mesh_node_id`
-        // and `messages.origin_node_id` for display-name resolution.
-        'sender_id': myNodeId,
+        'type': 'delta',
+        'sender_id': myNodeId2,
         'sender_hash': myHashInt,
-        'vector': vector,
         'neighbors': currentNeighborIds,
+        'data': delta,
       };
       final payload = zlib.encode(utf8.encode(jsonEncode(envelope)));
       final macAddress = device.remoteId.str;
-      await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload));
+      // Android mesh advertisers use Random Resolvable Addresses.
+      // We pass isRandom: true to ensure the native layer uses the correct addressing mode.
+      await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload), isRandom: true);
+      debugPrint('✅ [DISCOVERY] Delta sent to $targetMac (${payload.length} bytes)');
       // Mark successful anti-entropy sync time.
       lastFullSync[targetMac] = DateTime.now();
     } catch (e) {

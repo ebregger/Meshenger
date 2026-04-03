@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
@@ -30,10 +29,11 @@ class NativeMeshService {
 
   Stream<IncomingBleChunk> get incomingPayloads => _incomingPayloads;
 
-  Future<void> startNativeServer(Uint8List currentHash) async {
-    await _bleMethodChannel.invokeMethod<void>('start_server', <String, Object?>{
+  Future<String?> startNativeServer(Uint8List currentHash) async {
+    final ownMac = await _bleMethodChannel.invokeMethod<String>('start_server', <String, Object?>{
       'hash': currentHash,
     });
+    return ownMac;
   }
 
   Future<void> updateAdvertiserHash(Uint8List newHash) async {
@@ -42,13 +42,22 @@ class NativeMeshService {
     });
   }
 
-  Future<void> sendPayload(String macAddress, Uint8List payload) async {
+  Future<void> resetServer() async {
+    try {
+      await _bleMethodChannel.invokeMethod<void>('reset_server');
+    } on PlatformException catch (e) {
+      print('🔥 Native reset_server failed: ${e.message}');
+    }
+  }
+
+  Future<void> sendPayload(String macAddress, Uint8List payload, {bool isRandom = false}) async {
     try {
       await _bleMethodChannel.invokeMethod<void>(
         'send_payload',
         <String, Object?>{
           'macAddress': macAddress,
           'payload': payload,
+          'isRandom': isRandom,
         },
       );
     } on PlatformException catch (e) {

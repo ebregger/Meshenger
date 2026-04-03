@@ -122,12 +122,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: ref.watch(chatProvider).when(
                   data: (messages) {
                     final myId = myIdAsync.value;
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!mounted) return;
-                      if (_tabIndex == 0) {
-                        _snapChatToBottom(animated: false);
-                      }
-                    });
                     if (messages.isEmpty) {
                       return Center(
                         child: Text(
@@ -202,7 +196,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           if (_tabIndex == 0) {
-            _snapChatToBottom(animated: true);
+            _snapChatToBottom(animated: prevLen != null && prevLen > 0);
           }
         });
       }
