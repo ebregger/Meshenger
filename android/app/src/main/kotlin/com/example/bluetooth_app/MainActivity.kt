@@ -416,6 +416,7 @@ class MainActivity : FlutterActivity() {
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
               Log.d(TAG, "[GATT] STATE_CONNECTED mac=$macAddress")
+              Log.d(TAG, "[BENCHMARK] TARGET_MAC:$macAddress | EVENT:GATT_CONNECTED | TIMESTAMP:${System.currentTimeMillis()}")
               mainHandler.removeCallbacks(connectionWatchdog)
               // 60s: large delta replies (after offer) can take time to write back.
               // The offer packet itself is tiny but the peer's response may be thousands of rows.

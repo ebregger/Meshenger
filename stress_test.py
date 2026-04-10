@@ -1,5 +1,4 @@
-import sys, io
-# Force UTF-8 output on Windows to avoid cp1252 encoding errors with unicode chars.
+import sys, io, os
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
@@ -7,10 +6,37 @@ import urllib.request
 import urllib.parse
 import json
 import time
-import sys
 import threading
+import subprocess
+import re
+import argparse
+from collections import defaultdict
 
 PORTS = [18081, 18082, 18083]
+
+class Colors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+
+BENCHMARK_REGEX = re.compile(r'\[BENCHMARK\] (.*)')
+
+class Telemetry:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.created = {}  # msg_id -> { device, t }
+        self.scan_hit = [] # { device, mac, t }
+        self.offer_sent = [] # { device, mac, t }
+        self.gatt_connected = [] # { device, mac, t }
+        self.delta_received = [] # { device, mac, bytes, t }
+        self.merged = defaultdict(dict)  # msg_id -> { device: t }
+
+telemetry = Telemetry()
 
 def request(port, path, method='GET', body=None):
     url = f'http://127.0.0.1:{port}{path}'
@@ -27,19 +53,9 @@ def request(port, path, method='GET', body=None):
     except Exception as e:
         return None
 
-def reset_network_limits():
-    print("Resetting any artificial network limits...")
-    for p in PORTS:
-        req = request(p, '/config', 'POST', {'reset': True})
-    
-    # NOTE: Do NOT reset the BLE GATT server here. Android's BLE stack does not
-    # fully recover after close()/reopen() — all subsequent GATT client connections
-    # fail silently (no onConnectionStateChange callbacks). The server heals itself
-    # naturally via the connection slot cleanup in onConnectionStateChange.
-
 def check_devices():
     infos = {}
-    print("Checking device APIs...")
+    print(f"{Colors.OKCYAN}Checking device APIs...{Colors.ENDC}")
     for p in PORTS:
         res = request(p, '/info')
         if res and 'nodeId' in res:
@@ -49,163 +65,184 @@ def check_devices():
             print(f"  Device at port {p}: UNREACHABLE")
     return infos
 
-def get_messages(port):
-    res = request(port, '/messages')
-    if res and 'messages' in res:
-        return {m['msgId']: m for m in res['messages']}
-    return {}
+def get_adb_devices():
+    result = subprocess.run(["adb", "devices"], capture_output=True, text=True)
+    devices = []
+    for line in result.stdout.strip().split("\n")[1:]:
+        if "\tdevice" in line:
+            devices.append(line.split("\t")[0].strip())
+    return devices
 
-def print_progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=40):
-    if total == 0:
-        return
-    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-    filledLength = int(length * iteration // total)
-    bar = '#' * filledLength + '-' * (length - filledLength)
-    line = f'\r{prefix} [{bar}] {percent}% {suffix}'
-    try:
-        sys.stdout.write(line)
-        sys.stdout.flush()
-    except UnicodeEncodeError:
-        sys.stdout.write(line.encode('ascii', 'replace').decode('ascii'))
-        sys.stdout.flush()
-    if iteration == total:
-        print()
+def logcat_worker(device_id, stop_event):
+    cmd = ["adb", "-s", device_id, "logcat", "-v", "raw", "-s", "flutter,NativeMeshService"]
+    subprocess.run(["adb", "-s", device_id, "logcat", "-c"])
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    
+    while not stop_event.is_set():
+        line = process.stdout.readline()
+        if not line:
+            if process.poll() is not None:
+                break
+            time.sleep(0.1)
+            continue
+            
+        match = BENCHMARK_REGEX.search(line)
+        if match:
+            payload = match.group(1).strip()
+            parts = [p.strip() for p in payload.split('|')]
+            data = {}
+            for part in parts:
+                if ':' in part:
+                    k, v = part.split(':', 1)
+                    data[k.strip()] = v.strip()
+                elif '=' in part:
+                    k, v = part.split('=', 1)
+                    data[k.strip()] = v.strip()
+                
+            event = data.get('EVENT')
+            t = int(data.get('TIMESTAMP', 0))
+            mac = data.get('TARGET_MAC', '')
+            msg_id = data.get('MSG_ID', '')
+            
+            with telemetry.lock:
+                if event == 'CREATED' and msg_id:
+                    telemetry.created[msg_id] = {'device': device_id, 't': t}
+                elif event == 'SCAN_HIT' and mac:
+                    telemetry.scan_hit.append({'device': device_id, 'mac': mac, 't': t})
+                elif event == 'OFFER_SENT' and mac:
+                    telemetry.offer_sent.append({'device': device_id, 'mac': mac, 't': t})
+                elif event == 'GATT_CONNECTED' and mac:
+                    telemetry.gatt_connected.append({'device': device_id, 'mac': mac, 't': t})
+                elif event == 'DELTA_RECEIVED' and mac:
+                    telemetry.delta_received.append({'device': device_id, 'mac': mac, 'bytes': int(data.get('BYTES', 0)), 't': t})
+                elif event == 'MERGED' and msg_id:
+                    telemetry.merged[msg_id][device_id] = t
+                    
+    process.terminate()
 
-def run_longer_test(num_messages=30):
-    reset_network_limits()
+def run_benchmark(num_messages=30):
     infos = check_devices()
     if len(infos) < 2:
-        print("Need at least 2 responsive devices to test mesh sync.")
+        print(f"{Colors.FAIL}Need at least 2 responsive devices to test mesh sync.{Colors.ENDC}")
         return
 
-    sender_port = PORTS[0]
-    receiver_ports = [p for p in PORTS if p != sender_port and p in infos]
-    sender_node_id = infos[sender_port]
+    adb_devices = get_adb_devices()
+    if len(adb_devices) < 2:
+        print(f"{Colors.FAIL}Ensure at least 2 devices are connected via adb.{Colors.ENDC}")
+        return
+        
+    print(f"\n{Colors.OKCYAN}Starting adb logcat streams for devices: {adb_devices}{Colors.ENDC}")
+    stop_event = threading.Event()
+    threads = []
+    for d in adb_devices:
+        t = threading.Thread(target=logcat_worker, args=(d, stop_event), daemon=True)
+        t.start()
+        threads.append(t)
+        
+    time.sleep(2)
 
-    print(f"\nSender:    port {sender_port}  nodeId={sender_node_id}")
-    for p in receiver_ports:
-        print(f"Receiver:  port {p}  nodeId={infos[p]}")
+    sender_port = list(infos.keys())[0]
+    expected_merges_per_msg = len(adb_devices) - 1
 
-    # Snapshot existing messages so we only track NEW ones from this run.
-    print("\nSnapshotting baseline message IDs...")
-    baseline_ids = {p: set(get_messages(p).keys()) for p in PORTS if p in infos}
-    print(f"  Baseline counts: { {p: len(ids) for p, ids in baseline_ids.items()} }")
-
-    # Send N messages from Device 1, track their msg IDs.
-    sent_msg_ids = []
-    send_times = {}
-
-    print(f"\nSending {num_messages} messages from device 1 (port {sender_port})...")
+    print(f"\n{Colors.HEADER}--- BENCHMARK: Sending {num_messages} messages from Device 1 (Port {sender_port}) ---{Colors.ENDC}")
     for i in range(num_messages):
-        tag = f"SyncTest#{i:03d}@{int(time.time()*1000)}"
+        tag = f"BenchMsg#{i:03d}@{int(time.time()*1000)}"
         res = request(sender_port, '/send', 'POST', {'text': tag})
-        send_times[tag] = time.time()
-        print_progress_bar(i + 1, num_messages, prefix='Sending:', suffix=f'({i+1}/{num_messages})')
-        time.sleep(3.0)
+        time.sleep(0.3)
+        sys.stdout.write(f"\rSending: {i+1}/{num_messages}")
+        sys.stdout.flush()
     print()
 
-    # Now figure out which message IDs were actually created in this run on Device 1.
-    print("Identifying sent message IDs from Device 1...")
-    time.sleep(2)
-    d1_msgs_now = get_messages(sender_port)
-    new_on_d1 = {mid: m for mid, m in d1_msgs_now.items()
-                 if mid not in baseline_ids.get(sender_port, set())
-                 and m.get('originNodeId') == sender_node_id}
-    sent_msg_ids = list(new_on_d1.keys())
-    print(f"  Found {len(sent_msg_ids)} new messages from sender on Device 1 (expected {num_messages})")
-    if len(sent_msg_ids) < num_messages:
-        print(f"  ⚠️  WARNING: Only {len(sent_msg_ids)} messages confirmed on sender device!")
-
-    if not sent_msg_ids:
-        print("ERROR: Could not identify any sent messages, aborting.")
-        return
-
-    # Poll receivers until all sent messages arrive or timeout.
-    print(f"\nWaiting for {len(sent_msg_ids)} messages to propagate to {len(receiver_ports)} receiver(s)...")
-    max_wait = max(90, num_messages * 3)
+    print(f"\n{Colors.OKBLUE}Waiting for propagation ({expected_merges_per_msg} merges per message)...{Colors.ENDC}")
     poll_start = time.time()
-    arrival_times = {p: {} for p in receiver_ports}   # port -> {msgId: arrival_time}
-    seen_ids = {p: set(baseline_ids.get(p, set())) for p in receiver_ports}
+    max_wait = max(90, num_messages * 3)
 
     while time.time() - poll_start < max_wait:
-        for p in receiver_ports:
-            msgs = get_messages(p)
-            for mid in sent_msg_ids:
-                if mid in msgs and mid not in arrival_times[p]:
-                    arrival_times[p][mid] = time.time()
-                seen_ids[p].add(mid)  # track we looked
-
-        total_received = sum(len(v) for v in arrival_times.values())
-        total_expected = len(sent_msg_ids) * len(receiver_ports)
-        elapsed = time.time() - poll_start
-        remaining = max(0, int(max_wait - elapsed))
-        print_progress_bar(
-            total_received, total_expected,
-            prefix='Syncing:',
-            suffix=f'{total_received}/{total_expected} delivered [timeout in {remaining}s]'
-        )
-
-        if total_received >= total_expected:
-            print(f"\n\n✅ [SUCCESS] All {len(sent_msg_ids)} messages reached all {len(receiver_ports)} receivers!")
-            break
+        with telemetry.lock:
+            fully_propagated = 0
+            for msg_id, creation_info in telemetry.created.items():
+                if msg_id in telemetry.merged and len(telemetry.merged[msg_id]) >= expected_merges_per_msg:
+                    fully_propagated += 1
+            
+            sys.stdout.write(f"\rPropagated fully: {fully_propagated}/{num_messages} messages")
+            sys.stdout.flush()
+            
+            if fully_propagated >= num_messages:
+                print(f"\n{Colors.OKGREEN}[SUCCESS] All messages merged!{Colors.ENDC}\n")
+                break
         time.sleep(1)
     else:
-        print(f"\n\n❌ [TIMEOUT] Sync did not complete in {max_wait}s")
+        print(f"\n{Colors.WARNING}[TIMEOUT] Propagation did not finish within {max_wait}s{Colors.ENDC}\n")
 
-    # Per-receiver results.
-    print("\n--- RESULTS ---")
-    for p in receiver_ports:
-        received = len(arrival_times[p])
-        missing = [mid for mid in sent_msg_ids if mid not in arrival_times[p]]
-        latencies = []
-        for mid, t in arrival_times[p].items():
-            msg = new_on_d1.get(mid)
-            if msg:
-                ts_ms = msg.get('timestamp', 0)
-                sent_t = ts_ms / 1000.0 if ts_ms > 1e9 else send_times.get(
-                    msg.get('textContent', ''), poll_start)
-                latencies.append(t - sent_t)
+    stop_event.set()
+    time.sleep(1)
 
-        avg_lat = f"{sum(latencies)/len(latencies):.1f}s" if latencies else "N/A"
-        status = "✅" if received == len(sent_msg_ids) else "❌"
-        print(f"  {status} Port {p} (nodeId={infos[p]}): "
-              f"{received}/{len(sent_msg_ids)} messages received  avg_latency={avg_lat}")
-        if missing:
-            print(f"     Missing IDs: {missing[:5]}{'...' if len(missing) > 5 else ''}")
-
-    # Also check for any unexpected delivery failures: messages on D1 that didn't originate there.
-    print("\n--- CROSS-CHECK: Are receivers' message counts growing? ---")
-    for p in receiver_ports:
-        msgs = get_messages(p)
-        new_count = len({mid for mid in msgs if mid not in baseline_ids.get(p, set())})
-        print(f"  Port {p}: {new_count} new messages since baseline (total={len(msgs)})")
-
-    print("\nGathering device logs to android.log...")
-    try:
-        import os, subprocess
-        result = subprocess.run("adb devices", capture_output=True, text=True, shell=True)
-        devices = []
-        for line in result.stdout.strip().split("\n")[1:]:
-            if "\tdevice" in line:
-                devices.append(line.split("\t")[0].strip())
+    print(f"\n{Colors.HEADER}{'='*40}")
+    print(f"          BENCHMARK REPORT")
+    print(f"{'='*40}{Colors.ENDC}")
+    
+    with telemetry.lock:
+        # Phase 1: Match Connection Latency
+        conn_lats = []
+        for c in telemetry.gatt_connected:
+            hits = [s['t'] for s in telemetry.scan_hit if s['device'] == c['device'] and s['mac'] == c['mac'] and s['t'] <= c['t']]
+            if hits:
+                conn_lats.append(c['t'] - max(hits))
+                
+        # Phase 2: Match Transfer Latency
+        transfer_lats = []
+        trans_bytes = []
+        for d in telemetry.delta_received:
+            offers = [o['t'] for o in telemetry.offer_sent if o['device'] == d['device'] and o['mac'] == d['mac'] and o['t'] <= d['t']]
+            if offers:
+                t_diff = d['t'] - max(offers)
+                if t_diff > 0:
+                    transfer_lats.append(t_diff)
+                    trans_bytes.append(d['bytes'])
         
-        print(f"Collecting logs from {len(devices)} device(s): {devices}")
-        with open("android.log", "w", encoding="utf-8") as f:
-            f.write(f"Test run: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Devices: {devices}\n\n")
-            for d in devices:
-                f.write(f"\n\n{'='*60}\nLOGS FOR DEVICE {d}\n{'='*60}\n\n")
-                r = subprocess.run(
-                    ["adb", "-s", d, "logcat", "-d", "-v", "time", "-s", "flutter,NativeMeshService"],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace"
-                )
-                f.write(r.stdout)
-                if r.stderr:
-                    f.write(f"\n[stderr]: {r.stderr}\n")
-        print(f"Logs saved to android.log ({os.path.getsize('android.log')} bytes)")
-    except Exception as e:
-        print(f"Failed to gather logs: {e}")
+        # Absolute Propagation & Discovery Base
+        abs_lats = []
+        base_create_tc = float('inf')
+        for msg_id, info in telemetry.created.items():
+            base_create_tc = min(base_create_tc, info['t'])
+            m_times = telemetry.merged.get(msg_id, {}).values()
+            for t_merge in m_times:
+                abs_lats.append(t_merge - info['t'])
+                
+        # Phase 3: Discovery Latency Heuristic (Simplification for cross-device: First hit after first create)
+        scan_hits_after_create = [s['t'] - base_create_tc for s in telemetry.scan_hit if s['t'] >= base_create_tc]
+        
+        print(f"\n{Colors.BOLD}--- Phase Breakdown (Averages) ---{Colors.ENDC}")
+        if scan_hits_after_create:
+            print(f"  Discovery Latency:  {Colors.OKCYAN}{(sum(scan_hits_after_create)/len(scan_hits_after_create))/1000.0:.3f}s{Colors.ENDC}")
+        if conn_lats:
+            print(f"  Connection Latency: {Colors.OKCYAN}{(sum(conn_lats)/len(conn_lats))/1000.0:.3f}s{Colors.ENDC}")
+        if transfer_lats:
+            print(f"  Transfer Latency:   {Colors.OKCYAN}{(sum(transfer_lats)/len(transfer_lats))/1000.0:.3f}s{Colors.ENDC}")
 
+        print(f"\n{Colors.BOLD}--- Bandwidth Metrics ---{Colors.ENDC}")
+        if transfer_lats and sum(trans_bytes) > 0:
+            total_kb = sum(trans_bytes) / 1024.0
+            total_time_s = sum(transfer_lats) / 1000.0
+            agg_bw = total_kb / total_time_s if total_time_s > 0 else 0
+            print(f"  Total Data Recevied: {Colors.OKGREEN}{total_kb:.2f} KB{Colors.ENDC}")
+            print(f"  Average Bandwidth:   {Colors.OKGREEN}{agg_bw:.2f} KB/s{Colors.ENDC}")
+        else:
+            print(f"  {Colors.WARNING}No valid Transfer data{Colors.ENDC}")
+
+        print(f"\n{Colors.BOLD}--- Absolute Propagation Latency ---{Colors.ENDC}")
+        if abs_lats:
+            print(f"  Best Case:  {Colors.OKGREEN}{min(abs_lats)/1000.0:.3f}s{Colors.ENDC}")
+            print(f"  Worst Case: {Colors.FAIL}{max(abs_lats)/1000.0:.3f}s{Colors.ENDC}")
+            print(f"  Average:    {Colors.OKCYAN}{(sum(abs_lats)/len(abs_lats))/1000.0:.3f}s{Colors.ENDC}")
+        else:
+            print(f"  {Colors.WARNING}No valid Merges{Colors.ENDC}")
 
 if __name__ == '__main__':
-    run_longer_test(30)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--messages", type=int, default=10, help="Messages to burst")
+    args = parser.parse_args()
+    try:
+        run_benchmark(args.messages)
+    except KeyboardInterrupt:
+        print("\nAborted.")

@@ -388,6 +388,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
       if (chunk.length == eofMarker.length && listEquals(chunk, eofMarker)) {
         debugPrint('📥 [SYNC] EOF received from $senderMac — buffer=${buffer.length} bytes');
+        debugPrint('[BENCHMARK] TARGET_MAC:$senderMac | EVENT:DELTA_RECEIVED | BYTES:${buffer.length} | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
         if (buffer.isEmpty) {
           debugPrint('⚠️ [SYNC] Empty buffer at EOF from $senderMac — ignoring');
           return;
@@ -552,6 +553,17 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               if (changeset.isNotEmpty) {
                 await db.mergeSyncChangeset(changeset);
                 debugPrint('✅ [SYNC] Merged $totalRows rows from $senderMac');
+                final messagesRaw = changeset['messages'];
+                if (messagesRaw is List) {
+                  for (final row in messagesRaw) {
+                    if (row is Map) {
+                      final msgId = row['msg_id'] ?? row['msgId'];
+                      if (msgId != null) {
+                        debugPrint('[BENCHMARK] MSG_ID:$msgId | EVENT:MERGED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
+                      }
+                    }
+                  }
+                }
               } else {
                 debugPrint('ℹ️ [SYNC] Empty changeset from $senderMac — nothing to merge');
               }

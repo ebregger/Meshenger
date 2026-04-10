@@ -40,6 +40,7 @@ class ChatActions extends StateNotifier<int> {
       timestamp: Int64(DateTime.now().millisecondsSinceEpoch),
     );
     debugPrint('📤 SAVING LOCAL MESSAGE: ${message.msgId}');
+    debugPrint('[BENCHMARK] MSG_ID:${message.msgId} | EVENT:CREATED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
     await db.upsertTextMessage(message);
   }
 }

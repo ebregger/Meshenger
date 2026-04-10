@@ -26,15 +26,36 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final ScrollController _chatScroll = ScrollController();
   int _tabIndex = 0;
 
+  bool _showScrollToBottom = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _chatScroll.addListener(_scrollListener);
+  }
+
+  void _scrollListener() {
+    if (!_chatScroll.hasClients) return;
+    final currentScroll = _chatScroll.position.pixels;
+    
+    final shouldShow = currentScroll > 150;
+    if (shouldShow != _showScrollToBottom) {
+      setState(() {
+        _showScrollToBottom = shouldShow;
+      });
+    }
+  }
+
   @override
   void dispose() {
+    _chatScroll.removeListener(_scrollListener);
     _chatScroll.dispose();
     super.dispose();
   }
 
   void _snapChatToBottom({required bool animated}) {
     if (!_chatScroll.hasClients) return;
-    final target = _chatScroll.position.maxScrollExtent;
+    final target = 0.0;
     if (animated) {
       _chatScroll.animateTo(
         target,
@@ -119,64 +140,84 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           ),
           Expanded(
-            child: ref.watch(chatProvider).when(
-                  data: (messages) {
-                    final myId = myIdAsync.value;
-                    if (messages.isEmpty) {
-                      return Center(
-                        child: Text(
-                          'No messages yet',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyLarge
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: ref.watch(chatProvider).when(
+                        data: (messages) {
+                          final myId = myIdAsync.value;
+                          if (messages.isEmpty) {
+                            return Center(
+                              child: Text(
+                                'No messages yet',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyLarge
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
                               ),
+                            );
+                          }
+
+                          return ListView.builder(
+                            reverse: true,
+                            controller: _chatScroll,
+                            physics: const BouncingScrollPhysics(
+                              parent: AlwaysScrollableScrollPhysics(),
+                            ),
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                            itemCount: messages.length,
+                            itemBuilder: (context, index) {
+                              final messageIndex = messages.length - 1 - index;
+                              final tm = messages[messageIndex];
+                              final isSent = myId != null && tm.originNodeId == myId;
+                              final bubble = ChatMessage(
+                                id: tm.msgId,
+                                body: tm.textContent,
+                                authorName: tm.authorName,
+                                isSent: isSent,
+                              );
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: ChatBubble(message: bubble),
+                              );
+                            },
+                          );
+                        },
+                        loading: () => const Center(
+                          child: CircularProgressIndicator(),
                         ),
-                      );
-                    }
-                    return ListView.builder(
-                      controller: _chatScroll,
-                      physics: const BouncingScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics(),
+                        error: (error, stack) => Center(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.all(16),
+                            child: SelectableText(
+                              'chatProvider stream failed\n\n$error\n\n$stack',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                      itemCount: messages.length,
-                      itemBuilder: (context, index) {
-                        final tm = messages[index];
-                        final isSent = myId != null && tm.originNodeId == myId;
-                        final bubble = ChatMessage(
-                          id: tm.msgId,
-                          body: tm.textContent,
-                          authorName: tm.authorName,
-                          isSent: isSent,
-                        );
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: ChatBubble(message: bubble),
-                        );
+                ),
+                if (_showScrollToBottom)
+                  Positioned(
+                    right: 16,
+                    bottom: 16,
+                    child: FloatingActionButton.small(
+                      onPressed: () {
+                        _snapChatToBottom(animated: true);
                       },
-                    );
-                  },
-                  loading: () => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                  error: (error, stack) => Center(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
-                      child: SelectableText(
-                        'chatProvider stream failed\n\n$error\n\n$stack',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                        ),
-                      ),
+                      child: const Icon(Icons.arrow_downward),
                     ),
                   ),
-                ),
+              ],
+            ),
           ),
           const ChatInputDock(),
         ],

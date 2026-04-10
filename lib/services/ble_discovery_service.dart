@@ -302,6 +302,7 @@ class BleDiscoveryService {
     _isConnecting = true;
     _notifyConnectionPhase();
     final targetMac = device.remoteId.str;
+    debugPrint('[BENCHMARK] TARGET_MAC:$targetMac | EVENT:SCAN_HIT | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
 
     StreamSubscription<BluetoothConnectionState>? stateSub;
     try {
@@ -339,6 +340,7 @@ class BleDiscoveryService {
       // We pass isRandom: true to ensure the native layer uses the correct addressing mode.
       await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload), isRandom: true);
       debugPrint('✅ [DISCOVERY] Offer sent to $targetMac (${payload.length} bytes) — awaiting delta reply');
+      debugPrint('[BENCHMARK] TARGET_MAC:$targetMac | EVENT:OFFER_SENT | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
       // Only mark lastFullSync on a SUCCESSFUL offer send — do NOT set this on the error
       // path. If we set it even on failed sends, the 20s anti-entropy timer starts from a
       // failed attempt and the peer won't be retried until the window expires.
