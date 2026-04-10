@@ -60,8 +60,8 @@ class BleDiscoveryService {
   bool get isConnecting => _isConnecting;
 
   Duration _deadlistDurationForError(Object error) {
-    // Default: short cooldown for transient radio flakiness.
-    var d = const Duration(seconds: 5);
+    // Keep all cooldowns short so real peers are retried quickly after transient failures.
+    var d = const Duration(seconds: 4);
     if (error is PlatformException) {
       switch (error.code) {
         case 'CHAR_NOT_FOUND':
@@ -69,12 +69,13 @@ class BleDiscoveryService {
           d = const Duration(seconds: 30);
           break;
         case 'timeout':
-          // Transient; keep very short so real peers get retried quickly.
-          d = const Duration(seconds: 5);
+          // Transient write/connection timeout — retry soon.
+          d = const Duration(seconds: 4);
           break;
         case 'DISCONNECTED':
-          // Often HCI 133 / connection churn. Short cooldown now.
-          d = const Duration(seconds: 10);
+          // HCI 133 (GATT_ERROR / link-layer collision) — very short cooldown;
+          // these are usually transient and the peer is still reachable.
+          d = const Duration(seconds: 4);
           break;
       }
     }
@@ -256,8 +257,10 @@ class BleDiscoveryService {
         final discoveredId = stableNodeId ?? mac;
 
         final last = _hashCooldowns[remoteHashInt];
-        // Short timeout for hash so we don't spam attempts to ghost MACs even when sorted
-        if (last != null && DateTime.now().difference(last).inSeconds < 12) {
+        // Cooldown must be longer than _deadlistDurationForError to ensure the hash
+        // path doesn't immediately retry a peer that's in the deadMacUntil window.
+        // 8s matches the DISCONNECTED/timeout cooldown (4s) with enough headroom.
+        if (last != null && DateTime.now().difference(last).inSeconds < 8) {
           continue;
         }
 
@@ -268,10 +271,11 @@ class BleDiscoveryService {
               ByteData.sublistView(localHashBytes).getUint32(4, Endian.big)
             : null;
 
-        // 50s anti-entropy heartbeat: even if hashes match, force a connection periodically.
+        // 20s anti-entropy heartbeat: even if hashes match, force a connection periodically.
+        // Reduced from 50s so missed or failed syncs are retried within the test window.
         final lastSync = lastFullSync[mac];
         final needsAntiEntropy = lastSync == null ||
-            DateTime.now().difference(lastSync).inSeconds > 50;
+            DateTime.now().difference(lastSync).inSeconds > 20;
 
         // If hashes match and we don't need anti-entropy, skip and cooldown this hash.
         if (localHashInt != null && remoteHashInt == localHashInt && !needsAntiEntropy) {
@@ -313,37 +317,45 @@ class BleDiscoveryService {
     }
     try {
       final db = await _ref.read(databaseProvider.future);
-      // Always send our full changeset as a delta (no offer/reply round-trip).
-      // BLE advertisements only carry a hash, not a vector, so we can't know exactly
-      // what the remote has. Sending everything is safe — the CRDT merge is idempotent.
-      final remoteVector = <String, dynamic>{};
-      final delta = await db.getDeltaChangeset(remoteVector);
+      // Send a compact 'offer' packet containing our local version vector.
+      // The receiver's offer-handler (in ble_network_provider._attachNativeIncomingSync)
+      // will compute only the rows we are missing and reply with a surgical 'delta'.
+      // This replaces the old full-dump approach (empty remoteVector → every row sent)
+      // which was timing out on every transfer due to 5,000+ row payloads.
+      final myVector = await db.getVersionVector();
       final myHashInt = await db.getDatabaseHash();
       final myNodeId2 = myNodeId;
-      debugPrint('📤 [DISCOVERY] Sending full delta to $targetMac — ${delta.length} tables (${delta.values.fold(0, (s, e) => s + (e as List).length)} rows)');
-      final envelope = <String, dynamic>{
-        'type': 'delta',
+      debugPrint('📤 [DISCOVERY] Sending offer to $targetMac — vector has ${myVector.length} entries');
+      final offerEnvelope = <String, dynamic>{
+        'type': 'offer',
         'sender_id': myNodeId2,
         'sender_hash': myHashInt,
         'neighbors': currentNeighborIds,
-        'data': delta,
+        'vector': myVector,
       };
-      final payload = zlib.encode(utf8.encode(jsonEncode(envelope)));
+      final payload = zlib.encode(utf8.encode(jsonEncode(offerEnvelope)));
       final macAddress = device.remoteId.str;
       // Android mesh advertisers use Random Resolvable Addresses.
       // We pass isRandom: true to ensure the native layer uses the correct addressing mode.
       await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload), isRandom: true);
-      debugPrint('✅ [DISCOVERY] Delta sent to $targetMac (${payload.length} bytes)');
-      // Mark successful anti-entropy sync time.
+      debugPrint('✅ [DISCOVERY] Offer sent to $targetMac (${payload.length} bytes) — awaiting delta reply');
+      // Only mark lastFullSync on a SUCCESSFUL offer send — do NOT set this on the error
+      // path. If we set it even on failed sends, the 20s anti-entropy timer starts from a
+      // failed attempt and the peer won't be retried until the window expires.
       lastFullSync[targetMac] = DateTime.now();
     } catch (e) {
       debugPrint('🟥 Connection/GATT failed for $targetMac: $e');
-      // Cooldown is handled at scan time by advertised remote hash.
+      // Refresh hash cooldown so retries respect the scan debounce window.
       _hashCooldowns[remoteHashInt] = DateTime.now();
-      // If we can't connect, suppress this peer briefly (hash-based handles MAC randomization).
+      // Suppress this specific MAC briefly; use hash-based deadlist for MAC-randomized devices.
       final duration = _deadlistDurationForError(e);
       deadMacUntil[targetMac] = DateTime.now().add(duration);
-      deadHashUntil[remoteHashInt] = DateTime.now().add(duration);
+      // Only add hash-based cooldown for persistent failures (CHAR_NOT_FOUND, not transient 133).
+      // For DISCONNECTED/timeout, the hash cooldown (8s) already covers the retry window —
+      // adding a separate deadHashUntil would double-suppress and skip the peer entirely.
+      if (e is PlatformException && e.code == 'CHAR_NOT_FOUND') {
+        deadHashUntil[remoteHashInt] = DateTime.now().add(duration);
+      }
       // Best-effort: remove from direct presence so UI can drop it.
       final mapped = macToNodeId[targetMac];
       if (mapped != null) {

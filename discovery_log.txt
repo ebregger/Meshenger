@@ -1,0 +1,80 @@
+88: 04-10 17:52:09.959 I/flutter (24632): 📡 [ADV] Hash changed to isbOrkWpAc0= (triggered by messages)
+90: 04-10 17:52:10.119 I/flutter (24632): 🔥 Native send_payload failed mac=4A:1B:BA:D2:E4:19 code=timeout message=Timed out waiting for writing details=null
+91: 04-10 17:52:10.120 I/flutter (24632): 🟥 Connection/GATT failed for 4A:1B:BA:D2:E4:19: PlatformException(timeout, Timed out waiting for writing, null, null)
+92: 04-10 17:52:11.174 D/NativeMeshService(24632): [SERVER] Client disconnected: 4A:1B:BA:D2:E4:19 status=0
+93: 04-10 17:52:11.957 I/flutter (24632): 📤 [DISCOVERY] Sending full delta to 5D:F2:76:96:CD:B7 — 2 tables (5717 rows)
+95: 04-10 17:52:12.273 D/NativeMeshService(24632): [GATT] STATE_DISCONNECTED phase=connecting status=133 mac=5D:F2:76:96:CD:B7
+96: 04-10 17:52:12.278 I/flutter (24632): 🔥 Native send_payload failed mac=5D:F2:76:96:CD:B7 code=DISCONNECTED message=Disconnected during phase=connecting status=133 details=null
+97: 04-10 17:52:12.279 I/flutter (24632): 🟥 Connection/GATT failed for 5D:F2:76:96:CD:B7: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=133, null, null)
+99: 04-10 17:52:13.108 I/flutter (24632): 📡 [ADV] Hash changed to 1Nehm8U19zA= (triggered by messages)
+101: 04-10 17:52:16.241 I/flutter (24632): 📡 [ADV] Hash changed to lVPJD0GV/VU= (triggered by messages)
+104: 04-10 17:52:19.377 I/flutter (24632): 📡 [ADV] Hash changed to EihW6xcf/x0= (triggered by messages)
+128: 04-10 17:52:22.522 I/flutter (24632): 📡 [ADV] Hash changed to TWgzfQ8F/yk= (triggered by messages)
+134: 04-10 17:52:22.952 I/flutter (24632): 📤 [DISCOVERY] Sending full delta to 4A:1B:BA:D2:E4:19 — 2 tables (5721 rows)
+185: 04-10 17:52:25.656 I/flutter (24632): 📡 [ADV] Hash changed to ryLNhAqPOyc= (triggered by messages)
+249: 04-10 17:52:28.792 I/flutter (24632): 📡 [ADV] Hash changed to GGUMsVDLg2s= (triggered by messages)
+318: 04-10 17:52:31.909 I/flutter (24632): 📡 [ADV] Hash changed to AGCDeHyi950= (triggered by messages)
+384: 04-10 17:52:35.040 I/flutter (24632): 📡 [ADV] Hash changed to WYXikVMRmuU= (triggered by messages)
+452: 04-10 17:52:38.198 I/flutter (24632): 📡 [ADV] Hash changed to UzEfUqwa65c= (triggered by messages)
+517: 04-10 17:52:41.324 I/flutter (24632): 📡 [ADV] Hash changed to 9x2tMjSX/nM= (triggered by messages)
+585: 04-10 17:52:44.426 I/flutter (24632): 📡 [ADV] Hash changed to LYSxtW21fwM= (triggered by messages)
+653: 04-10 17:52:47.590 I/flutter (24632): 📡 [ADV] Hash changed to inGSekEsW5w= (triggered by messages)
+681: 04-10 17:52:49.371 D/NativeMeshService(24632): [SERVER] Client disconnected: 54:55:BA:7E:84:22 status=0
+697: 04-10 17:52:50.677 I/flutter (24632): 📡 [ADV] Hash changed to n+DVLtLUfeI= (triggered by messages)
+724: 04-10 17:52:53.382 I/flutter (24632): 🔥 Native send_payload failed mac=4A:1B:BA:D2:E4:19 code=timeout message=Timed out waiting for writing details=null
+725: 04-10 17:52:53.383 I/flutter (24632): 🟥 Connection/GATT failed for 4A:1B:BA:D2:E4:19: PlatformException(timeout, Timed out waiting for writing, null, null)
+727: 04-10 17:52:53.801 I/flutter (24632): 📡 [ADV] Hash changed to pn3mUA+2yjY= (triggered by messages)
+728: 04-10 17:52:54.416 D/NativeMeshService(24632): [SERVER] Client disconnected: 4A:1B:BA:D2:E4:19 status=0
+729: 04-10 17:52:55.480 I/flutter (24632): 📤 [DISCOVERY] Sending full delta to 5D:F2:76:96:CD:B7 — 2 tables (5731 rows)
+731: 04-10 17:52:56.031 D/NativeMeshService(24632): [GATT] STATE_DISCONNECTED phase=connecting status=133 mac=5D:F2:76:96:CD:B7
+732: 04-10 17:52:56.035 I/flutter (24632): 🔥 Native send_payload failed mac=5D:F2:76:96:CD:B7 code=DISCONNECTED message=Disconnected during phase=connecting status=133 details=null
+733: 04-10 17:52:56.036 I/flutter (24632): 🟥 Connection/GATT failed for 5D:F2:76:96:CD:B7: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=133, null, null)
+735: 04-10 17:52:56.975 I/flutter (24632): 📡 [ADV] Hash changed to GELCIvD+J5E= (triggered by messages)
+737: 04-10 17:53:00.089 I/flutter (24632): 📡 [ADV] Hash changed to Cw38HAQ9q5A= (triggered by messages)
+740: 04-10 17:53:03.225 I/flutter (24632): 📡 [ADV] Hash changed to TFUxTH10pDQ= (triggered by messages)
+766: 04-10 17:53:06.316 I/flutter (24632): 📡 [ADV] Hash changed to MczSFPyGM5Y= (triggered by messages)
+779: 04-10 17:53:07.322 I/flutter (24632): 📤 [DISCOVERY] Sending full delta to 4A:1B:BA:D2:E4:19 — 2 tables (5735 rows)
+816: 04-10 17:53:09.436 I/flutter (24632): 📡 [ADV] Hash changed to NhrqLFMmfg8= (triggered by messages)
+883: 04-10 17:53:12.594 I/flutter (24632): 📡 [ADV] Hash changed to caqA4Bm4sHM= (triggered by messages)
+947: 04-10 17:53:15.664 I/flutter (24632): 📡 [ADV] Hash changed to h6J5Wle8aow= (triggered by messages)
+1018: 04-10 17:53:18.841 I/flutter (24632): 📡 [ADV] Hash changed to IrRiebIH1os= (triggered by messages)
+1080: 04-10 17:53:21.957 I/flutter (24632): 📡 [ADV] Hash changed to T27pQOclXH0= (triggered by messages)
+1147: 04-10 17:53:25.107 I/flutter (24632): 📡 [ADV] Hash changed to smQQMWnGywo= (triggered by messages)
+1214: 04-10 17:53:28.179 I/flutter (24632): 📡 [ADV] Hash changed to Bc7PLi72Lng= (triggered by messages)
+1281: 04-10 17:53:31.300 I/flutter (24632): 📡 [ADV] Hash changed to cY/aGRq0gZs= (triggered by messages)
+1301: 04-10 17:53:32.663 D/NativeMeshService(24632): [SERVER] Client disconnected: 54:55:BA:7E:84:22 status=0
+1321: 04-10 17:53:34.422 I/flutter (24632): 📡 [ADV] Hash changed to 4HxSMf7y9rE= (triggered by messages)
+1353: 04-10 17:53:37.543 I/flutter (24632): 📡 [ADV] Hash changed to uc6N1fLSYDQ= (triggered by messages)
+1354: 04-10 17:53:37.557 I/flutter (24632): 🔥 Native send_payload failed mac=4A:1B:BA:D2:E4:19 code=timeout message=Timed out waiting for writing details=null
+1355: 04-10 17:53:37.557 I/flutter (24632): 🟥 Connection/GATT failed for 4A:1B:BA:D2:E4:19: PlatformException(timeout, Timed out waiting for writing, null, null)
+1356: 04-10 17:53:37.813 I/flutter (24632): 📤 [DISCOVERY] Sending full delta to 5D:F2:76:96:CD:B7 — 2 tables (5745 rows)
+1361: 04-10 17:53:38.606 D/NativeMeshService(24632): [SERVER] Client disconnected: 4A:1B:BA:D2:E4:19 status=0
+1385: 04-10 17:53:40.682 I/flutter (24632): 📡 [ADV] Hash changed to riRCg5UBL6c= (triggered by messages)
+1438: 04-10 17:53:45.707 D/NativeMeshService(24632): [ADV] Advertiser hash updated to ae24428395012fa766666436 (debounced)
+1865: 04-10 17:54:08.022 I/flutter (24632): 🔥 Native send_payload failed mac=5D:F2:76:96:CD:B7 code=timeout message=Timed out waiting for writing details=null
+1866: 04-10 17:54:08.022 I/flutter (24632): 🟥 Connection/GATT failed for 5D:F2:76:96:CD:B7: PlatformException(timeout, Timed out waiting for writing, null, null)
+1875: 04-10 17:54:08.813 I/flutter (24632): 📤 [DISCOVERY] Sending full delta to 4A:1B:BA:D2:E4:19 — 2 tables (5746 rows)
+1881: 04-10 17:54:09.038 D/NativeMeshService(24632): [SERVER] Client disconnected: 5D:F2:76:96:CD:B7 status=0
+2035: 04-10 17:54:17.079 D/NativeMeshService(24632): [SERVER] Client disconnected: 54:55:BA:7E:84:22 status=0
+2310: 04-10 17:54:39.030 I/flutter (24632): 🔥 Native send_payload failed mac=4A:1B:BA:D2:E4:19 code=timeout message=Timed out waiting for writing details=null
+2311: 04-10 17:54:39.031 I/flutter (24632): 🟥 Connection/GATT failed for 4A:1B:BA:D2:E4:19: PlatformException(timeout, Timed out waiting for writing, null, null)
+2322: 04-10 17:54:40.042 D/NativeMeshService(24632): [SERVER] Client disconnected: 4A:1B:BA:D2:E4:19 status=0
+2336: 04-10 17:54:41.316 I/flutter (24632): 📤 [DISCOVERY] Sending full delta to 5D:F2:76:96:CD:B7 — 2 tables (5746 rows)
+2345: 04-10 17:54:41.946 D/NativeMeshService(24632): [GATT] STATE_DISCONNECTED phase=connecting status=133 mac=5D:F2:76:96:CD:B7
+2346: 04-10 17:54:41.948 I/flutter (24632): 🔥 Native send_payload failed mac=5D:F2:76:96:CD:B7 code=DISCONNECTED message=Disconnected during phase=connecting status=133 details=null
+2347: 04-10 17:54:41.949 I/flutter (24632): 🟥 Connection/GATT failed for 5D:F2:76:96:CD:B7: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=133, null, null)
+2555: 04-10 17:55:02.405 D/NativeMeshService(24632): [SERVER] Client disconnected: 54:55:BA:7E:84:22 status=0
+2656: 04-10 17:54:17.302 I/flutter ( 5522): 🔥 Native send_payload failed mac=41:D2:B8:5F:52:62 code=timeout message=Timed out waiting for writing details=null
+2657: 04-10 17:54:17.302 I/flutter ( 5522): 🟥 Connection/GATT failed for 41:D2:B8:5F:52:62: PlatformException(timeout, Timed out waiting for writing, null, null)
+2659: 04-10 17:54:17.443 I/flutter ( 5522): 📤 [DISCOVERY] Sending full delta to 53:58:7A:2E:F9:BF — 2 tables (4755 rows)
+2666: 04-10 17:54:17.970 D/NativeMeshService( 5522): [SERVER] Client disconnected: 53:58:7A:2E:F9:BF status=0
+2667: 04-10 17:54:17.970 D/NativeMeshService( 5522): [GATT] STATE_DISCONNECTED phase=connecting status=133 mac=53:58:7A:2E:F9:BF
+2668: 04-10 17:54:17.973 I/flutter ( 5522): 🔥 Native send_payload failed mac=53:58:7A:2E:F9:BF code=DISCONNECTED message=Disconnected during phase=connecting status=133 details=null
+2669: 04-10 17:54:17.973 I/flutter ( 5522): 🟥 Connection/GATT failed for 53:58:7A:2E:F9:BF: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=133, null, null)
+2671: 04-10 17:54:18.103 I/flutter ( 5522): 📤 [DISCOVERY] Sending full delta to 75:DD:3F:8C:82:C6 — 2 tables (4755 rows)
+2675: 04-10 17:54:18.349 D/NativeMeshService( 5522): [SERVER] Client disconnected: 41:D2:B8:5F:52:62 status=0
+2798: 04-10 17:54:30.202 I/flutter ( 5522): 🔥 Native send_payload failed mac=75:DD:3F:8C:82:C6 code=timeout message=Timed out waiting for connection details=null
+2799: 04-10 17:54:30.202 I/flutter ( 5522): 🟥 Connection/GATT failed for 75:DD:3F:8C:82:C6: PlatformException(timeout, Timed out waiting for connection, null, null)
+2800: 04-10 17:54:30.207 D/NativeMeshService( 5522): [SERVER] Client disconnected: 75:DD:3F:8C:82:C6 status=0
+2816: 04-10 17:54:31.676 I/flutter ( 5522): 📤 [DISCOVERY] Sending full delta to 53:58:7A:2E:F9:BF — 2 tables (4755 rows)
+2970: 04-10 17:54:41.360 D/NativeMeshService( 5522): [SERVER] Client disconnected: 7B:38:B7:02:6D:BE status=0

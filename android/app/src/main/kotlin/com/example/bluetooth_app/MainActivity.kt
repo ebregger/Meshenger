@@ -48,6 +48,13 @@ class MainActivity : FlutterActivity() {
   private val gattExecutor = Executors.newSingleThreadExecutor()
   private val deadMacs = java.util.concurrent.ConcurrentHashMap<String, Long>()
   private var pendingHashUpdateHandler: Handler? = null
+  // Tracks MACs that are currently connected to our GATT server.
+  // Used to guard cancelConnection() — calling it on an already-disconnected
+  // device triggers another onConnectionStateChange(DISCONNECTED) callback,
+  // creating an infinite cascade that floods the log and bricks the BLE stack.
+  private val connectedServerClients = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+  // Set to true during resetNativeServer() to suppress re-entrant disconnect callbacks.
+  @Volatile private var isResettingServer = false
 
   private val SERVICE_UUID = UUID.fromString("c7e4f1a2-9b3d-4a8e-a1f6-2d5e8b9c0a4f")
   private val CHARACTERISTIC_UUID =
@@ -162,13 +169,22 @@ class MainActivity : FlutterActivity() {
 
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
           super.onConnectionStateChange(device, status, newState)
+          // Suppress all callbacks during a server reset to avoid the infinite-disconnect
+          // cascade: close() fires DISCONNECTED for every cached slot, and if we call
+          // cancelConnection() in response, it fires DISCONNECTED again, ad infinitum.
+          if (isResettingServer) return
           if (newState == BluetoothProfile.STATE_CONNECTED) {
+            connectedServerClients[device.address] = true
             Log.d(TAG, "[SERVER] Client connected: ${device.address}")
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             Log.d(TAG, "[SERVER] Client disconnected: ${device.address} status=$status")
-            // Explicitly cancel to release the GATT server connection slot.
-            // Android allows ~7 concurrent server connections; without this they leak.
-            try { bluetoothGattServer?.cancelConnection(device) } catch (_: Throwable) {}
+            // Only call cancelConnection() if the device was actually connected to us.
+            // Calling it on an already-disconnected device triggers another
+            // onConnectionStateChange(DISCONNECTED) callback — causing an infinite loop.
+            val wasConnected = connectedServerClients.remove(device.address) != null
+            if (wasConnected) {
+              try { bluetoothGattServer?.cancelConnection(device) } catch (_: Throwable) {}
+            }
           }
         }
       }
@@ -245,6 +261,9 @@ class MainActivity : FlutterActivity() {
   @SuppressLint("MissingPermission")
   private fun resetNativeServer(result: MethodChannel.Result) {
     Log.d(TAG, "[SERVER] Resetting GATT server to release leaked connection slots...")
+    // Raise the guard flag BEFORE close() so the DISCONNECTED callbacks fired
+    // by close() are silently swallowed instead of cascading into cancelConnection() calls.
+    isResettingServer = true
     try {
       advertiser?.let { adv ->
         advertiseCallback?.let { cb ->
@@ -255,7 +274,9 @@ class MainActivity : FlutterActivity() {
       bluetoothGattServer?.close()
     } catch (_: Throwable) {}
     bluetoothGattServer = null
+    connectedServerClients.clear()
     deadMacs.clear()
+    isResettingServer = false
     Log.d(TAG, "[SERVER] GATT server reset complete.")
     result.success(null)
   }
@@ -367,7 +388,8 @@ class MainActivity : FlutterActivity() {
 
       val connectionWatchdog = Runnable {
         if (isCompleted.compareAndSet(false, true)) {
-          deadMacs[macAddress] = System.currentTimeMillis() + 8000L
+          // 4s dead-cache matches the Dart-side _deadlistDurationForError timeout cooldown.
+          deadMacs[macAddress] = System.currentTimeMillis() + 4000L
           try { gatt?.disconnect() } catch (_: Throwable) {}
           try { gatt?.close() } catch (_: Throwable) {}
           Handler(Looper.getMainLooper()).post { result.error("timeout", "Timed out waiting for connection", null) }
@@ -395,7 +417,9 @@ class MainActivity : FlutterActivity() {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
               Log.d(TAG, "[GATT] STATE_CONNECTED mac=$macAddress")
               mainHandler.removeCallbacks(connectionWatchdog)
-              mainHandler.postDelayed(transferWatchdog, 30000)
+              // 60s: large delta replies (after offer) can take time to write back.
+              // The offer packet itself is tiny but the peer's response may be thousands of rows.
+              mainHandler.postDelayed(transferWatchdog, 60000)
               phase = "request_mtu"
               Handler(Looper.getMainLooper()).postDelayed({
                 if (!isCompleted.get()) {

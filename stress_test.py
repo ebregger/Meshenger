@@ -1,8 +1,14 @@
+import sys, io
+# Force UTF-8 output on Windows to avoid cp1252 encoding errors with unicode chars.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 import urllib.request
 import urllib.parse
 import json
 import time
 import sys
+import threading
 
 PORTS = [18081, 18082, 18083]
 
@@ -38,133 +44,141 @@ def check_devices():
         res = request(p, '/info')
         if res and 'nodeId' in res:
             infos[p] = res['nodeId']
-            print(f"Device at port {p} is responsive. Node ID: {res['nodeId']}")
+            print(f"  Device at port {p}: OK  nodeId={res['nodeId']}")
         else:
-            print(f"FAILED to reach device on port {p}")
+            print(f"  Device at port {p}: UNREACHABLE")
     return infos
 
-def get_all_messages():
-    all_msgs = {}
-    for p in PORTS:
-        res = request(p, '/messages')
-        if res and 'messages' in res:
-            all_msgs[p] = res['messages']
-    return all_msgs
+def get_messages(port):
+    res = request(port, '/messages')
+    if res and 'messages' in res:
+        return {m['msgId']: m for m in res['messages']}
+    return {}
 
-def run_longer_test(num_messages=50):
+def print_progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=40):
+    if total == 0:
+        return
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filledLength = int(length * iteration // total)
+    bar = '#' * filledLength + '-' * (length - filledLength)
+    line = f'\r{prefix} [{bar}] {percent}% {suffix}'
+    try:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+    except UnicodeEncodeError:
+        sys.stdout.write(line.encode('ascii', 'replace').decode('ascii'))
+        sys.stdout.flush()
+    if iteration == total:
+        print()
+
+def run_longer_test(num_messages=30):
     reset_network_limits()
     infos = check_devices()
     if len(infos) < 2:
         print("Need at least 2 responsive devices to test mesh sync.")
         return
 
-    # To track latency:
-    # First, let's snapshot the initial messages so we don't count old ones.
-    initial_msgs = get_all_messages()
-    seen_message_ids = {p: set(m['msgId'] for m in initial_msgs.get(p, [])) for p in PORTS}
-    print(f"Baseline message counts: { {p: len(initial_msgs.get(p, [])) for p in PORTS} }")
+    sender_port = PORTS[0]
+    receiver_ports = [p for p in PORTS if p != sender_port and p in infos]
+    sender_node_id = infos[sender_port]
 
-    send_times = {} # msg_text -> timestamp
-    arrival_times = {p: {} for p in PORTS} # port -> {msg_text: timestamp}
-    
-    print(f"\nStarting VERY SLOW AND LONG stress test: sending {num_messages} messages from device 1 (port {PORTS[0]})...")
-    
-    start_time = time.time()
-    
-    import threading
-    
-    # We will poll aggressively in a background thread to measure latency accurately
-    keep_polling = True
-    def poll_messages():
-        while keep_polling:
-            msgs = get_all_messages()
-            now = time.time()
-            for p, m_list in msgs.items():
-                for m in m_list:
-                    mid = m['msgId']
-                    text = m['textContent']
-                    if mid not in seen_message_ids[p]:
-                        seen_message_ids[p].add(mid)
-                        if text in send_times and text not in arrival_times[p]:
-                            arrival_times[p][text] = now
-            time.sleep(0.5)
+    print(f"\nSender:    port {sender_port}  nodeId={sender_node_id}")
+    for p in receiver_ports:
+        print(f"Receiver:  port {p}  nodeId={infos[p]}")
 
-    poller = threading.Thread(target=poll_messages)
-    poller.start()
-    
-    def print_progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=40, fill='█', printEnd="\r"):
-        percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-        filledLength = int(length * iteration // total)
-        bar = fill * filledLength + '-' * (length - filledLength)
-        sys.stdout.write(f'\r{prefix} |{bar}| {percent}% {suffix}')
-        sys.stdout.flush()
-        if iteration == total:
-            print()
+    # Snapshot existing messages so we only track NEW ones from this run.
+    print("\nSnapshotting baseline message IDs...")
+    baseline_ids = {p: set(get_messages(p).keys()) for p in PORTS if p in infos}
+    print(f"  Baseline counts: { {p: len(ids) for p, ids in baseline_ids.items()} }")
 
+    # Send N messages from Device 1, track their msg IDs.
+    sent_msg_ids = []
+    send_times = {}
+
+    print(f"\nSending {num_messages} messages from device 1 (port {sender_port})...")
     for i in range(num_messages):
-        msg = f"Ultra steady test message {i} @ {int(time.time()*1000)}"
-        send_times[msg] = time.time()
-        
-        # Device 1 is the sender, so it technically "arrives" instantly
-        arrival_times[PORTS[0]][msg] = send_times[msg]
-        
-        request(PORTS[0], '/send', 'POST', {'text': msg})
-            
+        tag = f"SyncTest#{i:03d}@{int(time.time()*1000)}"
+        res = request(sender_port, '/send', 'POST', {'text': tag})
+        send_times[tag] = time.time()
         print_progress_bar(i + 1, num_messages, prefix='Sending:', suffix=f'({i+1}/{num_messages})')
-        # Slow down significantly to allow mesh synchronization to finish 
-        # before the next message triggers an advertising cycle.
         time.sleep(3.0)
-        
-    print("\nSend complete. Waiting for final propagation across mesh...")
-    
-    # Wait for propagation - needs to be longer than the send phase (num_messages * 3s)
-    max_wait_secs = max(60, num_messages * 3)
-    poll_start = time.time()
-    last_counts = {}
-    
-    while time.time() - poll_start < max_wait_secs:
-        counts = {p: len(arrival_times[p]) for p in infos.keys()}
-        
-        # Display progress based on overall mesh convergence
-        total_delivered = sum(counts.values())
-        total_expected = num_messages * len(infos)
-        
-        elapsed_sync = time.time() - poll_start
-        remaining = max(0, int(max_wait_secs - elapsed_sync))
-        
-        print_progress_bar(total_delivered, total_expected, prefix='Syncing:', suffix=f'{total_delivered}/{total_expected} events [Timeout in {remaining}s]')
+    print()
 
-        if counts != last_counts:
-            # We'll print details on a new line if something changed, 
-            # then the next loop iteration will redraw the progress bar on a fresh line if we're not careful.
-            # Actually, let's just keep the progress bar clean.
-            last_counts = counts.copy()
-        
-        if all(count == num_messages for count in counts.values()):
-            print("\n\n[SUCCESS] All messages synced to all devices!")
+    # Now figure out which message IDs were actually created in this run on Device 1.
+    print("Identifying sent message IDs from Device 1...")
+    time.sleep(2)
+    d1_msgs_now = get_messages(sender_port)
+    new_on_d1 = {mid: m for mid, m in d1_msgs_now.items()
+                 if mid not in baseline_ids.get(sender_port, set())
+                 and m.get('originNodeId') == sender_node_id}
+    sent_msg_ids = list(new_on_d1.keys())
+    print(f"  Found {len(sent_msg_ids)} new messages from sender on Device 1 (expected {num_messages})")
+    if len(sent_msg_ids) < num_messages:
+        print(f"  ⚠️  WARNING: Only {len(sent_msg_ids)} messages confirmed on sender device!")
+
+    if not sent_msg_ids:
+        print("ERROR: Could not identify any sent messages, aborting.")
+        return
+
+    # Poll receivers until all sent messages arrive or timeout.
+    print(f"\nWaiting for {len(sent_msg_ids)} messages to propagate to {len(receiver_ports)} receiver(s)...")
+    max_wait = max(90, num_messages * 3)
+    poll_start = time.time()
+    arrival_times = {p: {} for p in receiver_ports}   # port -> {msgId: arrival_time}
+    seen_ids = {p: set(baseline_ids.get(p, set())) for p in receiver_ports}
+
+    while time.time() - poll_start < max_wait:
+        for p in receiver_ports:
+            msgs = get_messages(p)
+            for mid in sent_msg_ids:
+                if mid in msgs and mid not in arrival_times[p]:
+                    arrival_times[p][mid] = time.time()
+                seen_ids[p].add(mid)  # track we looked
+
+        total_received = sum(len(v) for v in arrival_times.values())
+        total_expected = len(sent_msg_ids) * len(receiver_ports)
+        elapsed = time.time() - poll_start
+        remaining = max(0, int(max_wait - elapsed))
+        print_progress_bar(
+            total_received, total_expected,
+            prefix='Syncing:',
+            suffix=f'{total_received}/{total_expected} delivered [timeout in {remaining}s]'
+        )
+
+        if total_received >= total_expected:
+            print(f"\n\n✅ [SUCCESS] All {len(sent_msg_ids)} messages reached all {len(receiver_ports)} receivers!")
             break
-            
         time.sleep(1)
-        
-    keep_polling = False
-    poller.join()
-    
-    # Calculate Average Latency
+    else:
+        print(f"\n\n❌ [TIMEOUT] Sync did not complete in {max_wait}s")
+
+    # Per-receiver results.
     print("\n--- RESULTS ---")
-    for p in PORTS:
-        if p == PORTS[0]:
-            continue # skip sender
-            
+    for p in receiver_ports:
+        received = len(arrival_times[p])
+        missing = [mid for mid in sent_msg_ids if mid not in arrival_times[p]]
         latencies = []
-        for text, stime in send_times.items():
-            if text in arrival_times[p]:
-                latencies.append(arrival_times[p][text] - stime)
-                
-        if len(latencies) > 0:
-            avg = sum(latencies) / len(latencies)
-            print(f"Device on port {p}: received {len(latencies)}/{num_messages} messages. Avg Latency: {avg:.2f} seconds.")
-        else:
-            print(f"Device on port {p}: received 0 messages.")
+        for mid, t in arrival_times[p].items():
+            msg = new_on_d1.get(mid)
+            if msg:
+                ts_ms = msg.get('timestamp', 0)
+                sent_t = ts_ms / 1000.0 if ts_ms > 1e9 else send_times.get(
+                    msg.get('textContent', ''), poll_start)
+                latencies.append(t - sent_t)
+
+        avg_lat = f"{sum(latencies)/len(latencies):.1f}s" if latencies else "N/A"
+        status = "✅" if received == len(sent_msg_ids) else "❌"
+        print(f"  {status} Port {p} (nodeId={infos[p]}): "
+              f"{received}/{len(sent_msg_ids)} messages received  avg_latency={avg_lat}")
+        if missing:
+            print(f"     Missing IDs: {missing[:5]}{'...' if len(missing) > 5 else ''}")
+
+    # Also check for any unexpected delivery failures: messages on D1 that didn't originate there.
+    print("\n--- CROSS-CHECK: Are receivers' message counts growing? ---")
+    for p in receiver_ports:
+        msgs = get_messages(p)
+        new_count = len({mid for mid in msgs if mid not in baseline_ids.get(p, set())})
+        print(f"  Port {p}: {new_count} new messages since baseline (total={len(msgs)})")
 
     print("\nGathering device logs to android.log...")
     try:

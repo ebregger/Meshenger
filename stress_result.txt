@@ -1,0 +1,77 @@
+Resetting any artificial network limits...
+Checking device APIs...
+  Device at port 18081: OK  nodeId=ffd68684-fd95-42b2-afd1-17aaf7e23dda
+  Device at port 18082: OK  nodeId=2f8afc7e-4586-4c24-8869-07c9be7013a0
+  Device at port 18083: OK  nodeId=c54a1772-97f0-40d6-8751-5ea337cb7d62
+
+Sender:    port 18081  nodeId=ffd68684-fd95-42b2-afd1-17aaf7e23dda
+Receiver:  port 18082  nodeId=2f8afc7e-4586-4c24-8869-07c9be7013a0
+Receiver:  port 18083  nodeId=c54a1772-97f0-40d6-8751-5ea337cb7d62
+
+Snapshotting baseline message IDs...
+  Baseline counts: {18081: 7894, 18082: 7894, 18083: 7894}
+
+Sending 30 messages from device 1 (port 18081)...
+
+Sending: [#---------------------------------------] 3.3% (1/30)
+Sending: [##--------------------------------------] 6.7% (2/30)
+Sending: [####------------------------------------] 10.0% (3/30)
+Sending: [#####-----------------------------------] 13.3% (4/30)
+Sending: [######----------------------------------] 16.7% (5/30)
+Sending: [########--------------------------------] 20.0% (6/30)
+Sending: [#########-------------------------------] 23.3% (7/30)
+Sending: [##########------------------------------] 26.7% (8/30)
+Sending: [############----------------------------] 30.0% (9/30)
+Sending: [#############---------------------------] 33.3% (10/30)
+Sending: [##############--------------------------] 36.7% (11/30)
+Sending: [################------------------------] 40.0% (12/30)
+Sending: [#################-----------------------] 43.3% (13/30)
+Sending: [##################----------------------] 46.7% (14/30)
+Sending: [####################--------------------] 50.0% (15/30)
+Sending: [#####################-------------------] 53.3% (16/30)
+Sending: [######################------------------] 56.7% (17/30)
+Sending: [########################----------------] 60.0% (18/30)
+Sending: [#########################---------------] 63.3% (19/30)
+Sending: [##########################--------------] 66.7% (20/30)
+Sending: [############################------------] 70.0% (21/30)
+Sending: [#############################-----------] 73.3% (22/30)
+Sending: [##############################----------] 76.7% (23/30)
+Sending: [################################--------] 80.0% (24/30)
+Sending: [#################################-------] 83.3% (25/30)
+Sending: [##################################------] 86.7% (26/30)
+Sending: [####################################----] 90.0% (27/30)
+Sending: [#####################################---] 93.3% (28/30)
+Sending: [######################################--] 96.7% (29/30)
+Sending: [########################################] 100.0% (30/30)
+
+Identifying sent message IDs from Device 1...
+  Found 30 new messages from sender on Device 1 (expected 30)
+
+Waiting for 30 messages to propagate to 2 receiver(s)...
+
+Syncing: [----------------------------------------] 0.0% 0/60 delivered [timeout in 89s]
+Syncing: [----------------------------------------] 0.0% 0/60 delivered [timeout in 88s]
+Syncing: [----------------------------------------] 0.0% 0/60 delivered [timeout in 86s]
+Syncing: [----------------------------------------] 0.0% 0/60 delivered [timeout in 85s]
+Syncing: [----------------------------------------] 0.0% 0/60 delivered [timeout in 84s]
+Syncing: [----------------------------------------] 0.0% 0/60 delivered [timeout in 82s]
+Syncing: [----------------------------------------] 0.0% 0/60 delivered [timeout in 81s]
+Syncing: [----------------------------------------] 0.0% 0/60 delivered [timeout in 80s]
+Syncing: [----------------------------------------] 0.0% 0/60 delivered [timeout in 78s]
+Syncing: [####################--------------------] 50.0% 30/60 delivered [timeout in 77s]
+Syncing: [########################################] 100.0% 60/60 delivered [timeout in 75s]
+
+
+Γ£à [SUCCESS] All 30 messages reached all 2 receivers!
+
+--- RESULTS ---
+  Γ£à Port 18082 (nodeId=2f8afc7e-4586-4c24-8869-07c9be7013a0): 30/30 messages received  avg_latency=67.2s
+  Γ£à Port 18083 (nodeId=c54a1772-97f0-40d6-8751-5ea337cb7d62): 30/30 messages received  avg_latency=65.7s
+
+--- CROSS-CHECK: Are receivers' message counts growing? ---
+  Port 18082: 30 new messages since baseline (total=7924)
+  Port 18083: 30 new messages since baseline (total=7924)
+
+Gathering device logs to android.log...
+Collecting logs from 3 device(s): ['4B121FDAS0016M', '88LX01L45', '8AKX0UCPK']
+Logs saved to android.log (94022 bytes)
