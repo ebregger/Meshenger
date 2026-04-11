@@ -29,16 +29,18 @@ class NativeMeshService {
 
   Stream<IncomingBleChunk> get incomingPayloads => _incomingPayloads;
 
-  Future<String?> startNativeServer(Uint8List currentHash) async {
+  Future<String?> startNativeServer(Uint8List currentHash, String nodeId) async {
     final ownMac = await _bleMethodChannel.invokeMethod<String>('start_server', <String, Object?>{
       'hash': currentHash,
+      'nodeId': nodeId,
     });
     return ownMac;
   }
 
-  Future<void> updateAdvertiserHash(Uint8List newHash) async {
+  Future<void> updateAdvertiserHash(Uint8List newHash, String nodeId) async {
     await _bleMethodChannel.invokeMethod<void>('update_hash', <String, Object?>{
       'hash': newHash,
+      'nodeId': nodeId,
     });
   }
 

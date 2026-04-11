@@ -358,7 +358,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             debugPrint('📡 [ADV] Hash changed to $b64 (triggered by messages)');
             _lastAdvertisedHashB64 = b64;
             final payload = _buildAdvertiserPayload(hashBytes);
-            await _nativeMesh.updateAdvertiserHash(payload);
+            await _nativeMesh.updateAdvertiserHash(payload, myId);
             _discovery.setLocalHash(payload);
           }
         } catch (e, st) {
@@ -400,7 +400,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             debugPrint('📡 [ADV] Hash changed to $b64 (triggered by profiles)');
             _lastAdvertisedHashB64 = b64;
             final payload = _buildAdvertiserPayload(hashBytes);
-            await _nativeMesh.updateAdvertiserHash(payload);
+            await _nativeMesh.updateAdvertiserHash(payload, myId);
             _discovery.setLocalHash(payload);
           }
         } catch (e, st) {
@@ -616,7 +616,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 if (b64 != _lastAdvertisedHashB64) {
                   _lastAdvertisedHashB64 = b64;
                   final payload = _buildAdvertiserPayload(hashBytes);
-                  await _nativeMesh.updateAdvertiserHash(payload);
+                  await _nativeMesh.updateAdvertiserHash(payload, _localNodeId ?? db.localNodeId);
                   _discovery.setLocalHash(payload);
                 }
               } catch (e, st) {
@@ -658,7 +658,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       _lastAdvertisedHashB64 = base64Encode(hashBytes);
       final payload = _buildAdvertiserPayload(hashBytes);
       _discovery.setLocalHash(payload);
-      final ownMac = await _nativeMesh.startNativeServer(payload);
+      final ownMac = await _nativeMesh.startNativeServer(payload, myId);
       if (ownMac != null && ownMac.isNotEmpty) {
         debugPrint('[MESH] Own BLE MAC: $ownMac (will filter from scan results)');
       }
@@ -797,7 +797,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     _lastAdvertisedHashB64 = base64Encode(hashBytes);
     final payload = _buildAdvertiserPayload(hashBytes);
     _discovery.setLocalHash(payload);
-    final ownMac = await _nativeMesh.startNativeServer(payload);
+    final ownMac = await _nativeMesh.startNativeServer(payload, _localNodeId ?? '');
     await _attachNativeIncomingSync();
     _publishRadioFlags();
   }

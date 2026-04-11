@@ -199,6 +199,7 @@ class BleDiscoveryService {
         await FlutterBluePlus.startScan(
           androidUsesFineLocation: true,
           androidScanMode: AndroidScanMode.lowLatency,
+          androidLegacy: true, // Reverted to true: fixes scanner stall on Android 9
           continuousUpdates: true,
         );
         // If we reach here, it started!
@@ -276,14 +277,23 @@ class BleDiscoveryService {
             if (remoteNodeIdStr == localNodeIdPrefix) {
               continue; // Drop self-advertisement completely
             }
-          } catch (_) {}
+          } catch (e) {
+            debugPrint('⚠️ [SCAN] Failed to decode node ID prefix from $mac: $e');
+          }
         }
 
-        // Read 64-bit hash as two big-endian uint32 words (Dart ByteData has no getUint64).
-        final bd = ByteData.sublistView(remotePayload);
-        final hashHigh = bd.getUint32(0, Endian.big);
-        final hashLow = bd.getUint32(4, Endian.big);
-        final remoteHashInt = (hashHigh << 32) | hashLow;
+        final int remoteHashInt;
+
+        try {
+          // Read 64-bit hash as two big-endian uint32 words (Dart ByteData has no getUint64).
+          final bd = ByteData.sublistView(remotePayload);
+          final hashHigh = bd.getUint32(0, Endian.big);
+          final hashLow = bd.getUint32(4, Endian.big);
+          remoteHashInt = (hashHigh << 32) | hashLow;
+        } catch (e) {
+          debugPrint('⚠️ [SCAN] Failed to parse 64-bit hash from $mac: $e');
+          continue;
+        }
 
         hashToMac[remoteHashInt] = mac;
 
