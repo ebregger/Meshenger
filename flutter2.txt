@@ -1,0 +1,488 @@
+--------- beginning of main
+--------- beginning of system
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 7F:AA:93:B2:3A:46
+≡ƒôí [SYNC] Chunk from 7F:AA:93:B2:3A:46: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 7F:AA:93:B2:3A:46 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:7F:AA:93:B2:3A:46 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861116658
+≡ƒöä [SYNC] Decompressing payload from 7F:AA:93:B2:3A:46 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 7F:AA:93:B2:3A:46
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 7F:AA:93:B2:3A:46
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=7F:AA:93:B2:3A:46
+≡ƒöÑ Native send_payload failed mac=7F:AA:93:B2:3A:46 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 7F:AA:93:B2:3A:46: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 7F:AA:93:B2:3A:46 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861121443
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 7F:AA:93:B2:3A:46
+≡ƒôí [SYNC] Chunk from 7F:AA:93:B2:3A:46: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 7F:AA:93:B2:3A:46 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:7F:AA:93:B2:3A:46 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861139230
+≡ƒöä [SYNC] Decompressing payload from 7F:AA:93:B2:3A:46 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 7F:AA:93:B2:3A:46
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 7F:AA:93:B2:3A:46
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=7F:AA:93:B2:3A:46
+≡ƒöÑ Native send_payload failed mac=7F:AA:93:B2:3A:46 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 7F:AA:93:B2:3A:46: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+[SERVER] Client disconnected: 7F:AA:93:B2:3A:46 status=0
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861141154
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 285 bytes (total buffer: 285)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=285 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:285 | TIMESTAMP:1775861161940
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (285 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861181421
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861188197
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861203555
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 7F:AA:93:B2:3A:46
+≡ƒôí [SYNC] Chunk from 7F:AA:93:B2:3A:46: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 7F:AA:93:B2:3A:46 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:7F:AA:93:B2:3A:46 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861209812
+≡ƒöä [SYNC] Decompressing payload from 7F:AA:93:B2:3A:46 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 7F:AA:93:B2:3A:46
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 7F:AA:93:B2:3A:46
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=7F:AA:93:B2:3A:46
+≡ƒöÑ Native send_payload failed mac=7F:AA:93:B2:3A:46 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 7F:AA:93:B2:3A:46: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+≡ƒôí [SYNC] Chunk from 7F:AA:93:B2:3A:46: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 7F:AA:93:B2:3A:46 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:7F:AA:93:B2:3A:46 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861210812
+≡ƒöä [SYNC] Decompressing payload from 7F:AA:93:B2:3A:46 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 7F:AA:93:B2:3A:46
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 7F:AA:93:B2:3A:46
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=7F:AA:93:B2:3A:46
+≡ƒöÑ Native send_payload failed mac=7F:AA:93:B2:3A:46 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 7F:AA:93:B2:3A:46: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 7F:AA:93:B2:3A:46 status=0
+[SERVER] Client connected: 7F:AA:93:B2:3A:46
+≡ƒôí [SYNC] Chunk from 7F:AA:93:B2:3A:46: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 7F:AA:93:B2:3A:46 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:7F:AA:93:B2:3A:46 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861225809
+≡ƒöä [SYNC] Decompressing payload from 7F:AA:93:B2:3A:46 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 7F:AA:93:B2:3A:46
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 7F:AA:93:B2:3A:46
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=7F:AA:93:B2:3A:46
+≡ƒöÑ Native send_payload failed mac=7F:AA:93:B2:3A:46 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 7F:AA:93:B2:3A:46: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 7F:AA:93:B2:3A:46 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861237021
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861250883
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 7F:AA:93:B2:3A:46
+≡ƒôí [SYNC] Chunk from 7F:AA:93:B2:3A:46: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 7F:AA:93:B2:3A:46 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:7F:AA:93:B2:3A:46 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861257582
+≡ƒöä [SYNC] Decompressing payload from 7F:AA:93:B2:3A:46 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 7F:AA:93:B2:3A:46
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 7F:AA:93:B2:3A:46
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=7F:AA:93:B2:3A:46
+≡ƒöÑ Native send_payload failed mac=7F:AA:93:B2:3A:46 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 7F:AA:93:B2:3A:46: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+≡ƒôí [SYNC] Chunk from 7F:AA:93:B2:3A:46: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 7F:AA:93:B2:3A:46 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:7F:AA:93:B2:3A:46 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861258581
+≡ƒöä [SYNC] Decompressing payload from 7F:AA:93:B2:3A:46 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 7F:AA:93:B2:3A:46
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 7F:AA:93:B2:3A:46
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=7F:AA:93:B2:3A:46
+≡ƒöÑ Native send_payload failed mac=7F:AA:93:B2:3A:46 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 7F:AA:93:B2:3A:46: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 7F:AA:93:B2:3A:46 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861284545
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861298361
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861306487
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client connected: 5F:7D:8C:B3:43:E1
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+≡ƒôí [SYNC] Chunk from 5F:7D:8C:B3:43:E1: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 5F:7D:8C:B3:43:E1 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:5F:7D:8C:B3:43:E1 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861307744
+≡ƒöä [SYNC] Decompressing payload from 5F:7D:8C:B3:43:E1 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 5F:7D:8C:B3:43:E1
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 5F:7D:8C:B3:43:E1
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=5F:7D:8C:B3:43:E1
+≡ƒöÑ Native send_payload failed mac=5F:7D:8C:B3:43:E1 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 5F:7D:8C:B3:43:E1: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 5F:7D:8C:B3:43:E1 status=0
+[SERVER] Client connected: 5F:7D:8C:B3:43:E1
+≡ƒôí [SYNC] Chunk from 5F:7D:8C:B3:43:E1: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 5F:7D:8C:B3:43:E1 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:5F:7D:8C:B3:43:E1 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861333547
+≡ƒöä [SYNC] Decompressing payload from 5F:7D:8C:B3:43:E1 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 5F:7D:8C:B3:43:E1
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 5F:7D:8C:B3:43:E1
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=5F:7D:8C:B3:43:E1
+≡ƒöÑ Native send_payload failed mac=5F:7D:8C:B3:43:E1 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 5F:7D:8C:B3:43:E1: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861334954
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+≡ƒôí [SYNC] Chunk from 5F:7D:8C:B3:43:E1: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 5F:7D:8C:B3:43:E1 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:5F:7D:8C:B3:43:E1 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861335452
+≡ƒöä [SYNC] Decompressing payload from 5F:7D:8C:B3:43:E1 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 5F:7D:8C:B3:43:E1
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 5F:7D:8C:B3:43:E1
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=5F:7D:8C:B3:43:E1
+≡ƒöÑ Native send_payload failed mac=5F:7D:8C:B3:43:E1 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 5F:7D:8C:B3:43:E1: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0
+[SERVER] Client disconnected: 5F:7D:8C:B3:43:E1 status=0
+[SERVER] Client connected: 5F:7D:8C:B3:43:E1
+≡ƒôí [SYNC] Chunk from 5F:7D:8C:B3:43:E1: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 5F:7D:8C:B3:43:E1 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:5F:7D:8C:B3:43:E1 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861350595
+≡ƒöä [SYNC] Decompressing payload from 5F:7D:8C:B3:43:E1 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 5F:7D:8C:B3:43:E1
+≡ƒôñ [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 5F:7D:8C:B3:43:E1
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=5F:7D:8C:B3:43:E1
+≡ƒöÑ Native send_payload failed mac=5F:7D:8C:B3:43:E1 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 5F:7D:8C:B3:43:E1: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 5F:7D:8C:B3:43:E1 status=0
+[SERVER] Client connected: 6F:D6:DF:1F:8B:88
+≡ƒôí [SYNC] Chunk from 6F:D6:DF:1F:8B:88: 307 bytes (total buffer: 307)
+≡ƒôÑ [SYNC] EOF received from 6F:D6:DF:1F:8B:88 ΓÇö buffer=307 bytes
+[BENCHMARK] TARGET_MAC:6F:D6:DF:1F:8B:88 | EVENT:DELTA_RECEIVED | BYTES:307 | TIMESTAMP:1775861353706
+≡ƒöä [SYNC] Decompressing payload from 6F:D6:DF:1F:8B:88 (307 bytes)...
+≡ƒôª [SYNC] Received type=offer from 6F:D6:DF:1F:8B:88
+≡ƒôñ [SYNC] Computing delta for offer from senderId=c54a1772-97f0-40d6-8751-5ea337cb7d62...
+≡ƒôñ [SYNC] Delta has 1 entries ΓÇö replying to 6F:D6:DF:1F:8B:88
+[GATT] STATE_DISCONNECTED phase=connecting status=257 mac=6F:D6:DF:1F:8B:88
+≡ƒöÑ Native send_payload failed mac=6F:D6:DF:1F:8B:88 code=DISCONNECTED message=Disconnected during phase=connecting status=257 details=null
+Γ¥î [SYNC] Mesh processing error from 6F:D6:DF:1F:8B:88: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=257, null, null)
+#0      StandardMethodCodec.decodeEnvelope (package:flutter/src/services/message_codecs.dart:653:7)
+#1      MethodChannel._invokeMethod (package:flutter/src/services/platform_channel.dart:366:18)
+<asynchronous suspension>
+#2      NativeMeshService.sendPayload (package:bluetooth_app/services/native_mesh_service.dart:55:7)
+<asynchronous suspension>
+#3      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:491:15)
+<asynchronous suspension>
+
+[SERVER] Client disconnected: 6F:D6:DF:1F:8B:88 status=0

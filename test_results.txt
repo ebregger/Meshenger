@@ -1,0 +1,2 @@
+usage: stress_test.py [-h] [--messages MESSAGES]
+stress_test.py: error: unrecognized arguments: --verify-only

@@ -6,9 +6,9 @@ APP_PACKAGE = "com.example.bluetooth_app"
 APP_ACTIVITY = ".MainActivity"
 BASE_PORT = 18081
 
-def run_cmd(cmd, check=True, shell=True):
+def run_cmd(cmd, check=True, shell=True, timeout=None):
     print(f"Running: {cmd}")
-    return subprocess.run(cmd, check=check, shell=shell, text=True, capture_output=True)
+    return subprocess.run(cmd, check=check, shell=shell, text=True, capture_output=True, timeout=timeout)
 
 def get_devices():
     result = run_cmd("adb devices", check=False)
@@ -36,7 +36,11 @@ def deploy_and_launch():
         print(f"\\n--- 3. Deploying to {device} ---")
         
         # Install APK (replace existing)
-        run_cmd(f"adb -s {device} install -r {apk_path}")
+        try:
+            run_cmd(f"adb -s {device} install -r {apk_path}", timeout=45)
+        except subprocess.TimeoutExpired:
+            print(f"FAILED: adb install timed out on {device} after 45 seconds.")
+            continue
         
         # Forward Port
         local_port = BASE_PORT + port_idx

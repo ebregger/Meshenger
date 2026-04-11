@@ -72,6 +72,23 @@ class NativeMeshService {
     }
   }
 
+  Future<void> replyPayload(String macAddress, Uint8List payload) async {
+    try {
+      await _bleMethodChannel.invokeMethod<void>(
+        'reply_payload',
+        <String, Object?>{
+          'macAddress': macAddress,
+          'payload': payload,
+        },
+      );
+    } on PlatformException catch (e) {
+      print(
+        '🔥 Native reply_payload failed mac=$macAddress code=${e.code} message=${e.message} details=${e.details}',
+      );
+      rethrow;
+    }
+  }
+
   static IncomingBleChunk _coerceToIncomingChunk(Object? event) {
     // Preferred format (new): { mac: "...", bytes: Uint8List/List<int> }
     if (event is Map) {

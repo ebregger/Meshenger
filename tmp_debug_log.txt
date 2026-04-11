@@ -1,0 +1,32 @@
+--------- beginning of main
+04-10 23:24:29.932 23495 23508 D NativeMeshService: [GATT] onMtuChanged mtu=517 status=0 mac=7F:C7:68:A2:3D:3A
+04-10 23:24:29.932 23495 23508 D NativeMeshService: [GATT] Effective chunk size: 512 bytes mac=7F:C7:68:A2:3D:3A
+04-10 23:24:29.998 23495 23508 D NativeMeshService: [GATT] onServicesDiscovered status=0 mac=7F:C7:68:A2:3D:3A
+04-10 23:24:30.001 23495 23508 D NativeMeshService: [GATT] Subscribed to NOTIFY characteristic mac=7F:C7:68:A2:3D:3A
+04-10 23:24:30.002 23495 24094 D NativeMeshService: [GATT] Starting chunked write: 165 bytes in chunks of 512 mac=7F:C7:68:A2:3D:3A
+04-10 23:24:30.008 23495 23509 D NativeMeshService: [GATT] STATE_DISCONNECTED phase=writing status=0 mac=7F:C7:68:A2:3D:3A
+04-10 23:24:30.010 23495 23495 I flutter : ≡ƒöÑ Native send_payload failed mac=7F:C7:68:A2:3D:3A code=DISCONNECTED message=Disconnected during phase=writing status=0 details=null
+04-10 23:24:30.011 23495 23495 I flutter : ≡ƒƒÑ Connection/GATT failed for 7F:C7:68:A2:3D:3A: PlatformException(DISCONNECTED, Disconnected during phase=writing status=0, null, null)
+04-10 23:24:30.015 23495 23495 I flutter : [BENCHMARK] TARGET_MAC:40:89:BB:11:7A:E0 | EVENT:SCAN_HIT | TIMESTAMP:1775877870015
+04-10 23:24:30.020 23495 23495 I flutter : ≡ƒôñ [DISCOVERY] Sending offer to 40:89:BB:11:7A:E0 ΓÇö vector has 1 entries
+04-10 23:24:30.023 23495 23566 D NativeMeshService: getRemoteLeDevice mac=40:89:BB:11:7A:E0 using type=1 (API 31+)
+04-10 23:24:30.363 23495 23509 D NativeMeshService: [SERVER] Client connected: 40:89:BB:11:7A:E0
+04-10 23:24:30.380 23495 23509 D NativeMeshService: [GATT] STATE_CONNECTED mac=40:89:BB:11:7A:E0
+04-10 23:24:30.380 23495 23509 D NativeMeshService: [BENCHMARK] TARGET_MAC:40:89:BB:11:7A:E0 | EVENT:GATT_CONNECTED | TIMESTAMP:1775877870380
+04-10 23:24:30.433 23495 23495 D NativeMeshService: [GATT] requestMtu initiated: true mac=40:89:BB:11:7A:E0
+04-10 23:24:31.015 23495 23509 D NativeMeshService: [SERVER] Client disconnected: 7F:C7:68:A2:3D:3A status=0
+04-10 23:24:31.155 23495 23509 D NativeMeshService: [SERVER] Client connected: 46:6E:E0:1C:AC:78
+04-10 23:24:31.256 23495 23508 D NativeMeshService: [GATT] onMtuChanged mtu=517 status=0 mac=40:89:BB:11:7A:E0
+04-10 23:24:31.256 23495 23508 D NativeMeshService: [GATT] Effective chunk size: 512 bytes mac=40:89:BB:11:7A:E0
+04-10 23:24:31.312 23495 23508 D NativeMeshService: [GATT] onServicesDiscovered status=0 mac=40:89:BB:11:7A:E0
+04-10 23:24:31.315 23495 23508 D NativeMeshService: [GATT] Subscribed to NOTIFY characteristic mac=40:89:BB:11:7A:E0
+04-10 23:24:31.316 23495 24096 D NativeMeshService: [GATT] Starting chunked write: 165 bytes in chunks of 512 mac=40:89:BB:11:7A:E0
+04-10 23:24:31.323 23495 23495 I flutter : ≡ƒöÑ Native send_payload failed mac=40:89:BB:11:7A:E0 code=WRITE_FAILED message=Write chunk failed at offset=0 len=165 details=null
+04-10 23:24:31.323 23495 23495 I flutter : ≡ƒƒÑ Connection/GATT failed for 40:89:BB:11:7A:E0: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=165, null, null)
+04-10 23:24:31.347 23495 23495 I flutter : [BENCHMARK] TARGET_MAC:43:8E:04:5B:3D:12 | EVENT:SCAN_HIT | TIMESTAMP:1775877871347
+04-10 23:24:31.350 23495 23495 I flutter : ≡ƒôñ [DISCOVERY] Sending offer to 43:8E:04:5B:3D:12 ΓÇö vector has 1 entries
+04-10 23:24:31.351 23495 23566 D NativeMeshService: getRemoteLeDevice mac=43:8E:04:5B:3D:12 using type=1 (API 31+)
+04-10 23:24:31.834 23495 23509 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=46:6E:E0:1C:AC:78
+04-10 23:24:31.967 23495 23509 D NativeMeshService: [SERVER] CCCD write from 46:6E:E0:1C:AC:78 value=[1, 0]
+04-10 23:24:32.336 23495 23509 D NativeMeshService: [SERVER] Client disconnected: 40:89:BB:11:7A:E0 status=0
+04-10 23:24:33.022 23495 23509 D NativeMeshService: [SERVER] Client disconnected: 46:6E:E0:1C:AC:78 status=0

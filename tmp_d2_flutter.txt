@@ -1,0 +1,65 @@
+--------- beginning of main
+04-10 23:30:59.504 21825 21825 I flutter : ≡ƒôí [SYNC] Chunk from 7A:BF:58:2D:F4:0F: 276 bytes (total buffer: 276)
+04-10 23:30:59.537 21825 21825 I flutter : ≡ƒôÑ [SYNC] EOF received from 7A:BF:58:2D:F4:0F ΓÇö buffer=276 bytes
+04-10 23:30:59.537 21825 21825 I flutter : [BENCHMARK] TARGET_MAC:7A:BF:58:2D:F4:0F | EVENT:DELTA_RECEIVED | BYTES:276 | TIMESTAMP:1775878259537
+04-10 23:30:59.538 21825 21825 I flutter : ≡ƒöä [SYNC] Decompressing payload from 7A:BF:58:2D:F4:0F (276 bytes)...
+04-10 23:30:59.538 21825 21825 I flutter : ≡ƒôª [SYNC] Received type=offer from 7A:BF:58:2D:F4:0F
+04-10 23:30:59.541 21825 21825 I flutter : ≡ƒôñ [SYNC] Computing delta for offer from senderId=2ab0b4d0-0390-4ab4-b6af-0c38cc2e320c...
+04-10 23:30:59.591 21825 21825 I flutter : ≡ƒôñ [SYNC] Delta has 0 entries ΓÇö replying to 7A:BF:58:2D:F4:0F
+04-10 23:30:59.596 21825 21825 I flutter : Γ£à [SYNC] Delta reply sent to 7A:BF:58:2D:F4:0F via NOTIFY (158 bytes)
+04-10 23:31:03.240 21825 21825 I flutter : ≡ƒôí [SYNC] Chunk from 44:7E:B1:B8:CE:80: 275 bytes (total buffer: 275)
+04-10 23:31:03.326 21825 21825 I flutter : ≡ƒôÑ [SYNC] EOF received from 44:7E:B1:B8:CE:80 ΓÇö buffer=275 bytes
+04-10 23:31:03.326 21825 21825 I flutter : [BENCHMARK] TARGET_MAC:44:7E:B1:B8:CE:80 | EVENT:DELTA_RECEIVED | BYTES:275 | TIMESTAMP:1775878263326
+04-10 23:31:03.326 21825 21825 I flutter : ≡ƒöä [SYNC] Decompressing payload from 44:7E:B1:B8:CE:80 (275 bytes)...
+04-10 23:31:03.328 21825 21825 I flutter : ≡ƒôª [SYNC] Received type=offer from 44:7E:B1:B8:CE:80
+04-10 23:31:03.332 21825 21825 I flutter : ≡ƒôñ [SYNC] Computing delta for offer from senderId=5dd4aaf7-76a2-4e36-97fa-7141bcb44f48...
+04-10 23:31:03.350 21825 21825 I flutter : ≡ƒôñ [SYNC] Delta has 0 entries ΓÇö replying to 44:7E:B1:B8:CE:80
+04-10 23:31:03.396 21825 21825 I flutter : Γ£à [SYNC] Delta reply sent to 44:7E:B1:B8:CE:80 via NOTIFY (158 bytes)
+04-10 23:31:12.945 21825 21825 I flutter : ≡ƒôí [SYNC] Chunk from 7A:BF:58:2D:F4:0F: 276 bytes (total buffer: 276)
+04-10 23:31:13.009 21825 21825 I flutter : ≡ƒôÑ [SYNC] EOF received from 7A:BF:58:2D:F4:0F ΓÇö buffer=276 bytes
+04-10 23:31:13.010 21825 21825 I flutter : [BENCHMARK] TARGET_MAC:7A:BF:58:2D:F4:0F | EVENT:DELTA_RECEIVED | BYTES:276 | TIMESTAMP:1775878273010
+04-10 23:31:13.010 21825 21825 I flutter : ≡ƒöä [SYNC] Decompressing payload from 7A:BF:58:2D:F4:0F (276 bytes)...
+04-10 23:31:13.012 21825 21825 I flutter : ≡ƒôª [SYNC] Received type=offer from 7A:BF:58:2D:F4:0F
+04-10 23:31:13.015 21825 21825 I flutter : ≡ƒôñ [SYNC] Computing delta for offer from senderId=2ab0b4d0-0390-4ab4-b6af-0c38cc2e320c...
+04-10 23:31:13.031 21825 21825 I flutter : ≡ƒôñ [SYNC] Delta has 0 entries ΓÇö replying to 7A:BF:58:2D:F4:0F
+04-10 23:31:13.078 21825 21825 I flutter : Γ£à [SYNC] Delta reply sent to 7A:BF:58:2D:F4:0F via NOTIFY (158 bytes)
+04-10 23:31:18.677 21825 21825 I flutter : ≡ƒôí [SYNC] Chunk from 44:7E:B1:B8:CE:80: 275 bytes (total buffer: 275)
+04-10 23:31:18.751 21825 21825 I flutter : ≡ƒôÑ [SYNC] EOF received from 44:7E:B1:B8:CE:80 ΓÇö buffer=275 bytes
+04-10 23:31:18.751 21825 21825 I flutter : [BENCHMARK] TARGET_MAC:44:7E:B1:B8:CE:80 | EVENT:DELTA_RECEIVED | BYTES:275 | TIMESTAMP:1775878278751
+04-10 23:31:18.752 21825 21825 I flutter : ≡ƒöä [SYNC] Decompressing payload from 44:7E:B1:B8:CE:80 (275 bytes)...
+04-10 23:31:18.753 21825 21825 I flutter : ≡ƒôª [SYNC] Received type=offer from 44:7E:B1:B8:CE:80
+04-10 23:31:18.758 21825 21825 I flutter : ≡ƒôñ [SYNC] Computing delta for offer from senderId=5dd4aaf7-76a2-4e36-97fa-7141bcb44f48...
+04-10 23:31:18.810 21825 21825 I flutter : ≡ƒôñ [SYNC] Delta has 0 entries ΓÇö replying to 44:7E:B1:B8:CE:80
+04-10 23:31:18.816 21825 21825 I flutter : Γ£à [SYNC] Delta reply sent to 44:7E:B1:B8:CE:80 via NOTIFY (158 bytes)
+04-10 23:31:32.571 21825 21825 I flutter : ≡ƒôí [SYNC] Chunk from 44:7E:B1:B8:CE:80: 275 bytes (total buffer: 275)
+04-10 23:31:32.664 21825 21825 I flutter : ≡ƒôÑ [SYNC] EOF received from 44:7E:B1:B8:CE:80 ΓÇö buffer=275 bytes
+04-10 23:31:32.664 21825 21825 I flutter : [BENCHMARK] TARGET_MAC:44:7E:B1:B8:CE:80 | EVENT:DELTA_RECEIVED | BYTES:275 | TIMESTAMP:1775878292664
+04-10 23:31:32.664 21825 21825 I flutter : ≡ƒöä [SYNC] Decompressing payload from 44:7E:B1:B8:CE:80 (275 bytes)...
+04-10 23:31:32.665 21825 21825 I flutter : ≡ƒôª [SYNC] Received type=offer from 44:7E:B1:B8:CE:80
+04-10 23:31:32.668 21825 21825 I flutter : ≡ƒôñ [SYNC] Computing delta for offer from senderId=5dd4aaf7-76a2-4e36-97fa-7141bcb44f48...
+04-10 23:31:32.721 21825 21825 I flutter : ≡ƒôñ [SYNC] Delta has 0 entries ΓÇö replying to 44:7E:B1:B8:CE:80
+04-10 23:31:32.728 21825 21825 I flutter : Γ£à [SYNC] Delta reply sent to 44:7E:B1:B8:CE:80 via NOTIFY (158 bytes)
+04-10 23:31:42.401 21825 21825 I flutter : ≡ƒôí [SYNC] Chunk from 7A:BF:58:2D:F4:0F: 255 bytes (total buffer: 255)
+04-10 23:31:42.447 21825 21825 I flutter : ≡ƒôÑ [SYNC] EOF received from 7A:BF:58:2D:F4:0F ΓÇö buffer=255 bytes
+04-10 23:31:42.447 21825 21825 I flutter : [BENCHMARK] TARGET_MAC:7A:BF:58:2D:F4:0F | EVENT:DELTA_RECEIVED | BYTES:255 | TIMESTAMP:1775878302447
+04-10 23:31:42.447 21825 21825 I flutter : ≡ƒöä [SYNC] Decompressing payload from 7A:BF:58:2D:F4:0F (255 bytes)...
+04-10 23:31:42.448 21825 21825 I flutter : ≡ƒôª [SYNC] Received type=offer from 7A:BF:58:2D:F4:0F
+04-10 23:31:42.450 21825 21825 I flutter : ≡ƒôñ [SYNC] Computing delta for offer from senderId=2ab0b4d0-0390-4ab4-b6af-0c38cc2e320c...
+04-10 23:31:42.490 21825 21825 I flutter : ≡ƒôñ [SYNC] Delta has 0 entries ΓÇö replying to 7A:BF:58:2D:F4:0F
+04-10 23:31:42.497 21825 21825 I flutter : Γ£à [SYNC] Delta reply sent to 7A:BF:58:2D:F4:0F via NOTIFY (158 bytes)
+04-10 23:31:48.418 21825 21825 I flutter : ≡ƒôí [SYNC] Chunk from 44:7E:B1:B8:CE:80: 252 bytes (total buffer: 252)
+04-10 23:31:48.493 21825 21825 I flutter : ≡ƒôÑ [SYNC] EOF received from 44:7E:B1:B8:CE:80 ΓÇö buffer=252 bytes
+04-10 23:31:48.493 21825 21825 I flutter : [BENCHMARK] TARGET_MAC:44:7E:B1:B8:CE:80 | EVENT:DELTA_RECEIVED | BYTES:252 | TIMESTAMP:1775878308493
+04-10 23:31:48.494 21825 21825 I flutter : ≡ƒöä [SYNC] Decompressing payload from 44:7E:B1:B8:CE:80 (252 bytes)...
+04-10 23:31:48.494 21825 21825 I flutter : ≡ƒôª [SYNC] Received type=offer from 44:7E:B1:B8:CE:80
+04-10 23:31:48.497 21825 21825 I flutter : ≡ƒôñ [SYNC] Computing delta for offer from senderId=5dd4aaf7-76a2-4e36-97fa-7141bcb44f48...
+04-10 23:31:48.546 21825 21825 I flutter : ≡ƒôñ [SYNC] Delta has 0 entries ΓÇö replying to 44:7E:B1:B8:CE:80
+04-10 23:31:48.553 21825 21825 I flutter : Γ£à [SYNC] Delta reply sent to 44:7E:B1:B8:CE:80 via NOTIFY (158 bytes)
+04-10 23:32:04.291 21825 21825 I flutter : ≡ƒôí [SYNC] Chunk from 44:7E:B1:B8:CE:80: 275 bytes (total buffer: 275)
+04-10 23:32:04.377 21825 21825 I flutter : ≡ƒôÑ [SYNC] EOF received from 44:7E:B1:B8:CE:80 ΓÇö buffer=275 bytes
+04-10 23:32:04.378 21825 21825 I flutter : [BENCHMARK] TARGET_MAC:44:7E:B1:B8:CE:80 | EVENT:DELTA_RECEIVED | BYTES:275 | TIMESTAMP:1775878324378
+04-10 23:32:04.378 21825 21825 I flutter : ≡ƒöä [SYNC] Decompressing payload from 44:7E:B1:B8:CE:80 (275 bytes)...
+04-10 23:32:04.378 21825 21825 I flutter : ≡ƒôª [SYNC] Received type=offer from 44:7E:B1:B8:CE:80
+04-10 23:32:04.380 21825 21825 I flutter : ≡ƒôñ [SYNC] Computing delta for offer from senderId=5dd4aaf7-76a2-4e36-97fa-7141bcb44f48...
+04-10 23:32:04.426 21825 21825 I flutter : ≡ƒôñ [SYNC] Delta has 0 entries ΓÇö replying to 44:7E:B1:B8:CE:80
+04-10 23:32:04.431 21825 21825 I flutter : Γ£à [SYNC] Delta reply sent to 44:7E:B1:B8:CE:80 via NOTIFY (158 bytes)

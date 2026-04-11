@@ -174,6 +174,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               final messageIndex = messages.length - 1 - index;
                               final tm = messages[messageIndex];
                               final isSent = myId != null && tm.originNodeId == myId;
+                              
+                              if (!isSent) {
+                                // To prevent spamming, we only need to show the UI displayed log once,
+                                // but doing it here guarantees the Flutter framework actually processed it.
+                                debugPrint('[BENCHMARK] MSG_ID:${tm.msgId} | EVENT:DISPLAYED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
+                              }
+
                               final bubble = ChatMessage(
                                 id: tm.msgId,
                                 body: tm.textContent,

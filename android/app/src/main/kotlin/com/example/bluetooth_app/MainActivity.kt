@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattServer
 import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
@@ -59,6 +60,17 @@ class MainActivity : FlutterActivity() {
   private val SERVICE_UUID = UUID.fromString("c7e4f1a2-9b3d-4a8e-a1f6-2d5e8b9c0a4f")
   private val CHARACTERISTIC_UUID =
     UUID.fromString("6b2e8f1a-4c9d-4e7b-b3a5-9f8e7d6c5b4a")
+  // New: Server→Client notification characteristic for single-connection bidirectional sync.
+  private val NOTIFY_CHARACTERISTIC_UUID =
+    UUID.fromString("b9168cf8-4d57-466d-a6f6-4be440ce8025")
+  // 0x2902 Client Characteristic Configuration Descriptor UUID
+  private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+  // Lock + state for the Server→Client notifyCharacteristicChanged flow.
+  private val serverNotifyLock = Object()
+  @Volatile private var lastNotifyOk: Boolean? = null
+  // Per-client MTU negotiated on the server side so we know the notify chunk size.
+  private val serverMtuMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
   private val REQUEST_BLUETOOTH_PERMS = 4312
 
@@ -93,6 +105,9 @@ class MainActivity : FlutterActivity() {
         }
         "send_payload" -> {
           sendPayloadToPeer(call, result)
+        }
+        "reply_payload" -> {
+          replyPayloadToPeer(call, result)
         }
         else -> result.notImplemented()
       }
@@ -167,6 +182,36 @@ class MainActivity : FlutterActivity() {
           }
         }
 
+        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+          super.onMtuChanged(device, mtu)
+          Log.d(TAG, "[SERVER] onMtuChanged: mtu=$mtu for device=${device.address}")
+          serverMtuMap[device.address] = mtu
+        }
+
+        override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+          super.onNotificationSent(device, status)
+          synchronized(serverNotifyLock) {
+            lastNotifyOk = (status == BluetoothGatt.GATT_SUCCESS)
+            serverNotifyLock.notifyAll()
+          }
+        }
+
+        override fun onDescriptorWriteRequest(
+          device: BluetoothDevice,
+          requestId: Int,
+          descriptor: BluetoothGattDescriptor,
+          preparedWrite: Boolean,
+          responseNeeded: Boolean,
+          offset: Int,
+          value: ByteArray?
+        ) {
+          super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value)
+          Log.d(TAG, "[SERVER] CCCD write from ${device.address} value=${value?.toList()}")
+          if (responseNeeded) {
+            bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value ?: ByteArray(0))
+          }
+        }
+
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
           super.onConnectionStateChange(device, status, newState)
           // Suppress all callbacks during a server reset to avoid the infinite-disconnect
@@ -209,11 +254,25 @@ class MainActivity : FlutterActivity() {
         BluetoothGattCharacteristic.PERMISSION_WRITE
       )
 
+      // New: NOTIFY characteristic so Server can push Delta payload back to Client
+      // over the existing open connection, eliminating the GATT 257 reconnect race.
+      val notifyCharacteristic = BluetoothGattCharacteristic(
+        NOTIFY_CHARACTERISTIC_UUID,
+        BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+        BluetoothGattCharacteristic.PERMISSION_READ
+      )
+      val cccd = BluetoothGattDescriptor(
+        CCCD_UUID,
+        BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE
+      )
+      notifyCharacteristic.addDescriptor(cccd)
+
       val service = BluetoothGattService(
         SERVICE_UUID,
         BluetoothGattService.SERVICE_TYPE_PRIMARY
       )
       service.addCharacteristic(writeNoResponseCharacteristic)
+      service.addCharacteristic(notifyCharacteristic)
 
       val added = bluetoothGattServer?.addService(service) ?: false
       if (!added) {
@@ -439,6 +498,10 @@ class MainActivity : FlutterActivity() {
                 deadMacs[macAddress] = System.currentTimeMillis() + 8000L
                 try { g.close() } catch (_: Throwable) {}
                 completeErrorOnMain("DISCONNECTED", "Disconnected during phase=$phase status=$status")
+              } else {
+                // Already completed (e.g. after receiving EOF from server notify).
+                // Just close the gatt handle cleanly.
+                try { g.close() } catch (_: Throwable) {}
               }
             }
           }
@@ -485,6 +548,33 @@ class MainActivity : FlutterActivity() {
               if (characteristic != null) {
                 Thread {
                   try {
+                    phase = "subscribe_notify"
+                    val notifyChar = service.getCharacteristic(NOTIFY_CHARACTERISTIC_UUID)
+                    if (notifyChar != null) {
+                      g.setCharacteristicNotification(notifyChar, true)
+                      val descriptor = notifyChar.getDescriptor(CCCD_UUID)
+                      if (descriptor != null) {
+                        synchronized(lock) { lastWriteOk = null }
+                        val started = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                          g.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothGatt.GATT_SUCCESS
+                        } else {
+                          @Suppress("DEPRECATION")
+                          descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                          @Suppress("DEPRECATION")
+                          g.writeDescriptor(descriptor)
+                        }
+                        if (started) {
+                          val deadlineMs = System.currentTimeMillis() + 8000L
+                          synchronized(lock) {
+                            while (lastWriteOk == null && System.currentTimeMillis() < deadlineMs) {
+                              lock.wait(250L)
+                            }
+                          }
+                          Log.d(TAG, "[GATT] Subscribed to NOTIFY mac=$macAddress result=$lastWriteOk")
+                        }
+                      }
+                    }
+
                     phase = "writing"
                     characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
 
@@ -539,8 +629,11 @@ class MainActivity : FlutterActivity() {
                       return@Thread
                     }
 
-                    try { g.disconnect() } catch (_: Throwable) {}
-                    try { g.close() } catch (_: Throwable) {}
+                    // DO NOT disconnect here. Keep the connection alive so the Server can
+                    // push the Delta reply back via NOTIFY. The connection will be cleanly
+                    // closed by onCharacteristicChanged when we receive the "||EOF||" notify.
+                    // transferWatchdog (60s) guards against a silent server that never replies.
+                    Log.d(TAG, "[GATT] Offer sent. Waiting for notify Delta reply mac=$macAddress")
                     completeSuccessOnMain()
                   } catch (t: Throwable) {
                     try { g.disconnect() } catch (_: Throwable) {}
@@ -572,6 +665,19 @@ class MainActivity : FlutterActivity() {
             }
           }
 
+          override fun onDescriptorWrite(
+            g: BluetoothGatt?,
+            descriptor: BluetoothGattDescriptor?,
+            status: Int
+          ) {
+            super.onDescriptorWrite(g, descriptor, status)
+            Log.d(TAG, "[GATT] onDescriptorWrite status=$status mac=$macAddress")
+            synchronized(lock) {
+              lastWriteOk = status == BluetoothGatt.GATT_SUCCESS
+              lock.notifyAll()
+            }
+          }
+
           override fun onCharacteristicWrite(
             g: BluetoothGatt?,
             characteristic: BluetoothGattCharacteristic?,
@@ -582,6 +688,41 @@ class MainActivity : FlutterActivity() {
             synchronized(lock) {
               lastWriteOk = status == BluetoothGatt.GATT_SUCCESS
               lock.notifyAll()
+            }
+          }
+
+          // API 33+ (Tiramisu) — preferred override
+          override fun onCharacteristicChanged(
+            g: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+          ) {
+            handleNotifyChunk(g, characteristic.uuid, value)
+          }
+
+          // Pre-API 33 fallback
+          @Suppress("DEPRECATION")
+          override fun onCharacteristicChanged(
+            g: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?
+          ) {
+            if (g == null || characteristic == null) return
+            val value = characteristic.value ?: return
+            handleNotifyChunk(g, characteristic.uuid, value)
+          }
+
+          private fun handleNotifyChunk(g: BluetoothGatt, charUuid: UUID, value: ByteArray) {
+            if (charUuid != NOTIFY_CHARACTERISTIC_UUID) return
+            Log.d(TAG, "[GATT-NOTIFY] Received chunk ${value.size} bytes from server mac=$macAddress")
+            // Forward the chunk to Flutter exactly as if a write came in from the other direction.
+            Handler(Looper.getMainLooper()).post {
+              val payload: HashMap<String, Any> = hashMapOf("mac" to macAddress, "bytes" to value)
+              eventSink?.success(payload)
+            }
+            if (value.contentEquals("||EOF||".toByteArray())) {
+              Log.d(TAG, "[GATT-NOTIFY] EOF received — closing connection mac=$macAddress")
+              mainHandler.removeCallbacks(transferWatchdog)
+              try { g.disconnect() } catch (_: Throwable) {}
             }
           }
         }
@@ -602,6 +743,76 @@ class MainActivity : FlutterActivity() {
         mainHandler.removeCallbacks(transferWatchdog)
       }
     }
+  }
+
+  // Server-side reply: push a Delta payload back to a connected Client via NOTIFY.
+  // This avoids the GATT 257 "role-switching" crash by reusing the existing open connection
+  // instead of spinning up a second GAP link.
+  @SuppressLint("MissingPermission")
+  private fun replyPayloadToPeer(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
+    val macAddress = call.argument<String>("macAddress")
+      ?: return result.error("no_mac", "macAddress is required", null)
+    val payload = coercePayloadBytes(call.argument<Any?>("payload")) ?: ByteArray(0)
+
+    val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    // getRemoteDevice is safe here: we have an active server connection to this address.
+    val device = bm.adapter.getRemoteDevice(macAddress)
+    val server = bluetoothGattServer ?: return result.error("no_server", "GATT server not started", null)
+    val service = server.getService(SERVICE_UUID)
+    val notifyChar = service?.getCharacteristic(NOTIFY_CHARACTERISTIC_UUID)
+      ?: return result.error("no_char", "NOTIFY characteristic not found in service", null)
+
+    Thread {
+      try {
+        val mtu = serverMtuMap[macAddress] ?: 23
+        val chunkSize = (mtu - 3).coerceIn(20, 512)
+
+        fun notifyBlocking(chunk: ByteArray): Boolean {
+          synchronized(serverNotifyLock) { lastNotifyOk = null }
+
+          if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            server.notifyCharacteristicChanged(device, notifyChar, false, chunk)
+          } else {
+            @Suppress("DEPRECATION")
+            notifyChar.value = chunk
+            server.notifyCharacteristicChanged(device, notifyChar, false)
+          }
+
+          val deadlineMs = System.currentTimeMillis() + 8000L
+          synchronized(serverNotifyLock) {
+            while (lastNotifyOk == null && System.currentTimeMillis() < deadlineMs) {
+              serverNotifyLock.wait(250L)
+            }
+            return lastNotifyOk == true
+          }
+        }
+
+        Log.d(TAG, "[GATT-NOTIFY] Sending ${payload.size} bytes in chunks of $chunkSize to mac=$macAddress")
+        var offset = 0
+        while (offset < payload.size) {
+          val length = minOf(chunkSize, payload.size - offset)
+          val chunk = payload.copyOfRange(offset, offset + length)
+          if (!notifyBlocking(chunk)) {
+            Log.e(TAG, "[GATT-NOTIFY] Notify chunk failed at offset=$offset")
+            Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify chunk failed at offset=$offset", null) }
+            return@Thread
+          }
+          offset += length
+        }
+
+        val eof = "||EOF||".toByteArray()
+        if (!notifyBlocking(eof)) {
+          Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify EOF failed", null) }
+          return@Thread
+        }
+
+        Log.d(TAG, "[GATT-NOTIFY] Delta fully sent to mac=$macAddress")
+        Handler(Looper.getMainLooper()).post { result.success(null) }
+      } catch (t: Throwable) {
+        Log.e(TAG, "[GATT-NOTIFY] Exception during reply", t)
+        Handler(Looper.getMainLooper()).post { result.error("NOTIFY_EXCEPTION", t.message ?: "Unknown", null) }
+      }
+    }.start()
   }
 
   private fun coercePayloadBytes(payloadAny: Any?): ByteArray? {

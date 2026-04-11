@@ -488,11 +488,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               final outBytes = zlib.encode(
                 utf8.encode(jsonEncode(deltaEnvelope)),
               );
-              await _nativeMesh.sendPayload(
+              
+              await _nativeMesh.replyPayload(
                 targetMac,
                 Uint8List.fromList(outBytes),
               );
-              debugPrint('✅ [SYNC] Delta reply sent to $targetMac (${outBytes.length} bytes)');
+              debugPrint('✅ [SYNC] Delta reply sent to $targetMac via NOTIFY (${outBytes.length} bytes)');
               if (delta.isNotEmpty) {
               }
               return;

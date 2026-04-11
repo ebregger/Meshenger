@@ -1,0 +1,12 @@
+Port 18081: 8043 messages
+  19d38b1e-7ca7-4030-a8be-7dd48c05ae0b - Stage 1
+  11af4d4d-43c2-41ba-9594-86462fd53d29 - Message 1
+  ee0d1bd6-be79-449d-8673-90d7be4456e7 - Message 2
+Port 18082: 7975 messages
+  19d38b1e-7ca7-4030-a8be-7dd48c05ae0b - Stage 1
+  11af4d4d-43c2-41ba-9594-86462fd53d29 - Message 1
+  ee0d1bd6-be79-449d-8673-90d7be4456e7 - Message 2
+Port 18083: 8025 messages
+  19d38b1e-7ca7-4030-a8be-7dd48c05ae0b - Stage 1
+  11af4d4d-43c2-41ba-9594-86462fd53d29 - Message 1
+  ee0d1bd6-be79-449d-8673-90d7be4456e7 - Message 2

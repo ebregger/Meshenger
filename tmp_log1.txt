@@ -1,0 +1,110 @@
+--------- beginning of main
+04-10 23:15:47.082 17947 17964 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.083 17947 17964 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.083 17947 17964 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.086 17947 17964 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.088 17947 17964 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.088 17947 17964 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.089 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.090 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.091 17947 17964 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.092 17947 22324 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.092 17947 22324 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.093 17947 22324 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.094 17947 22324 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.096 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.096 17947 17964 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.098 17947 17964 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.100 17947 17964 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.101 17947 17964 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.101 17947 17964 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.103 17947 17964 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.104 17947 17964 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.105 17947 18774 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.107 17947 18774 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.108 17947 18774 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.110 17947 18774 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.111 17947 18774 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.111 17947 18774 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.112 17947 18774 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.113 17947 17947 I flutter : [BENCHMARK] TARGET_MAC:71:8E:47:68:81:D0 | EVENT:SCAN_HIT | TIMESTAMP:1775877347113
+04-10 23:15:47.116 17947 18774 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.116 17947 18774 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.117 17947 18774 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.118 17947 17947 I flutter : ≡ƒôñ [DISCOVERY] Sending offer to 71:8E:47:68:81:D0 ΓÇö vector has 1 entries
+04-10 23:15:47.118 17947 18774 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.119 17947 18774 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.119 17947 22324 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.119 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.120 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.121 17947 18074 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.121 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.121 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.124 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.125 17947 18074 D NativeMeshService: [SERVER] Client connected: 47:23:C8:F5:C4:6F
+04-10 23:15:47.125 17947 18074 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.125 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.125 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.126 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.127 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 47:23:C8:F5:C4:6F status=0
+04-10 23:15:47.127 17947 18074 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.128 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.128 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.128 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.129 17947 18074 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.129 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.129 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.130 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.131 17947 18074 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.133 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.133 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.134 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.135 17947 18074 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.135 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.135 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.136 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.136 17947 18074 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.137 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.137 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.137 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.138 17947 18074 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.138 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.138 17947 18074 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.141 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.142 17947 18074 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.142 17947 22324 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.142 17947 22324 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.143 17947 22324 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.144 17947 22324 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.144 17947 22324 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.144 17947 22324 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.145 17947 22324 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.146 17947 22324 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.146 17947 22324 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.146 17947 22324 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.147 17947 22324 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.148 17947 22324 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.149 17947 22324 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.149 17947 22324 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.150 17947 22324 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.151 17947 22324 D NativeMeshService: [SERVER] Client connected: 74:20:5F:81:F1:65
+04-10 23:15:47.151 17947 22324 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=74:20:5F:81:F1:65
+04-10 23:15:47.151 17947 22324 D NativeMeshService: [SERVER] CCCD write from 74:20:5F:81:F1:65 value=[1, 0]
+04-10 23:15:47.152 17947 22324 D NativeMeshService: [SERVER] Client disconnected: 74:20:5F:81:F1:65 status=0
+04-10 23:15:47.153 17947 22324 D NativeMeshService: [SERVER] Client connected: 46:6E:E0:1C:AC:78
+04-10 23:15:47.153 17947 22324 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=46:6E:E0:1C:AC:78
+04-10 23:15:47.153 17947 22324 D NativeMeshService: [SERVER] CCCD write from 46:6E:E0:1C:AC:78 value=[1, 0]
+04-10 23:15:47.154 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 46:6E:E0:1C:AC:78 status=0
+04-10 23:15:47.155 17947 18074 D NativeMeshService: [SERVER] Client connected: 46:6E:E0:1C:AC:78
+04-10 23:15:47.155 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=46:6E:E0:1C:AC:78
+04-10 23:15:47.155 17947 18074 D NativeMeshService: [SERVER] CCCD write from 46:6E:E0:1C:AC:78 value=[1, 0]
+04-10 23:15:47.157 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 46:6E:E0:1C:AC:78 status=0
+04-10 23:15:47.159 17947 18074 D NativeMeshService: [SERVER] Client connected: 46:6E:E0:1C:AC:78
+04-10 23:15:47.159 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=46:6E:E0:1C:AC:78
+04-10 23:15:47.159 17947 18074 D NativeMeshService: [SERVER] CCCD write from 46:6E:E0:1C:AC:78 value=[1, 0]
+04-10 23:15:47.160 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 46:6E:E0:1C:AC:78 status=0
+04-10 23:15:47.160 17947 18074 D NativeMeshService: [SERVER] Client connected: 46:6E:E0:1C:AC:78
+04-10 23:15:47.160 17947 18074 D NativeMeshService: [SERVER] onMtuChanged: mtu=517 for device=46:6E:E0:1C:AC:78
+04-10 23:15:47.160 17947 18074 D NativeMeshService: [SERVER] CCCD write from 46:6E:E0:1C:AC:78 value=[1, 0]
+04-10 23:15:47.161 17947 18074 D NativeMeshService: [SERVER] Client disconnected: 46:6E:E0:1C:AC:78 status=0
+04-10 23:15:47.293 17947 18077 D NativeMeshService: getRemoteLeDevice mac=71:8E:47:68:81:D0 using type=1 (API 31+)

@@ -1,0 +1,2 @@
+Running Gradle task 'assembleDebug'...                           2,369ms
+ΓêÜ Built build\app\outputs\flutter-apk\app-debug.apk

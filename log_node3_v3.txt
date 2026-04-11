@@ -1,0 +1,755 @@
+--------- beginning of main
+04-10 19:54:03.093 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:03.606 D/NativeMeshService(27150): [SERVER] Client connected: 7D:76:DE:7C:6C:DE
+04-10 19:54:04.413 D/NativeMeshService(27150): [SERVER] onMtuChanged: mtu=517 for device=7D:76:DE:7C:6C:DE
+04-10 19:54:06.097 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=72:1C:67:59:99:E5
+04-10 19:54:06.299 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=72:1C:67:59:99:E5
+04-10 19:54:06.299 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:06.414 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:06.504 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:06.506 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 72:1C:67:59:99:E5 (307 bytes) — awaiting delta reply
+04-10 19:54:06.506 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:OFFER_SENT | TIMESTAMP:1775865246506
+04-10 19:54:06.530 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:SCAN_HIT | TIMESTAMP:1775865246530
+04-10 19:54:06.560 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 44:1C:BC:28:E4:4A — vector has 4 entries
+04-10 19:54:06.561 D/NativeMeshService(27150): getRemoteLeDevice mac=44:1C:BC:28:E4:4A using type=1 (API 31+)
+04-10 19:54:06.643 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 512)
+04-10 19:54:06.644 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 1024)
+04-10 19:54:06.646 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 1536)
+04-10 19:54:06.647 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 2048)
+04-10 19:54:06.687 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 2560)
+04-10 19:54:06.688 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 3072)
+04-10 19:54:06.690 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 3584)
+04-10 19:54:06.691 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 4096)
+04-10 19:54:06.693 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 4608)
+04-10 19:54:06.694 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 5120)
+04-10 19:54:06.696 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 5632)
+04-10 19:54:06.697 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 6144)
+04-10 19:54:06.780 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 6656)
+04-10 19:54:06.781 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 7168)
+04-10 19:54:06.820 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 3 bytes (total buffer: 7171)
+04-10 19:54:06.821 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 3 bytes (total buffer: 7174)
+04-10 19:54:06.822 I/flutter (27150): 📥 [SYNC] EOF received from 72:1C:67:59:99:E5 — buffer=7174 bytes
+04-10 19:54:06.822 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:DELTA_RECEIVED | BYTES:7174 | TIMESTAMP:1775865246822
+04-10 19:54:06.823 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 72:1C:67:59:99:E5 (7174 bytes)...
+04-10 19:54:06.824 I/flutter (27150): ❌ [SYNC] Mesh processing error from 72:1C:67:59:99:E5: FormatException: Filter error, bad data
+04-10 19:54:06.824 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:54:06.824 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:54:06.824 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:54:06.824 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:54:06.824 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:54:06.824 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:54:06.825 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:54:06.825 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:54:06.825 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:54:06.825 I/flutter (27150): 
+04-10 19:54:06.826 I/flutter (27150): 📥 [SYNC] EOF received from 72:1C:67:59:99:E5 — buffer=0 bytes
+04-10 19:54:06.826 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865246826
+04-10 19:54:06.826 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 72:1C:67:59:99:E5 — ignoring
+04-10 19:54:07.432 D/NativeMeshService(27150): [SERVER] Client connected: 44:1C:BC:28:E4:4A
+04-10 19:54:07.442 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=44:1C:BC:28:E4:4A
+04-10 19:54:07.442 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:GATT_CONNECTED | TIMESTAMP:1775865247442
+04-10 19:54:07.494 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=44:1C:BC:28:E4:4A
+04-10 19:54:07.758 I/flutter (27150): 📡 [SYNC] Chunk from 7D:76:DE:7C:6C:DE: 282 bytes (total buffer: 282)
+04-10 19:54:07.851 I/flutter (27150): 📥 [SYNC] EOF received from 7D:76:DE:7C:6C:DE — buffer=282 bytes
+04-10 19:54:07.852 I/flutter (27150): [BENCHMARK] TARGET_MAC:7D:76:DE:7C:6C:DE | EVENT:DELTA_RECEIVED | BYTES:282 | TIMESTAMP:1775865247851
+04-10 19:54:07.852 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 7D:76:DE:7C:6C:DE (282 bytes)...
+04-10 19:54:07.853 I/flutter (27150): 📦 [SYNC] Received type=offer from 7D:76:DE:7C:6C:DE
+04-10 19:54:07.857 I/flutter (27150): 📤 [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+04-10 19:54:07.858 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:54:07.867 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:54:07.963 I/flutter (27150): 📤 [SYNC] Delta has 1 entries — replying to 7D:76:DE:7C:6C:DE
+04-10 19:54:07.968 D/NativeMeshService(27150): [GATT-NOTIFY] Starting chunked notify: 1809 bytes in chunks of 512 mac=7D:76:DE:7C:6C:DE
+04-10 19:54:07.984 I/flutter (27150): ✅ [SYNC] Delta reply sent to 7D:76:DE:7C:6C:DE via NOTIFY (1809 bytes)
+04-10 19:54:08.063 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:08.063 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=44:1C:BC:28:E4:4A
+04-10 19:54:08.121 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:09.367 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:54:09.380 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:54:11.125 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=44:1C:BC:28:E4:4A
+04-10 19:54:11.327 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=44:1C:BC:28:E4:4A
+04-10 19:54:11.327 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:11.465 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:11.563 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:11.565 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 44:1C:BC:28:E4:4A (307 bytes) — awaiting delta reply
+04-10 19:54:11.565 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:OFFER_SENT | TIMESTAMP:1775865251565
+04-10 19:54:11.599 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:SCAN_HIT | TIMESTAMP:1775865251599
+04-10 19:54:11.635 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 72:1C:67:59:99:E5 — vector has 4 entries
+04-10 19:54:11.637 D/NativeMeshService(27150): getRemoteLeDevice mac=72:1C:67:59:99:E5 using type=1 (API 31+)
+04-10 19:54:11.761 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 512)
+04-10 19:54:11.762 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1024)
+04-10 19:54:11.815 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1536)
+04-10 19:54:11.816 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2048)
+04-10 19:54:11.919 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2560)
+04-10 19:54:11.920 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3072)
+04-10 19:54:11.956 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3584)
+04-10 19:54:11.957 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4096)
+04-10 19:54:12.052 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4608)
+04-10 19:54:12.053 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 5120)
+04-10 19:54:12.053 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5271)
+04-10 19:54:12.054 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5422)
+04-10 19:54:12.100 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=5422 bytes
+04-10 19:54:12.100 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:5422 | TIMESTAMP:1775865252100
+04-10 19:54:12.101 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 44:1C:BC:28:E4:4A (5422 bytes)...
+04-10 19:54:12.102 I/flutter (27150): ❌ [SYNC] Mesh processing error from 44:1C:BC:28:E4:4A: FormatException: Filter error, bad data
+04-10 19:54:12.102 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:54:12.102 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:54:12.102 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:54:12.102 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:54:12.102 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:54:12.102 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:54:12.102 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:54:12.102 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:54:12.102 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:54:12.102 I/flutter (27150): 
+04-10 19:54:12.103 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=0 bytes
+04-10 19:54:12.104 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865252104
+04-10 19:54:12.104 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 44:1C:BC:28:E4:4A — ignoring
+04-10 19:54:13.035 D/NativeMeshService(27150): [SERVER] Client connected: 72:1C:67:59:99:E5
+04-10 19:54:13.045 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=72:1C:67:59:99:E5
+04-10 19:54:13.045 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:GATT_CONNECTED | TIMESTAMP:1775865253045
+04-10 19:54:13.097 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=72:1C:67:59:99:E5
+04-10 19:54:13.175 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:54:13.184 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:54:13.775 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:13.775 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=72:1C:67:59:99:E5
+04-10 19:54:13.830 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:16.834 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=72:1C:67:59:99:E5
+04-10 19:54:17.036 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=72:1C:67:59:99:E5
+04-10 19:54:17.036 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:17.041 I/flutter (27150): 🔥 Native send_payload failed mac=72:1C:67:59:99:E5 code=WRITE_FAILED message=Write chunk failed at offset=0 len=307 details=null
+04-10 19:54:17.042 I/flutter (27150): 🟥 Connection/GATT failed for 72:1C:67:59:99:E5: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=307, null, null)
+04-10 19:54:17.054 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:SCAN_HIT | TIMESTAMP:1775865257054
+04-10 19:54:17.093 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 44:1C:BC:28:E4:4A — vector has 4 entries
+04-10 19:54:17.094 D/NativeMeshService(27150): getRemoteLeDevice mac=44:1C:BC:28:E4:4A using type=1 (API 31+)
+04-10 19:54:18.015 D/NativeMeshService(27150): [SERVER] Client connected: 44:1C:BC:28:E4:4A
+04-10 19:54:18.024 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=44:1C:BC:28:E4:4A
+04-10 19:54:18.024 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:GATT_CONNECTED | TIMESTAMP:1775865258024
+04-10 19:54:18.075 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=44:1C:BC:28:E4:4A
+04-10 19:54:18.107 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:54:18.116 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:54:18.647 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:18.647 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=44:1C:BC:28:E4:4A
+04-10 19:54:18.705 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:21.709 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=44:1C:BC:28:E4:4A
+04-10 19:54:21.910 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=44:1C:BC:28:E4:4A
+04-10 19:54:21.910 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:22.059 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:22.157 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:22.159 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 44:1C:BC:28:E4:4A (307 bytes) — awaiting delta reply
+04-10 19:54:22.159 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:OFFER_SENT | TIMESTAMP:1775865262159
+04-10 19:54:22.169 I/flutter (27150): [BENCHMARK] TARGET_MAC:73:AE:79:BC:96:62 | EVENT:SCAN_HIT | TIMESTAMP:1775865262169
+04-10 19:54:22.206 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 73:AE:79:BC:96:62 — vector has 4 entries
+04-10 19:54:22.207 D/NativeMeshService(27150): getRemoteLeDevice mac=73:AE:79:BC:96:62 using type=1 (API 31+)
+04-10 19:54:22.455 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 512)
+04-10 19:54:22.456 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1024)
+04-10 19:54:22.549 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1536)
+04-10 19:54:22.551 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2048)
+04-10 19:54:22.599 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2560)
+04-10 19:54:22.600 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3072)
+04-10 19:54:22.694 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3584)
+04-10 19:54:22.695 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4096)
+04-10 19:54:22.796 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4608)
+04-10 19:54:22.797 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 5120)
+04-10 19:54:22.842 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5271)
+04-10 19:54:22.843 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5422)
+04-10 19:54:22.889 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=5422 bytes
+04-10 19:54:22.889 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:5422 | TIMESTAMP:1775865262889
+04-10 19:54:22.890 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 44:1C:BC:28:E4:4A (5422 bytes)...
+04-10 19:54:22.891 I/flutter (27150): ❌ [SYNC] Mesh processing error from 44:1C:BC:28:E4:4A: FormatException: Filter error, bad data
+04-10 19:54:22.892 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:54:22.892 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:54:22.892 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:54:22.892 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:54:22.892 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:54:22.892 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:54:22.892 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:54:22.892 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:54:22.892 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:54:22.892 I/flutter (27150): 
+04-10 19:54:22.897 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=0 bytes
+04-10 19:54:22.898 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865262897
+04-10 19:54:22.898 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 44:1C:BC:28:E4:4A — ignoring
+04-10 19:54:23.917 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:54:23.927 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:54:34.212 D/NativeMeshService(27150): [SERVER] Client disconnected: 73:AE:79:BC:96:62 status=0
+04-10 19:54:34.213 I/flutter (27150): 🔥 Native send_payload failed mac=73:AE:79:BC:96:62 code=timeout message=Timed out waiting for connection details=null
+04-10 19:54:34.214 I/flutter (27150): 🟥 Connection/GATT failed for 73:AE:79:BC:96:62: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:54:34.218 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:SCAN_HIT | TIMESTAMP:1775865274218
+04-10 19:54:34.255 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 44:1C:BC:28:E4:4A — vector has 4 entries
+04-10 19:54:34.262 D/NativeMeshService(27150): getRemoteLeDevice mac=44:1C:BC:28:E4:4A using type=1 (API 31+)
+04-10 19:54:34.677 D/NativeMeshService(27150): [SERVER] Client connected: 44:1C:BC:28:E4:4A
+04-10 19:54:34.689 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=44:1C:BC:28:E4:4A
+04-10 19:54:34.689 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:GATT_CONNECTED | TIMESTAMP:1775865274689
+04-10 19:54:34.740 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=44:1C:BC:28:E4:4A
+04-10 19:54:35.260 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:35.260 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=44:1C:BC:28:E4:4A
+04-10 19:54:35.319 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:38.324 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=44:1C:BC:28:E4:4A
+04-10 19:54:38.525 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=44:1C:BC:28:E4:4A
+04-10 19:54:38.526 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:38.665 D/NativeMeshService(27150): [SERVER] Client connected: 7D:76:DE:7C:6C:DE
+04-10 19:54:38.679 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:38.768 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:38.769 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 44:1C:BC:28:E4:4A (307 bytes) — awaiting delta reply
+04-10 19:54:38.769 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:OFFER_SENT | TIMESTAMP:1775865278769
+04-10 19:54:38.819 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:SCAN_HIT | TIMESTAMP:1775865278819
+04-10 19:54:38.853 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 72:1C:67:59:99:E5 — vector has 4 entries
+04-10 19:54:38.855 D/NativeMeshService(27150): getRemoteLeDevice mac=72:1C:67:59:99:E5 using type=1 (API 31+)
+04-10 19:54:38.907 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 512)
+04-10 19:54:38.908 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1024)
+04-10 19:54:38.953 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1536)
+04-10 19:54:38.954 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2048)
+04-10 19:54:39.015 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2560)
+04-10 19:54:39.015 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3072)
+04-10 19:54:39.016 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3584)
+04-10 19:54:39.016 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4096)
+04-10 19:54:39.042 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4608)
+04-10 19:54:39.043 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 5120)
+04-10 19:54:39.043 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5271)
+04-10 19:54:39.044 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5422)
+04-10 19:54:39.085 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=5422 bytes
+04-10 19:54:39.085 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:5422 | TIMESTAMP:1775865279085
+04-10 19:54:39.085 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 44:1C:BC:28:E4:4A (5422 bytes)...
+04-10 19:54:39.087 I/flutter (27150): ❌ [SYNC] Mesh processing error from 44:1C:BC:28:E4:4A: FormatException: Filter error, bad data
+04-10 19:54:39.087 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:54:39.088 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:54:39.088 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:54:39.088 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:54:39.088 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:54:39.088 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:54:39.088 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:54:39.088 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:54:39.088 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:54:39.088 I/flutter (27150): 
+04-10 19:54:39.089 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=0 bytes
+04-10 19:54:39.089 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865279089
+04-10 19:54:39.089 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 44:1C:BC:28:E4:4A — ignoring
+04-10 19:54:39.757 D/NativeMeshService(27150): [SERVER] onMtuChanged: mtu=517 for device=7D:76:DE:7C:6C:DE
+04-10 19:54:40.084 D/NativeMeshService(27150): [SERVER] Client connected: 72:1C:67:59:99:E5
+04-10 19:54:40.096 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=72:1C:67:59:99:E5
+04-10 19:54:40.096 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:GATT_CONNECTED | TIMESTAMP:1775865280096
+04-10 19:54:40.127 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:54:40.136 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:54:40.147 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=72:1C:67:59:99:E5
+04-10 19:54:40.842 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:40.842 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=72:1C:67:59:99:E5
+04-10 19:54:40.900 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:43.101 I/flutter (27150): 📡 [SYNC] Chunk from 7D:76:DE:7C:6C:DE: 282 bytes (total buffer: 282)
+04-10 19:54:43.197 I/flutter (27150): 📥 [SYNC] EOF received from 7D:76:DE:7C:6C:DE — buffer=282 bytes
+04-10 19:54:43.197 I/flutter (27150): [BENCHMARK] TARGET_MAC:7D:76:DE:7C:6C:DE | EVENT:DELTA_RECEIVED | BYTES:282 | TIMESTAMP:1775865283197
+04-10 19:54:43.197 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 7D:76:DE:7C:6C:DE (282 bytes)...
+04-10 19:54:43.199 I/flutter (27150): 📦 [SYNC] Received type=offer from 7D:76:DE:7C:6C:DE
+04-10 19:54:43.203 I/flutter (27150): 📤 [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+04-10 19:54:43.306 I/flutter (27150): 📤 [SYNC] Delta has 1 entries — replying to 7D:76:DE:7C:6C:DE
+04-10 19:54:43.323 D/NativeMeshService(27150): [GATT-NOTIFY] Starting chunked notify: 1809 bytes in chunks of 512 mac=7D:76:DE:7C:6C:DE
+04-10 19:54:43.331 I/flutter (27150): ✅ [SYNC] Delta reply sent to 7D:76:DE:7C:6C:DE via NOTIFY (1809 bytes)
+04-10 19:54:43.904 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=72:1C:67:59:99:E5
+04-10 19:54:44.106 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=72:1C:67:59:99:E5
+04-10 19:54:44.106 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:44.281 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:44.379 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:54:44.380 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 72:1C:67:59:99:E5 (307 bytes) — awaiting delta reply
+04-10 19:54:44.380 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:OFFER_SENT | TIMESTAMP:1775865284380
+04-10 19:54:44.408 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:SCAN_HIT | TIMESTAMP:1775865284408
+04-10 19:54:44.440 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 44:1C:BC:28:E4:4A — vector has 4 entries
+04-10 19:54:44.444 D/NativeMeshService(27150): getRemoteLeDevice mac=44:1C:BC:28:E4:4A using type=1 (API 31+)
+04-10 19:54:44.467 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:54:44.472 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:54:44.529 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 512)
+04-10 19:54:44.529 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 1024)
+04-10 19:54:44.531 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 1536)
+04-10 19:54:44.532 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 2048)
+04-10 19:54:44.535 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 2560)
+04-10 19:54:44.536 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 3072)
+04-10 19:54:44.538 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 3584)
+04-10 19:54:44.539 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 4096)
+04-10 19:54:44.577 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 4608)
+04-10 19:54:44.577 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 5120)
+04-10 19:54:44.627 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 5632)
+04-10 19:54:44.627 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 6144)
+04-10 19:54:44.629 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 6656)
+04-10 19:54:44.630 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 7168)
+04-10 19:54:44.631 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 3 bytes (total buffer: 7171)
+04-10 19:54:44.631 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 3 bytes (total buffer: 7174)
+04-10 19:54:44.632 I/flutter (27150): 📥 [SYNC] EOF received from 72:1C:67:59:99:E5 — buffer=7174 bytes
+04-10 19:54:44.633 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:DELTA_RECEIVED | BYTES:7174 | TIMESTAMP:1775865284632
+04-10 19:54:44.633 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 72:1C:67:59:99:E5 (7174 bytes)...
+04-10 19:54:44.634 I/flutter (27150): ❌ [SYNC] Mesh processing error from 72:1C:67:59:99:E5: FormatException: Filter error, bad data
+04-10 19:54:44.634 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:54:44.634 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:54:44.634 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:54:44.635 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:54:44.635 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:54:44.635 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:54:44.635 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:54:44.635 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:54:44.635 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:54:44.635 I/flutter (27150): 
+04-10 19:54:44.638 I/flutter (27150): 📥 [SYNC] EOF received from 72:1C:67:59:99:E5 — buffer=0 bytes
+04-10 19:54:44.639 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865284639
+04-10 19:54:44.639 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 72:1C:67:59:99:E5 — ignoring
+04-10 19:54:44.929 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:54:44.930 D/NativeMeshService(27150): [GATT] STATE_DISCONNECTED phase=connecting status=133 mac=44:1C:BC:28:E4:4A
+04-10 19:54:44.933 I/flutter (27150): 🔥 Native send_payload failed mac=44:1C:BC:28:E4:4A code=DISCONNECTED message=Disconnected during phase=connecting status=133 details=null
+04-10 19:54:44.933 I/flutter (27150): 🟥 Connection/GATT failed for 44:1C:BC:28:E4:4A: PlatformException(DISCONNECTED, Disconnected during phase=connecting status=133, null, null)
+04-10 19:54:44.947 I/flutter (27150): [BENCHMARK] TARGET_MAC:73:AE:79:BC:96:62 | EVENT:SCAN_HIT | TIMESTAMP:1775865284946
+04-10 19:54:44.982 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 73:AE:79:BC:96:62 — vector has 4 entries
+04-10 19:54:44.986 D/NativeMeshService(27150): getRemoteLeDevice mac=73:AE:79:BC:96:62 using type=1 (API 31+)
+04-10 19:54:45.701 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:54:45.714 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:54:48.376 D/NativeMeshService(27150): [SERVER] Client connected: 7D:76:DE:7C:6C:DE
+04-10 19:54:49.485 D/NativeMeshService(27150): [SERVER] onMtuChanged: mtu=517 for device=7D:76:DE:7C:6C:DE
+04-10 19:54:52.850 I/flutter (27150): 📡 [SYNC] Chunk from 7D:76:DE:7C:6C:DE: 305 bytes (total buffer: 305)
+04-10 19:54:52.997 I/flutter (27150): 📥 [SYNC] EOF received from 7D:76:DE:7C:6C:DE — buffer=305 bytes
+04-10 19:54:52.998 I/flutter (27150): [BENCHMARK] TARGET_MAC:7D:76:DE:7C:6C:DE | EVENT:DELTA_RECEIVED | BYTES:305 | TIMESTAMP:1775865292998
+04-10 19:54:52.998 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 7D:76:DE:7C:6C:DE (305 bytes)...
+04-10 19:54:52.999 I/flutter (27150): 📦 [SYNC] Received type=offer from 7D:76:DE:7C:6C:DE
+04-10 19:54:53.002 I/flutter (27150): 📤 [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+04-10 19:54:53.114 I/flutter (27150): 📤 [SYNC] Delta has 1 entries — replying to 7D:76:DE:7C:6C:DE
+04-10 19:54:53.136 D/NativeMeshService(27150): [GATT-NOTIFY] Starting chunked notify: 1809 bytes in chunks of 512 mac=7D:76:DE:7C:6C:DE
+04-10 19:54:53.145 I/flutter (27150): ✅ [SYNC] Delta reply sent to 7D:76:DE:7C:6C:DE via NOTIFY (1809 bytes)
+04-10 19:54:54.364 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:54:54.376 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:54:56.991 I/flutter (27150): 🔥 Native send_payload failed mac=73:AE:79:BC:96:62 code=timeout message=Timed out waiting for connection details=null
+04-10 19:54:56.991 D/NativeMeshService(27150): [SERVER] Client disconnected: 73:AE:79:BC:96:62 status=0
+04-10 19:54:56.992 I/flutter (27150): 🟥 Connection/GATT failed for 73:AE:79:BC:96:62: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:54:57.056 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:SCAN_HIT | TIMESTAMP:1775865297056
+04-10 19:54:57.078 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 44:1C:BC:28:E4:4A — vector has 4 entries
+04-10 19:54:57.080 D/NativeMeshService(27150): getRemoteLeDevice mac=44:1C:BC:28:E4:4A using type=1 (API 31+)
+04-10 19:54:57.626 D/NativeMeshService(27150): [SERVER] Client connected: 44:1C:BC:28:E4:4A
+04-10 19:54:57.636 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=44:1C:BC:28:E4:4A
+04-10 19:54:57.636 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:GATT_CONNECTED | TIMESTAMP:1775865297636
+04-10 19:54:57.687 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=44:1C:BC:28:E4:4A
+04-10 19:54:58.125 D/NativeMeshService(27150): [SERVER] Client connected: 7D:76:DE:7C:6C:DE
+04-10 19:54:58.300 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:58.300 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=44:1C:BC:28:E4:4A
+04-10 19:54:58.359 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:54:59.282 D/NativeMeshService(27150): [SERVER] onMtuChanged: mtu=517 for device=7D:76:DE:7C:6C:DE
+04-10 19:55:01.364 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=44:1C:BC:28:E4:4A
+04-10 19:55:01.565 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=44:1C:BC:28:E4:4A
+04-10 19:55:01.565 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:01.718 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:01.808 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:01.809 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 44:1C:BC:28:E4:4A (307 bytes) — awaiting delta reply
+04-10 19:55:01.809 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:OFFER_SENT | TIMESTAMP:1775865301809
+04-10 19:55:01.822 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:SCAN_HIT | TIMESTAMP:1775865301822
+04-10 19:55:01.858 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 72:1C:67:59:99:E5 — vector has 4 entries
+04-10 19:55:01.860 D/NativeMeshService(27150): getRemoteLeDevice mac=72:1C:67:59:99:E5 using type=1 (API 31+)
+04-10 19:55:02.039 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 512)
+04-10 19:55:02.040 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1024)
+04-10 19:55:02.041 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1536)
+04-10 19:55:02.042 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2048)
+04-10 19:55:02.044 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2560)
+04-10 19:55:02.045 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3072)
+04-10 19:55:02.048 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3584)
+04-10 19:55:02.048 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4096)
+04-10 19:55:02.082 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4608)
+04-10 19:55:02.082 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 5120)
+04-10 19:55:02.083 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5271)
+04-10 19:55:02.083 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5422)
+04-10 19:55:02.084 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=5422 bytes
+04-10 19:55:02.084 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:5422 | TIMESTAMP:1775865302084
+04-10 19:55:02.084 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 44:1C:BC:28:E4:4A (5422 bytes)...
+04-10 19:55:02.084 I/flutter (27150): ❌ [SYNC] Mesh processing error from 44:1C:BC:28:E4:4A: FormatException: Filter error, bad data
+04-10 19:55:02.084 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:55:02.084 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:55:02.084 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:55:02.084 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:55:02.084 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:55:02.084 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:55:02.084 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:55:02.084 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:55:02.085 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:55:02.085 I/flutter (27150): 
+04-10 19:55:02.085 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=0 bytes
+04-10 19:55:02.085 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865302085
+04-10 19:55:02.085 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 44:1C:BC:28:E4:4A — ignoring
+04-10 19:55:02.760 D/NativeMeshService(27150): [SERVER] Client connected: 72:1C:67:59:99:E5
+04-10 19:55:02.768 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=72:1C:67:59:99:E5
+04-10 19:55:02.768 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:GATT_CONNECTED | TIMESTAMP:1775865302768
+04-10 19:55:02.819 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=72:1C:67:59:99:E5
+04-10 19:55:03.117 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:55:03.125 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:55:03.627 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:03.640 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:03.873 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:03.873 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=72:1C:67:59:99:E5
+04-10 19:55:03.930 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:06.935 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=72:1C:67:59:99:E5
+04-10 19:55:07.137 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=72:1C:67:59:99:E5
+04-10 19:55:07.137 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:07.142 I/flutter (27150): 🔥 Native send_payload failed mac=72:1C:67:59:99:E5 code=WRITE_FAILED message=Write chunk failed at offset=0 len=307 details=null
+04-10 19:55:07.142 I/flutter (27150): 🟥 Connection/GATT failed for 72:1C:67:59:99:E5: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=307, null, null)
+04-10 19:55:07.151 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:SCAN_HIT | TIMESTAMP:1775865307151
+04-10 19:55:07.190 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 44:1C:BC:28:E4:4A — vector has 4 entries
+04-10 19:55:07.193 D/NativeMeshService(27150): getRemoteLeDevice mac=44:1C:BC:28:E4:4A using type=1 (API 31+)
+04-10 19:55:08.176 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:55:08.191 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:55:08.952 D/NativeMeshService(27150): [SERVER] Client connected: 44:1C:BC:28:E4:4A
+04-10 19:55:08.965 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=44:1C:BC:28:E4:4A
+04-10 19:55:08.965 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:GATT_CONNECTED | TIMESTAMP:1775865308965
+04-10 19:55:09.017 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=44:1C:BC:28:E4:4A
+04-10 19:55:09.584 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:09.584 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=44:1C:BC:28:E4:4A
+04-10 19:55:09.642 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:12.646 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=44:1C:BC:28:E4:4A
+04-10 19:55:12.847 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=44:1C:BC:28:E4:4A
+04-10 19:55:12.847 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:12.996 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:13.093 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:13.125 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 44:1C:BC:28:E4:4A (307 bytes) — awaiting delta reply
+04-10 19:55:13.125 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:OFFER_SENT | TIMESTAMP:1775865313125
+04-10 19:55:13.131 I/flutter (27150): [BENCHMARK] TARGET_MAC:73:AE:79:BC:96:62 | EVENT:SCAN_HIT | TIMESTAMP:1775865313131
+04-10 19:55:13.154 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 73:AE:79:BC:96:62 — vector has 4 entries
+04-10 19:55:13.156 D/NativeMeshService(27150): getRemoteLeDevice mac=73:AE:79:BC:96:62 using type=1 (API 31+)
+04-10 19:55:13.293 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 512)
+04-10 19:55:13.294 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1024)
+04-10 19:55:13.436 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1536)
+04-10 19:55:13.437 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2048)
+04-10 19:55:13.486 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2560)
+04-10 19:55:13.487 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3072)
+04-10 19:55:13.632 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3584)
+04-10 19:55:13.633 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4096)
+04-10 19:55:13.681 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4608)
+04-10 19:55:13.682 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 5120)
+04-10 19:55:13.730 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5271)
+04-10 19:55:13.731 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5422)
+04-10 19:55:13.777 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=5422 bytes
+04-10 19:55:13.777 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:5422 | TIMESTAMP:1775865313777
+04-10 19:55:13.777 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 44:1C:BC:28:E4:4A (5422 bytes)...
+04-10 19:55:13.778 I/flutter (27150): ❌ [SYNC] Mesh processing error from 44:1C:BC:28:E4:4A: FormatException: Filter error, bad data
+04-10 19:55:13.778 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:55:13.778 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:55:13.778 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:55:13.778 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:55:13.779 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:55:13.779 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:55:13.779 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:55:13.779 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:55:13.779 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:55:13.779 I/flutter (27150): 
+04-10 19:55:13.780 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=0 bytes
+04-10 19:55:13.780 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865313780
+04-10 19:55:13.780 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 44:1C:BC:28:E4:4A — ignoring
+04-10 19:55:14.853 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:55:14.869 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:55:19.637 D/NativeMeshService(27150): [SERVER] Client connected: 7D:76:DE:7C:6C:DE
+04-10 19:55:20.463 D/NativeMeshService(27150): [SERVER] onMtuChanged: mtu=517 for device=7D:76:DE:7C:6C:DE
+04-10 19:55:23.809 I/flutter (27150): 📡 [SYNC] Chunk from 7D:76:DE:7C:6C:DE: 305 bytes (total buffer: 305)
+04-10 19:55:23.906 I/flutter (27150): 📥 [SYNC] EOF received from 7D:76:DE:7C:6C:DE — buffer=305 bytes
+04-10 19:55:23.906 I/flutter (27150): [BENCHMARK] TARGET_MAC:7D:76:DE:7C:6C:DE | EVENT:DELTA_RECEIVED | BYTES:305 | TIMESTAMP:1775865323906
+04-10 19:55:23.906 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 7D:76:DE:7C:6C:DE (305 bytes)...
+04-10 19:55:23.907 I/flutter (27150): 📦 [SYNC] Received type=offer from 7D:76:DE:7C:6C:DE
+04-10 19:55:23.910 I/flutter (27150): 📤 [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+04-10 19:55:24.049 I/flutter (27150): 📤 [SYNC] Delta has 1 entries — replying to 7D:76:DE:7C:6C:DE
+04-10 19:55:24.055 D/NativeMeshService(27150): [GATT-NOTIFY] Starting chunked notify: 1809 bytes in chunks of 512 mac=7D:76:DE:7C:6C:DE
+04-10 19:55:24.060 I/flutter (27150): ✅ [SYNC] Delta reply sent to 7D:76:DE:7C:6C:DE via NOTIFY (1809 bytes)
+04-10 19:55:25.161 I/flutter (27150): 🔥 Native send_payload failed mac=73:AE:79:BC:96:62 code=timeout message=Timed out waiting for connection details=null
+04-10 19:55:25.161 D/NativeMeshService(27150): [SERVER] Client disconnected: 73:AE:79:BC:96:62 status=0
+04-10 19:55:25.161 I/flutter (27150): 🟥 Connection/GATT failed for 73:AE:79:BC:96:62: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:55:25.205 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:SCAN_HIT | TIMESTAMP:1775865325205
+04-10 19:55:25.242 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 72:1C:67:59:99:E5 — vector has 4 entries
+04-10 19:55:25.244 D/NativeMeshService(27150): getRemoteLeDevice mac=72:1C:67:59:99:E5 using type=1 (API 31+)
+04-10 19:55:25.317 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:25.330 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:26.550 D/NativeMeshService(27150): [SERVER] Client connected: 72:1C:67:59:99:E5
+04-10 19:55:26.558 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=72:1C:67:59:99:E5
+04-10 19:55:26.558 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:GATT_CONNECTED | TIMESTAMP:1775865326558
+04-10 19:55:26.609 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=72:1C:67:59:99:E5
+04-10 19:55:27.320 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:27.320 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=72:1C:67:59:99:E5
+04-10 19:55:27.378 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:28.934 D/NativeMeshService(27150): [SERVER] Client connected: 7D:76:DE:7C:6C:DE
+04-10 19:55:30.106 D/NativeMeshService(27150): [SERVER] onMtuChanged: mtu=517 for device=7D:76:DE:7C:6C:DE
+04-10 19:55:30.381 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=72:1C:67:59:99:E5
+04-10 19:55:30.582 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=72:1C:67:59:99:E5
+04-10 19:55:30.582 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:30.788 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:30.935 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:30.936 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 72:1C:67:59:99:E5 (307 bytes) — awaiting delta reply
+04-10 19:55:30.936 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:OFFER_SENT | TIMESTAMP:1775865330936
+04-10 19:55:30.955 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:SCAN_HIT | TIMESTAMP:1775865330955
+04-10 19:55:30.999 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 44:1C:BC:28:E4:4A — vector has 4 entries
+04-10 19:55:31.004 D/NativeMeshService(27150): getRemoteLeDevice mac=44:1C:BC:28:E4:4A using type=1 (API 31+)
+04-10 19:55:31.770 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 512)
+04-10 19:55:31.771 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 1024)
+04-10 19:55:32.068 D/NativeMeshService(27150): [SERVER] Client connected: 44:1C:BC:28:E4:4A
+04-10 19:55:32.080 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=44:1C:BC:28:E4:4A
+04-10 19:55:32.080 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:GATT_CONNECTED | TIMESTAMP:1775865332080
+04-10 19:55:32.131 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=44:1C:BC:28:E4:4A
+04-10 19:55:32.546 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 1536)
+04-10 19:55:32.546 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 2048)
+04-10 19:55:32.700 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:32.700 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=44:1C:BC:28:E4:4A
+04-10 19:55:32.759 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:33.278 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 2560)
+04-10 19:55:33.279 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 3072)
+04-10 19:55:33.474 I/flutter (27150): 📡 [SYNC] Chunk from 7D:76:DE:7C:6C:DE: 305 bytes (total buffer: 305)
+04-10 19:55:33.667 I/flutter (27150): 📥 [SYNC] EOF received from 7D:76:DE:7C:6C:DE — buffer=305 bytes
+04-10 19:55:33.667 I/flutter (27150): [BENCHMARK] TARGET_MAC:7D:76:DE:7C:6C:DE | EVENT:DELTA_RECEIVED | BYTES:305 | TIMESTAMP:1775865333667
+04-10 19:55:33.668 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 7D:76:DE:7C:6C:DE (305 bytes)...
+04-10 19:55:33.669 I/flutter (27150): 📦 [SYNC] Received type=offer from 7D:76:DE:7C:6C:DE
+04-10 19:55:33.671 I/flutter (27150): 📤 [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+04-10 19:55:33.808 I/flutter (27150): 📤 [SYNC] Delta has 1 entries — replying to 7D:76:DE:7C:6C:DE
+04-10 19:55:33.818 D/NativeMeshService(27150): [GATT-NOTIFY] Starting chunked notify: 1809 bytes in chunks of 512 mac=7D:76:DE:7C:6C:DE
+04-10 19:55:33.824 I/flutter (27150): ✅ [SYNC] Delta reply sent to 7D:76:DE:7C:6C:DE via NOTIFY (1809 bytes)
+04-10 19:55:34.007 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 3584)
+04-10 19:55:34.008 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 4096)
+04-10 19:55:34.790 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 4608)
+04-10 19:55:34.791 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 5120)
+04-10 19:55:35.571 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 5632)
+04-10 19:55:35.572 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 6144)
+04-10 19:55:35.621 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:35.635 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:35.762 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=44:1C:BC:28:E4:4A
+04-10 19:55:35.767 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 6656)
+04-10 19:55:35.767 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 7168)
+04-10 19:55:35.769 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 3 bytes (total buffer: 7171)
+04-10 19:55:35.770 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 3 bytes (total buffer: 7174)
+04-10 19:55:35.811 I/flutter (27150): 📥 [SYNC] EOF received from 72:1C:67:59:99:E5 — buffer=7174 bytes
+04-10 19:55:35.812 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:DELTA_RECEIVED | BYTES:7174 | TIMESTAMP:1775865335812
+04-10 19:55:35.812 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 72:1C:67:59:99:E5 (7174 bytes)...
+04-10 19:55:35.813 I/flutter (27150): ❌ [SYNC] Mesh processing error from 72:1C:67:59:99:E5: FormatException: Filter error, bad data
+04-10 19:55:35.813 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:55:35.813 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:55:35.813 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:55:35.813 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:55:35.813 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:55:35.813 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:55:35.813 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:55:35.813 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:55:35.813 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:55:35.813 I/flutter (27150): 
+04-10 19:55:35.814 I/flutter (27150): 📥 [SYNC] EOF received from 72:1C:67:59:99:E5 — buffer=0 bytes
+04-10 19:55:35.814 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865335814
+04-10 19:55:35.814 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 72:1C:67:59:99:E5 — ignoring
+04-10 19:55:35.964 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=44:1C:BC:28:E4:4A
+04-10 19:55:35.964 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:36.063 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:36.161 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:36.163 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 44:1C:BC:28:E4:4A (307 bytes) — awaiting delta reply
+04-10 19:55:36.163 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:OFFER_SENT | TIMESTAMP:1775865336163
+04-10 19:55:36.171 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:SCAN_HIT | TIMESTAMP:1775865336171
+04-10 19:55:36.210 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 72:1C:67:59:99:E5 — vector has 4 entries
+04-10 19:55:36.214 D/NativeMeshService(27150): getRemoteLeDevice mac=72:1C:67:59:99:E5 using type=1 (API 31+)
+04-10 19:55:36.222 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=72:1C:67:59:99:E5
+04-10 19:55:36.222 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:GATT_CONNECTED | TIMESTAMP:1775865336222
+04-10 19:55:36.273 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=72:1C:67:59:99:E5
+04-10 19:55:36.411 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 512)
+04-10 19:55:36.412 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1024)
+04-10 19:55:36.458 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1536)
+04-10 19:55:36.459 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2048)
+04-10 19:55:36.460 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2560)
+04-10 19:55:36.461 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3072)
+04-10 19:55:36.464 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3584)
+04-10 19:55:36.465 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4096)
+04-10 19:55:36.466 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4608)
+04-10 19:55:36.467 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 5120)
+04-10 19:55:36.468 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5271)
+04-10 19:55:36.468 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5422)
+04-10 19:55:36.469 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=5422 bytes
+04-10 19:55:36.469 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:5422 | TIMESTAMP:1775865336469
+04-10 19:55:36.469 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 44:1C:BC:28:E4:4A (5422 bytes)...
+04-10 19:55:36.471 I/flutter (27150): ❌ [SYNC] Mesh processing error from 44:1C:BC:28:E4:4A: FormatException: Filter error, bad data
+04-10 19:55:36.471 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:55:36.471 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:55:36.471 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:55:36.471 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:55:36.471 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:55:36.471 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:55:36.471 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:55:36.471 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:55:36.471 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:55:36.471 I/flutter (27150): 
+04-10 19:55:36.472 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=0 bytes
+04-10 19:55:36.472 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865336472
+04-10 19:55:36.472 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 44:1C:BC:28:E4:4A — ignoring
+04-10 19:55:36.920 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:36.920 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=72:1C:67:59:99:E5
+04-10 19:55:36.977 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:37.528 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:55:37.537 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:55:39.701 D/NativeMeshService(27150): [SERVER] Client connected: 7D:76:DE:7C:6C:DE
+04-10 19:55:39.981 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=72:1C:67:59:99:E5
+04-10 19:55:40.182 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=72:1C:67:59:99:E5
+04-10 19:55:40.183 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:40.310 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:40.456 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:40.457 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 72:1C:67:59:99:E5 (307 bytes) — awaiting delta reply
+04-10 19:55:40.457 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:OFFER_SENT | TIMESTAMP:1775865340457
+04-10 19:55:40.493 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:SCAN_HIT | TIMESTAMP:1775865340493
+04-10 19:55:40.528 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 44:1C:BC:28:E4:4A — vector has 4 entries
+04-10 19:55:40.530 D/NativeMeshService(27150): getRemoteLeDevice mac=44:1C:BC:28:E4:4A using type=1 (API 31+)
+04-10 19:55:40.704 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 512)
+04-10 19:55:40.705 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 1024)
+04-10 19:55:40.707 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 1536)
+04-10 19:55:40.707 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 2048)
+04-10 19:55:40.752 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 2560)
+04-10 19:55:40.752 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 3072)
+04-10 19:55:40.772 D/NativeMeshService(27150): [SERVER] onMtuChanged: mtu=517 for device=7D:76:DE:7C:6C:DE
+04-10 19:55:40.801 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 3584)
+04-10 19:55:40.802 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 4096)
+04-10 19:55:40.803 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 4608)
+04-10 19:55:40.804 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 5120)
+04-10 19:55:40.806 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 5632)
+04-10 19:55:40.807 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 6144)
+04-10 19:55:40.899 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 6656)
+04-10 19:55:40.900 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 512 bytes (total buffer: 7168)
+04-10 19:55:40.901 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 3 bytes (total buffer: 7171)
+04-10 19:55:40.902 I/flutter (27150): 📡 [SYNC] Chunk from 72:1C:67:59:99:E5: 3 bytes (total buffer: 7174)
+04-10 19:55:40.906 I/flutter (27150): 📥 [SYNC] EOF received from 72:1C:67:59:99:E5 — buffer=7174 bytes
+04-10 19:55:40.906 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:DELTA_RECEIVED | BYTES:7174 | TIMESTAMP:1775865340906
+04-10 19:55:40.906 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 72:1C:67:59:99:E5 (7174 bytes)...
+04-10 19:55:40.907 I/flutter (27150): ❌ [SYNC] Mesh processing error from 72:1C:67:59:99:E5: FormatException: Filter error, bad data
+04-10 19:55:40.907 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:55:40.907 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:55:40.907 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:55:40.907 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:55:40.907 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:55:40.907 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:55:40.907 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:55:40.907 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:55:40.907 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:55:40.908 I/flutter (27150): 
+04-10 19:55:40.908 I/flutter (27150): 📥 [SYNC] EOF received from 72:1C:67:59:99:E5 — buffer=0 bytes
+04-10 19:55:40.909 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865340908
+04-10 19:55:40.909 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 72:1C:67:59:99:E5 — ignoring
+04-10 19:55:41.409 D/NativeMeshService(27150): [SERVER] Client connected: 44:1C:BC:28:E4:4A
+04-10 19:55:41.420 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=44:1C:BC:28:E4:4A
+04-10 19:55:41.420 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:GATT_CONNECTED | TIMESTAMP:1775865341420
+04-10 19:55:41.471 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=44:1C:BC:28:E4:4A
+04-10 19:55:41.974 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:55:41.985 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:55:42.236 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:42.236 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=44:1C:BC:28:E4:4A
+04-10 19:55:42.294 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:44.104 I/flutter (27150): 📡 [SYNC] Chunk from 7D:76:DE:7C:6C:DE: 305 bytes (total buffer: 305)
+04-10 19:55:44.199 I/flutter (27150): 📥 [SYNC] EOF received from 7D:76:DE:7C:6C:DE — buffer=305 bytes
+04-10 19:55:44.200 I/flutter (27150): [BENCHMARK] TARGET_MAC:7D:76:DE:7C:6C:DE | EVENT:DELTA_RECEIVED | BYTES:305 | TIMESTAMP:1775865344200
+04-10 19:55:44.200 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 7D:76:DE:7C:6C:DE (305 bytes)...
+04-10 19:55:44.201 I/flutter (27150): 📦 [SYNC] Received type=offer from 7D:76:DE:7C:6C:DE
+04-10 19:55:44.206 I/flutter (27150): 📤 [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+04-10 19:55:44.341 I/flutter (27150): 📤 [SYNC] Delta has 1 entries — replying to 7D:76:DE:7C:6C:DE
+04-10 19:55:44.346 D/NativeMeshService(27150): [GATT-NOTIFY] Starting chunked notify: 1809 bytes in chunks of 512 mac=7D:76:DE:7C:6C:DE
+04-10 19:55:44.350 I/flutter (27150): ✅ [SYNC] Delta reply sent to 7D:76:DE:7C:6C:DE via NOTIFY (1809 bytes)
+04-10 19:55:45.299 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=44:1C:BC:28:E4:4A
+04-10 19:55:45.500 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=44:1C:BC:28:E4:4A
+04-10 19:55:45.500 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:45.569 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:45.579 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:45.647 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:45.745 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:45.747 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 44:1C:BC:28:E4:4A (307 bytes) — awaiting delta reply
+04-10 19:55:45.748 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:OFFER_SENT | TIMESTAMP:1775865345747
+04-10 19:55:45.775 I/flutter (27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:SCAN_HIT | TIMESTAMP:1775865345775
+04-10 19:55:45.805 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 72:1C:67:59:99:E5 — vector has 4 entries
+04-10 19:55:45.807 D/NativeMeshService(27150): getRemoteLeDevice mac=72:1C:67:59:99:E5 using type=1 (API 31+)
+04-10 19:55:45.848 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 512)
+04-10 19:55:45.849 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1024)
+04-10 19:55:45.850 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1536)
+04-10 19:55:45.850 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2048)
+04-10 19:55:45.853 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2560)
+04-10 19:55:45.854 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3072)
+04-10 19:55:45.856 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3584)
+04-10 19:55:45.857 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4096)
+04-10 19:55:45.859 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4608)
+04-10 19:55:45.860 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 5120)
+04-10 19:55:45.860 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5271)
+04-10 19:55:45.861 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5422)
+04-10 19:55:45.862 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=5422 bytes
+04-10 19:55:45.862 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:5422 | TIMESTAMP:1775865345862
+04-10 19:55:45.862 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 44:1C:BC:28:E4:4A (5422 bytes)...
+04-10 19:55:45.863 I/flutter (27150): ❌ [SYNC] Mesh processing error from 44:1C:BC:28:E4:4A: FormatException: Filter error, bad data
+04-10 19:55:45.863 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:55:45.863 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:55:45.863 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:55:45.863 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:55:45.864 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:55:45.864 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:55:45.864 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:55:45.864 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:55:45.864 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:55:45.864 I/flutter (27150): 
+04-10 19:55:45.865 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=0 bytes
+04-10 19:55:45.865 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865345865
+04-10 19:55:45.865 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 44:1C:BC:28:E4:4A — ignoring
+04-10 19:55:46.941 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:55:46.953 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:55:47.168 D/NativeMeshService(27150): [SERVER] Client connected: 72:1C:67:59:99:E5
+04-10 19:55:47.179 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=72:1C:67:59:99:E5
+04-10 19:55:47.179 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:72:1C:67:59:99:E5 | EVENT:GATT_CONNECTED | TIMESTAMP:1775865347179
+04-10 19:55:47.238 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=72:1C:67:59:99:E5
+04-10 19:55:47.977 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:47.978 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=72:1C:67:59:99:E5
+04-10 19:55:48.034 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:49.500 D/NativeMeshService(27150): [SERVER] Client connected: 7D:76:DE:7C:6C:DE
+04-10 19:55:50.626 D/NativeMeshService(27150): [SERVER] onMtuChanged: mtu=517 for device=7D:76:DE:7C:6C:DE
+04-10 19:55:51.038 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=72:1C:67:59:99:E5
+04-10 19:55:51.239 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=72:1C:67:59:99:E5
+04-10 19:55:51.240 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=72:1C:67:59:99:E5
+04-10 19:55:51.279 I/flutter (27150): 🔥 Native send_payload failed mac=72:1C:67:59:99:E5 code=WRITE_FAILED message=Write chunk failed at offset=0 len=307 details=null
+04-10 19:55:51.279 I/flutter (27150): 🟥 Connection/GATT failed for 72:1C:67:59:99:E5: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=307, null, null)
+04-10 19:55:51.287 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:SCAN_HIT | TIMESTAMP:1775865351287
+04-10 19:55:51.312 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 44:1C:BC:28:E4:4A — vector has 4 entries
+04-10 19:55:51.313 D/NativeMeshService(27150): getRemoteLeDevice mac=44:1C:BC:28:E4:4A using type=1 (API 31+)
+04-10 19:55:52.344 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:55:52.348 D/NativeMeshService(27150): [SERVER] Client connected: 44:1C:BC:28:E4:4A
+04-10 19:55:52.372 D/NativeMeshService(27150): [GATT] STATE_CONNECTED mac=44:1C:BC:28:E4:4A
+04-10 19:55:52.372 D/NativeMeshService(27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:GATT_CONNECTED | TIMESTAMP:1775865352372
+04-10 19:55:52.375 D/NativeMeshService(27150): [SERVER] Client disconnected: 72:1C:67:59:99:E5 status=0
+04-10 19:55:52.422 D/NativeMeshService(27150): [GATT] requestMtu initiated: true mac=44:1C:BC:28:E4:4A
+04-10 19:55:52.975 D/NativeMeshService(27150): [GATT] onMtuChanged mtu=517 status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:52.975 D/NativeMeshService(27150): [GATT] Effective chunk size: 512 bytes mac=44:1C:BC:28:E4:4A
+04-10 19:55:53.035 D/NativeMeshService(27150): [GATT] onServicesDiscovered status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:53.945 I/flutter (27150): 📡 [SYNC] Chunk from 7D:76:DE:7C:6C:DE: 305 bytes (total buffer: 305)
+04-10 19:55:54.040 I/flutter (27150): 📥 [SYNC] EOF received from 7D:76:DE:7C:6C:DE — buffer=305 bytes
+04-10 19:55:54.040 I/flutter (27150): [BENCHMARK] TARGET_MAC:7D:76:DE:7C:6C:DE | EVENT:DELTA_RECEIVED | BYTES:305 | TIMESTAMP:1775865354040
+04-10 19:55:54.041 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 7D:76:DE:7C:6C:DE (305 bytes)...
+04-10 19:55:54.043 I/flutter (27150): 📦 [SYNC] Received type=offer from 7D:76:DE:7C:6C:DE
+04-10 19:55:54.046 I/flutter (27150): 📤 [SYNC] Computing delta for offer from senderId=ffd68684-fd95-42b2-afd1-17aaf7e23dda...
+04-10 19:55:54.163 I/flutter (27150): 📤 [SYNC] Delta has 1 entries — replying to 7D:76:DE:7C:6C:DE
+04-10 19:55:54.184 D/NativeMeshService(27150): [GATT-NOTIFY] Starting chunked notify: 1809 bytes in chunks of 512 mac=7D:76:DE:7C:6C:DE
+04-10 19:55:54.196 I/flutter (27150): ✅ [SYNC] Delta reply sent to 7D:76:DE:7C:6C:DE via NOTIFY (1809 bytes)
+04-10 19:55:55.902 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:55.914 D/NativeMeshService(27150): [SERVER] Client disconnected: 7D:76:DE:7C:6C:DE status=0
+04-10 19:55:56.039 D/NativeMeshService(27150): [GATT] CCCD subscription result: null mac=44:1C:BC:28:E4:4A
+04-10 19:55:56.241 D/NativeMeshService(27150): [GATT] Starting chunked write: 307 bytes in chunks of 512 mac=44:1C:BC:28:E4:4A
+04-10 19:55:56.241 D/NativeMeshService(27150): [GATT] onDescriptorWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:56.387 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:56.484 D/NativeMeshService(27150): [GATT] onCharacteristicWrite status=0 mac=44:1C:BC:28:E4:4A
+04-10 19:55:56.486 I/flutter (27150): ✅ [DISCOVERY] Offer sent to 44:1C:BC:28:E4:4A (307 bytes) — awaiting delta reply
+04-10 19:55:56.486 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:OFFER_SENT | TIMESTAMP:1775865356486
+04-10 19:55:56.496 I/flutter (27150): [BENCHMARK] TARGET_MAC:73:AE:79:BC:96:62 | EVENT:SCAN_HIT | TIMESTAMP:1775865356495
+04-10 19:55:56.532 I/flutter (27150): 📤 [DISCOVERY] Sending offer to 73:AE:79:BC:96:62 — vector has 4 entries
+04-10 19:55:56.534 D/NativeMeshService(27150): getRemoteLeDevice mac=73:AE:79:BC:96:62 using type=1 (API 31+)
+04-10 19:55:56.683 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 512)
+04-10 19:55:56.683 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1024)
+04-10 19:55:56.780 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 1536)
+04-10 19:55:56.781 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2048)
+04-10 19:55:56.877 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 2560)
+04-10 19:55:56.878 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3072)
+04-10 19:55:56.878 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 3584)
+04-10 19:55:56.879 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4096)
+04-10 19:55:56.973 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 4608)
+04-10 19:55:56.974 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 512 bytes (total buffer: 5120)
+04-10 19:55:56.975 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5271)
+04-10 19:55:56.976 I/flutter (27150): 📡 [SYNC] Chunk from 44:1C:BC:28:E4:4A: 151 bytes (total buffer: 5422)
+04-10 19:55:57.022 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=5422 bytes
+04-10 19:55:57.022 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:5422 | TIMESTAMP:1775865357022
+04-10 19:55:57.022 I/flutter (27150): 🔄 [SYNC] Decompressing payload from 44:1C:BC:28:E4:4A (5422 bytes)...
+04-10 19:55:57.024 I/flutter (27150): ❌ [SYNC] Mesh processing error from 44:1C:BC:28:E4:4A: FormatException: Filter error, bad data
+04-10 19:55:57.024 I/flutter (27150): #0      _FilterImpl.processed (dart:io-patch/filter_patch.dart:13:71)
+04-10 19:55:57.024 I/flutter (27150): #1      _FilterSink.addSlice (dart:io/data_transformer.dart:557:29)
+04-10 19:55:57.024 I/flutter (27150): #2      _FilterSink.add (dart:io/data_transformer.dart:537:5)
+04-10 19:55:57.024 I/flutter (27150): #3      ZLibDecoder.convert (dart:io/data_transformer.dart:383:9)
+04-10 19:55:57.024 I/flutter (27150): #4      Codec.decode (dart:convert/codec.dart:30:34)
+04-10 19:55:57.024 I/flutter (27150): #5      BleNetworkNotifier._attachNativeIncomingSync.<anonymous closure>.<anonymous closure> (package:bluetooth_app/providers/ble_network_provider.dart:400:39)
+04-10 19:55:57.024 I/flutter (27150): #6      new Future.microtask.<anonymous closure> (dart:async/future.dart:287:40)
+04-10 19:55:57.024 I/flutter (27150): #7      _microtaskLoop (dart:async/schedule_microtask.dart:40:35)
+04-10 19:55:57.024 I/flutter (27150): #8      _startMicrotaskLoop (dart:async/schedule_microtask.dart:49:5)
+04-10 19:55:57.024 I/flutter (27150): 
+04-10 19:55:57.026 I/flutter (27150): 📥 [SYNC] EOF received from 44:1C:BC:28:E4:4A — buffer=0 bytes
+04-10 19:55:57.026 I/flutter (27150): [BENCHMARK] TARGET_MAC:44:1C:BC:28:E4:4A | EVENT:DELTA_RECEIVED | BYTES:0 | TIMESTAMP:1775865357026
+04-10 19:55:57.026 I/flutter (27150): ⚠️ [SYNC] Empty buffer at EOF from 44:1C:BC:28:E4:4A — ignoring
+04-10 19:55:58.096 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0
+04-10 19:55:58.102 D/NativeMeshService(27150): [SERVER] Client disconnected: 44:1C:BC:28:E4:4A status=0

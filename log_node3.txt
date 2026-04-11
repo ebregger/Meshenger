@@ -1,0 +1,317 @@
+--------- beginning of main
+04-10 19:45:19.834 D/NativeMeshService(26479): [SERVER] Client disconnected: 4C:D8:98:A6:A5:44 status=0
+04-10 19:45:19.835 I/flutter (26479): 🔥 Native send_payload failed mac=4C:D8:98:A6:A5:44 code=timeout message=Timed out waiting for connection details=null
+04-10 19:45:19.836 I/flutter (26479): 🟥 Connection/GATT failed for 4C:D8:98:A6:A5:44: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:45:19.883 I/flutter (26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:SCAN_HIT | TIMESTAMP:1775864719882
+04-10 19:45:19.919 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 48:74:1B:4E:DD:1A — vector has 4 entries
+04-10 19:45:19.920 D/NativeMeshService(26479): getRemoteLeDevice mac=48:74:1B:4E:DD:1A using type=1 (API 31+)
+04-10 19:45:21.177 D/NativeMeshService(26479): [SERVER] Client connected: 48:74:1B:4E:DD:1A
+04-10 19:45:21.189 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=48:74:1B:4E:DD:1A
+04-10 19:45:21.189 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864721189
+04-10 19:45:21.241 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=48:74:1B:4E:DD:1A
+04-10 19:45:21.941 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:45:21.941 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=48:74:1B:4E:DD:1A
+04-10 19:45:21.999 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:45:22.004 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=48:74:1B:4E:DD:1A
+04-10 19:45:22.008 I/flutter (26479): 🔥 Native send_payload failed mac=48:74:1B:4E:DD:1A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:45:22.008 I/flutter (26479): 🟥 Connection/GATT failed for 48:74:1B:4E:DD:1A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:45:22.020 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:SCAN_HIT | TIMESTAMP:1775864722020
+04-10 19:45:22.056 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:11:27:F8:01:6A — vector has 4 entries
+04-10 19:45:22.057 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:11:27:F8:01:6A using type=1 (API 31+)
+04-10 19:45:22.446 D/NativeMeshService(26479): [SERVER] Client connected: 6D:11:27:F8:01:6A
+04-10 19:45:22.453 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=6D:11:27:F8:01:6A
+04-10 19:45:22.453 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864722453
+04-10 19:45:22.505 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=6D:11:27:F8:01:6A
+04-10 19:45:23.074 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:45:23.084 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:45:23.117 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=6D:11:27:F8:01:6A
+04-10 19:45:23.117 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=6D:11:27:F8:01:6A
+04-10 19:45:23.174 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=6D:11:27:F8:01:6A
+04-10 19:45:23.177 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=6D:11:27:F8:01:6A
+04-10 19:45:23.186 I/flutter (26479): 🔥 Native send_payload failed mac=6D:11:27:F8:01:6A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:45:23.186 I/flutter (26479): 🟥 Connection/GATT failed for 6D:11:27:F8:01:6A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:45:23.190 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:F1:D9:94:64:EA | EVENT:SCAN_HIT | TIMESTAMP:1775864723190
+04-10 19:45:23.224 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:F1:D9:94:64:EA — vector has 4 entries
+04-10 19:45:23.227 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:F1:D9:94:64:EA using type=1 (API 31+)
+04-10 19:45:24.212 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:45:24.225 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:45:27.594 D/NativeMeshService(26479): [SERVER] Client connected: 58:C3:FF:5E:13:C4
+04-10 19:45:28.678 D/NativeMeshService(26479): [SERVER] onMtuChanged: mtu=517 for device=58:C3:FF:5E:13:C4
+04-10 19:45:29.796 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:45:29.813 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:45:35.231 I/flutter (26479): 🔥 Native send_payload failed mac=6D:F1:D9:94:64:EA code=timeout message=Timed out waiting for connection details=null
+04-10 19:45:35.231 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:F1:D9:94:64:EA status=0
+04-10 19:45:35.231 I/flutter (26479): 🟥 Connection/GATT failed for 6D:F1:D9:94:64:EA: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:45:35.276 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:SCAN_HIT | TIMESTAMP:1775864735275
+04-10 19:45:35.315 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:11:27:F8:01:6A — vector has 4 entries
+04-10 19:45:35.318 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:11:27:F8:01:6A using type=1 (API 31+)
+04-10 19:45:35.800 D/NativeMeshService(26479): [SERVER] Client connected: 6D:11:27:F8:01:6A
+04-10 19:45:35.811 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=6D:11:27:F8:01:6A
+04-10 19:45:35.811 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864735811
+04-10 19:45:35.863 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=6D:11:27:F8:01:6A
+04-10 19:45:36.384 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=6D:11:27:F8:01:6A
+04-10 19:45:36.384 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=6D:11:27:F8:01:6A
+04-10 19:45:36.442 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=6D:11:27:F8:01:6A
+04-10 19:45:36.445 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=6D:11:27:F8:01:6A
+04-10 19:45:36.449 I/flutter (26479): 🔥 Native send_payload failed mac=6D:11:27:F8:01:6A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:45:36.450 I/flutter (26479): 🟥 Connection/GATT failed for 6D:11:27:F8:01:6A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:45:36.463 I/flutter (26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:SCAN_HIT | TIMESTAMP:1775864736463
+04-10 19:45:36.502 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 48:74:1B:4E:DD:1A — vector has 4 entries
+04-10 19:45:36.504 D/NativeMeshService(26479): getRemoteLeDevice mac=48:74:1B:4E:DD:1A using type=1 (API 31+)
+04-10 19:45:37.521 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:45:37.533 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:45:37.835 D/NativeMeshService(26479): [SERVER] Client connected: 48:74:1B:4E:DD:1A
+04-10 19:45:37.850 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=48:74:1B:4E:DD:1A
+04-10 19:45:37.850 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864737850
+04-10 19:45:37.902 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=48:74:1B:4E:DD:1A
+04-10 19:45:38.914 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:45:38.914 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=48:74:1B:4E:DD:1A
+04-10 19:45:38.971 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:45:38.975 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=48:74:1B:4E:DD:1A
+04-10 19:45:38.979 I/flutter (26479): 🔥 Native send_payload failed mac=48:74:1B:4E:DD:1A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:45:38.980 I/flutter (26479): 🟥 Connection/GATT failed for 48:74:1B:4E:DD:1A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:45:39.016 I/flutter (26479): [BENCHMARK] TARGET_MAC:4C:D8:98:A6:A5:44 | EVENT:SCAN_HIT | TIMESTAMP:1775864739015
+04-10 19:45:39.051 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 4C:D8:98:A6:A5:44 — vector has 4 entries
+04-10 19:45:39.056 D/NativeMeshService(26479): getRemoteLeDevice mac=4C:D8:98:A6:A5:44 using type=1 (API 31+)
+04-10 19:45:40.003 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:45:40.014 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:45:45.291 D/NativeMeshService(26479): [SERVER] Client connected: 58:C3:FF:5E:13:C4
+04-10 19:45:46.402 D/NativeMeshService(26479): [SERVER] onMtuChanged: mtu=517 for device=58:C3:FF:5E:13:C4
+04-10 19:45:47.544 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:45:47.553 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:45:51.062 I/flutter (26479): 🔥 Native send_payload failed mac=4C:D8:98:A6:A5:44 code=timeout message=Timed out waiting for connection details=null
+04-10 19:45:51.063 D/NativeMeshService(26479): [SERVER] Client disconnected: 4C:D8:98:A6:A5:44 status=0
+04-10 19:45:51.063 I/flutter (26479): 🟥 Connection/GATT failed for 4C:D8:98:A6:A5:44: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:45:51.126 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:SCAN_HIT | TIMESTAMP:1775864751126
+04-10 19:45:51.166 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:11:27:F8:01:6A — vector has 4 entries
+04-10 19:45:51.172 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:11:27:F8:01:6A using type=1 (API 31+)
+04-10 19:45:51.731 D/NativeMeshService(26479): [SERVER] Client connected: 6D:11:27:F8:01:6A
+04-10 19:45:51.741 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=6D:11:27:F8:01:6A
+04-10 19:45:51.741 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864751741
+04-10 19:45:51.792 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=6D:11:27:F8:01:6A
+04-10 19:45:52.315 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=6D:11:27:F8:01:6A
+04-10 19:45:52.315 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=6D:11:27:F8:01:6A
+04-10 19:45:52.372 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=6D:11:27:F8:01:6A
+04-10 19:45:52.375 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=6D:11:27:F8:01:6A
+04-10 19:45:52.379 I/flutter (26479): 🔥 Native send_payload failed mac=6D:11:27:F8:01:6A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:45:52.380 I/flutter (26479): 🟥 Connection/GATT failed for 6D:11:27:F8:01:6A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:45:52.404 I/flutter (26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:SCAN_HIT | TIMESTAMP:1775864752404
+04-10 19:45:52.436 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 48:74:1B:4E:DD:1A — vector has 4 entries
+04-10 19:45:52.437 D/NativeMeshService(26479): getRemoteLeDevice mac=48:74:1B:4E:DD:1A using type=1 (API 31+)
+04-10 19:45:53.442 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:45:53.453 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:45:53.584 D/NativeMeshService(26479): [SERVER] Client connected: 48:74:1B:4E:DD:1A
+04-10 19:45:53.593 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=48:74:1B:4E:DD:1A
+04-10 19:45:53.593 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864753593
+04-10 19:45:53.644 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=48:74:1B:4E:DD:1A
+04-10 19:45:54.446 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:45:54.446 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=48:74:1B:4E:DD:1A
+04-10 19:45:54.502 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:45:54.505 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=48:74:1B:4E:DD:1A
+04-10 19:45:54.508 I/flutter (26479): 🔥 Native send_payload failed mac=48:74:1B:4E:DD:1A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:45:54.509 I/flutter (26479): 🟥 Connection/GATT failed for 48:74:1B:4E:DD:1A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:45:54.545 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:F1:D9:94:64:EA | EVENT:SCAN_HIT | TIMESTAMP:1775864754544
+04-10 19:45:54.596 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:F1:D9:94:64:EA — vector has 4 entries
+04-10 19:45:54.601 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:F1:D9:94:64:EA using type=1 (API 31+)
+04-10 19:45:55.573 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:45:55.594 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:46:01.245 D/NativeMeshService(26479): [SERVER] Client connected: 58:C3:FF:5E:13:C4
+04-10 19:46:02.409 D/NativeMeshService(26479): [SERVER] onMtuChanged: mtu=517 for device=58:C3:FF:5E:13:C4
+04-10 19:46:03.531 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:46:03.551 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:46:06.606 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:F1:D9:94:64:EA status=0
+04-10 19:46:06.613 I/flutter (26479): 🔥 Native send_payload failed mac=6D:F1:D9:94:64:EA code=timeout message=Timed out waiting for connection details=null
+04-10 19:46:06.614 I/flutter (26479): 🟥 Connection/GATT failed for 6D:F1:D9:94:64:EA: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:46:06.618 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:SCAN_HIT | TIMESTAMP:1775864766618
+04-10 19:46:06.672 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:11:27:F8:01:6A — vector has 4 entries
+04-10 19:46:06.679 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:11:27:F8:01:6A using type=1 (API 31+)
+04-10 19:46:07.122 D/NativeMeshService(26479): [SERVER] Client connected: 6D:11:27:F8:01:6A
+04-10 19:46:07.134 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=6D:11:27:F8:01:6A
+04-10 19:46:07.134 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864767134
+04-10 19:46:07.185 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=6D:11:27:F8:01:6A
+04-10 19:46:07.750 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=6D:11:27:F8:01:6A
+04-10 19:46:07.750 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=6D:11:27:F8:01:6A
+04-10 19:46:07.810 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=6D:11:27:F8:01:6A
+04-10 19:46:07.814 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=6D:11:27:F8:01:6A
+04-10 19:46:07.820 I/flutter (26479): 🔥 Native send_payload failed mac=6D:11:27:F8:01:6A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:46:07.821 I/flutter (26479): 🟥 Connection/GATT failed for 6D:11:27:F8:01:6A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:46:07.830 I/flutter (26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:SCAN_HIT | TIMESTAMP:1775864767830
+04-10 19:46:07.868 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 48:74:1B:4E:DD:1A — vector has 4 entries
+04-10 19:46:07.872 D/NativeMeshService(26479): getRemoteLeDevice mac=48:74:1B:4E:DD:1A using type=1 (API 31+)
+04-10 19:46:08.836 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:46:08.849 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:46:09.065 D/NativeMeshService(26479): [SERVER] Client connected: 48:74:1B:4E:DD:1A
+04-10 19:46:09.076 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=48:74:1B:4E:DD:1A
+04-10 19:46:09.076 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864769076
+04-10 19:46:09.127 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=48:74:1B:4E:DD:1A
+04-10 19:46:10.181 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:46:10.181 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=48:74:1B:4E:DD:1A
+04-10 19:46:10.238 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:46:10.243 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=48:74:1B:4E:DD:1A
+04-10 19:46:10.251 I/flutter (26479): 🔥 Native send_payload failed mac=48:74:1B:4E:DD:1A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:46:10.251 I/flutter (26479): 🟥 Connection/GATT failed for 48:74:1B:4E:DD:1A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:46:10.255 I/flutter (26479): [BENCHMARK] TARGET_MAC:4C:D8:98:A6:A5:44 | EVENT:SCAN_HIT | TIMESTAMP:1775864770255
+04-10 19:46:10.289 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 4C:D8:98:A6:A5:44 — vector has 4 entries
+04-10 19:46:10.291 D/NativeMeshService(26479): getRemoteLeDevice mac=4C:D8:98:A6:A5:44 using type=1 (API 31+)
+04-10 19:46:11.317 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:46:11.331 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:46:14.931 D/NativeMeshService(26479): [SERVER] Client connected: 58:C3:FF:5E:13:C4
+04-10 19:46:16.022 D/NativeMeshService(26479): [SERVER] onMtuChanged: mtu=517 for device=58:C3:FF:5E:13:C4
+04-10 19:46:17.133 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:46:17.142 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:46:22.297 I/flutter (26479): 🔥 Native send_payload failed mac=4C:D8:98:A6:A5:44 code=timeout message=Timed out waiting for connection details=null
+04-10 19:46:22.297 D/NativeMeshService(26479): [SERVER] Client disconnected: 4C:D8:98:A6:A5:44 status=0
+04-10 19:46:22.297 I/flutter (26479): 🟥 Connection/GATT failed for 4C:D8:98:A6:A5:44: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:46:22.335 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:SCAN_HIT | TIMESTAMP:1775864782334
+04-10 19:46:22.365 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:11:27:F8:01:6A — vector has 4 entries
+04-10 19:46:22.367 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:11:27:F8:01:6A using type=1 (API 31+)
+04-10 19:46:23.096 D/NativeMeshService(26479): [SERVER] Client connected: 6D:11:27:F8:01:6A
+04-10 19:46:23.101 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=6D:11:27:F8:01:6A
+04-10 19:46:23.101 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864783101
+04-10 19:46:23.152 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=6D:11:27:F8:01:6A
+04-10 19:46:23.680 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=6D:11:27:F8:01:6A
+04-10 19:46:23.680 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=6D:11:27:F8:01:6A
+04-10 19:46:23.740 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=6D:11:27:F8:01:6A
+04-10 19:46:23.743 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=6D:11:27:F8:01:6A
+04-10 19:46:23.747 I/flutter (26479): 🔥 Native send_payload failed mac=6D:11:27:F8:01:6A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:46:23.748 I/flutter (26479): 🟥 Connection/GATT failed for 6D:11:27:F8:01:6A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:46:23.780 I/flutter (26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:SCAN_HIT | TIMESTAMP:1775864783780
+04-10 19:46:23.814 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 48:74:1B:4E:DD:1A — vector has 4 entries
+04-10 19:46:23.816 D/NativeMeshService(26479): getRemoteLeDevice mac=48:74:1B:4E:DD:1A using type=1 (API 31+)
+04-10 19:46:24.766 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:46:24.775 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:46:25.040 D/NativeMeshService(26479): [SERVER] Client connected: 48:74:1B:4E:DD:1A
+04-10 19:46:25.051 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=48:74:1B:4E:DD:1A
+04-10 19:46:25.051 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864785051
+04-10 19:46:25.102 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=48:74:1B:4E:DD:1A
+04-10 19:46:26.148 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:46:26.149 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=48:74:1B:4E:DD:1A
+04-10 19:46:26.205 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:46:26.210 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=48:74:1B:4E:DD:1A
+04-10 19:46:26.214 I/flutter (26479): 🔥 Native send_payload failed mac=48:74:1B:4E:DD:1A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:46:26.215 I/flutter (26479): 🟥 Connection/GATT failed for 48:74:1B:4E:DD:1A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:46:26.246 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:F1:D9:94:64:EA | EVENT:SCAN_HIT | TIMESTAMP:1775864786246
+04-10 19:46:26.277 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:F1:D9:94:64:EA — vector has 4 entries
+04-10 19:46:26.280 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:F1:D9:94:64:EA using type=1 (API 31+)
+04-10 19:46:27.292 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:46:27.304 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:46:30.288 D/NativeMeshService(26479): [SERVER] Client connected: 58:C3:FF:5E:13:C4
+04-10 19:46:31.388 D/NativeMeshService(26479): [SERVER] onMtuChanged: mtu=517 for device=58:C3:FF:5E:13:C4
+04-10 19:46:32.537 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:46:32.548 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:46:38.283 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:F1:D9:94:64:EA status=0
+04-10 19:46:38.286 I/flutter (26479): 🔥 Native send_payload failed mac=6D:F1:D9:94:64:EA code=timeout message=Timed out waiting for connection details=null
+04-10 19:46:38.286 I/flutter (26479): 🟥 Connection/GATT failed for 6D:F1:D9:94:64:EA: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:46:38.290 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:SCAN_HIT | TIMESTAMP:1775864798290
+04-10 19:46:38.328 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:11:27:F8:01:6A — vector has 4 entries
+04-10 19:46:38.329 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:11:27:F8:01:6A using type=1 (API 31+)
+04-10 19:46:38.801 D/NativeMeshService(26479): [SERVER] Client connected: 6D:11:27:F8:01:6A
+04-10 19:46:38.810 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=6D:11:27:F8:01:6A
+04-10 19:46:38.811 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864798810
+04-10 19:46:38.861 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=6D:11:27:F8:01:6A
+04-10 19:46:39.429 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=6D:11:27:F8:01:6A
+04-10 19:46:39.429 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=6D:11:27:F8:01:6A
+04-10 19:46:39.491 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=6D:11:27:F8:01:6A
+04-10 19:46:39.495 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=6D:11:27:F8:01:6A
+04-10 19:46:39.499 I/flutter (26479): 🔥 Native send_payload failed mac=6D:11:27:F8:01:6A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:46:39.499 I/flutter (26479): 🟥 Connection/GATT failed for 6D:11:27:F8:01:6A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:46:39.508 I/flutter (26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:SCAN_HIT | TIMESTAMP:1775864799508
+04-10 19:46:39.540 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 48:74:1B:4E:DD:1A — vector has 4 entries
+04-10 19:46:39.542 D/NativeMeshService(26479): getRemoteLeDevice mac=48:74:1B:4E:DD:1A using type=1 (API 31+)
+04-10 19:46:40.510 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:46:40.521 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:46:40.969 D/NativeMeshService(26479): [SERVER] Client connected: 48:74:1B:4E:DD:1A
+04-10 19:46:40.980 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=48:74:1B:4E:DD:1A
+04-10 19:46:40.980 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864800980
+04-10 19:46:41.031 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=48:74:1B:4E:DD:1A
+04-10 19:46:41.987 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:46:41.988 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=48:74:1B:4E:DD:1A
+04-10 19:46:42.045 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:46:42.048 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=48:74:1B:4E:DD:1A
+04-10 19:46:42.052 I/flutter (26479): 🔥 Native send_payload failed mac=48:74:1B:4E:DD:1A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:46:42.052 I/flutter (26479): 🟥 Connection/GATT failed for 48:74:1B:4E:DD:1A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:46:42.093 I/flutter (26479): [BENCHMARK] TARGET_MAC:4C:D8:98:A6:A5:44 | EVENT:SCAN_HIT | TIMESTAMP:1775864802091
+04-10 19:46:42.127 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 4C:D8:98:A6:A5:44 — vector has 4 entries
+04-10 19:46:42.131 D/NativeMeshService(26479): getRemoteLeDevice mac=4C:D8:98:A6:A5:44 using type=1 (API 31+)
+04-10 19:46:43.087 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:46:43.099 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:46:45.885 D/NativeMeshService(26479): [SERVER] Client connected: 58:C3:FF:5E:13:C4
+04-10 19:46:46.997 D/NativeMeshService(26479): [SERVER] onMtuChanged: mtu=517 for device=58:C3:FF:5E:13:C4
+04-10 19:46:48.088 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:46:48.097 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:46:54.137 D/NativeMeshService(26479): [SERVER] Client disconnected: 4C:D8:98:A6:A5:44 status=0
+04-10 19:46:54.138 I/flutter (26479): 🔥 Native send_payload failed mac=4C:D8:98:A6:A5:44 code=timeout message=Timed out waiting for connection details=null
+04-10 19:46:54.139 I/flutter (26479): 🟥 Connection/GATT failed for 4C:D8:98:A6:A5:44: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:46:54.143 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:SCAN_HIT | TIMESTAMP:1775864814143
+04-10 19:46:54.177 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:11:27:F8:01:6A — vector has 4 entries
+04-10 19:46:54.179 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:11:27:F8:01:6A using type=1 (API 31+)
+04-10 19:46:54.865 D/NativeMeshService(26479): [SERVER] Client connected: 6D:11:27:F8:01:6A
+04-10 19:46:54.875 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=6D:11:27:F8:01:6A
+04-10 19:46:54.876 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864814876
+04-10 19:46:54.926 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=6D:11:27:F8:01:6A
+04-10 19:46:55.449 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=6D:11:27:F8:01:6A
+04-10 19:46:55.449 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=6D:11:27:F8:01:6A
+04-10 19:46:55.510 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=6D:11:27:F8:01:6A
+04-10 19:46:55.514 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=6D:11:27:F8:01:6A
+04-10 19:46:55.518 I/flutter (26479): 🔥 Native send_payload failed mac=6D:11:27:F8:01:6A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:46:55.519 I/flutter (26479): 🟥 Connection/GATT failed for 6D:11:27:F8:01:6A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:46:55.553 I/flutter (26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:SCAN_HIT | TIMESTAMP:1775864815553
+04-10 19:46:55.585 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 48:74:1B:4E:DD:1A — vector has 4 entries
+04-10 19:46:55.587 D/NativeMeshService(26479): getRemoteLeDevice mac=48:74:1B:4E:DD:1A using type=1 (API 31+)
+04-10 19:46:56.533 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:46:56.545 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:46:56.854 D/NativeMeshService(26479): [SERVER] Client connected: 48:74:1B:4E:DD:1A
+04-10 19:46:56.861 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=48:74:1B:4E:DD:1A
+04-10 19:46:56.861 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864816861
+04-10 19:46:56.911 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=48:74:1B:4E:DD:1A
+04-10 19:46:57.963 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:46:57.963 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=48:74:1B:4E:DD:1A
+04-10 19:46:58.018 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:46:58.021 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=48:74:1B:4E:DD:1A
+04-10 19:46:58.024 I/flutter (26479): 🔥 Native send_payload failed mac=48:74:1B:4E:DD:1A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:46:58.025 I/flutter (26479): 🟥 Connection/GATT failed for 48:74:1B:4E:DD:1A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:46:58.068 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:F1:D9:94:64:EA | EVENT:SCAN_HIT | TIMESTAMP:1775864818068
+04-10 19:46:58.104 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:F1:D9:94:64:EA — vector has 4 entries
+04-10 19:46:58.107 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:F1:D9:94:64:EA using type=1 (API 31+)
+04-10 19:46:59.062 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:46:59.073 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:46:59.975 D/NativeMeshService(26479): [SERVER] Client connected: 58:C3:FF:5E:13:C4
+04-10 19:47:01.104 D/NativeMeshService(26479): [SERVER] onMtuChanged: mtu=517 for device=58:C3:FF:5E:13:C4
+04-10 19:47:02.274 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:47:02.288 D/NativeMeshService(26479): [SERVER] Client disconnected: 58:C3:FF:5E:13:C4 status=0
+04-10 19:47:10.111 I/flutter (26479): 🔥 Native send_payload failed mac=6D:F1:D9:94:64:EA code=timeout message=Timed out waiting for connection details=null
+04-10 19:47:10.112 I/flutter (26479): 🟥 Connection/GATT failed for 6D:F1:D9:94:64:EA: PlatformException(timeout, Timed out waiting for connection, null, null)
+04-10 19:47:10.113 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:F1:D9:94:64:EA status=0
+04-10 19:47:10.121 I/flutter (26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:SCAN_HIT | TIMESTAMP:1775864830121
+04-10 19:47:10.156 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 48:74:1B:4E:DD:1A — vector has 4 entries
+04-10 19:47:10.158 D/NativeMeshService(26479): getRemoteLeDevice mac=48:74:1B:4E:DD:1A using type=1 (API 31+)
+04-10 19:47:11.338 D/NativeMeshService(26479): [SERVER] Client connected: 48:74:1B:4E:DD:1A
+04-10 19:47:11.346 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=48:74:1B:4E:DD:1A
+04-10 19:47:11.347 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:48:74:1B:4E:DD:1A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864831347
+04-10 19:47:11.397 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=48:74:1B:4E:DD:1A
+04-10 19:47:12.087 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:47:12.087 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=48:74:1B:4E:DD:1A
+04-10 19:47:12.142 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=48:74:1B:4E:DD:1A
+04-10 19:47:12.146 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=48:74:1B:4E:DD:1A
+04-10 19:47:12.151 I/flutter (26479): 🔥 Native send_payload failed mac=48:74:1B:4E:DD:1A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:47:12.152 I/flutter (26479): 🟥 Connection/GATT failed for 48:74:1B:4E:DD:1A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:47:12.181 I/flutter (26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:SCAN_HIT | TIMESTAMP:1775864832181
+04-10 19:47:12.215 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 6D:11:27:F8:01:6A — vector has 4 entries
+04-10 19:47:12.219 D/NativeMeshService(26479): getRemoteLeDevice mac=6D:11:27:F8:01:6A using type=1 (API 31+)
+04-10 19:47:13.144 D/NativeMeshService(26479): [SERVER] Client connected: 6D:11:27:F8:01:6A
+04-10 19:47:13.154 D/NativeMeshService(26479): [GATT] STATE_CONNECTED mac=6D:11:27:F8:01:6A
+04-10 19:47:13.154 D/NativeMeshService(26479): [BENCHMARK] TARGET_MAC:6D:11:27:F8:01:6A | EVENT:GATT_CONNECTED | TIMESTAMP:1775864833154
+04-10 19:47:13.206 D/NativeMeshService(26479): [GATT] requestMtu initiated: true mac=6D:11:27:F8:01:6A
+04-10 19:47:13.228 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:47:13.237 D/NativeMeshService(26479): [SERVER] Client disconnected: 48:74:1B:4E:DD:1A status=0
+04-10 19:47:13.728 D/NativeMeshService(26479): [GATT] onMtuChanged mtu=517 status=0 mac=6D:11:27:F8:01:6A
+04-10 19:47:13.728 D/NativeMeshService(26479): [GATT] Effective chunk size: 512 bytes mac=6D:11:27:F8:01:6A
+04-10 19:47:13.785 D/NativeMeshService(26479): [GATT] onServicesDiscovered status=0 mac=6D:11:27:F8:01:6A
+04-10 19:47:13.789 D/NativeMeshService(26479): [GATT] Starting chunked write: 281 bytes in chunks of 512 mac=6D:11:27:F8:01:6A
+04-10 19:47:13.795 I/flutter (26479): 🔥 Native send_payload failed mac=6D:11:27:F8:01:6A code=WRITE_FAILED message=Write chunk failed at offset=0 len=281 details=null
+04-10 19:47:13.796 I/flutter (26479): 🟥 Connection/GATT failed for 6D:11:27:F8:01:6A: PlatformException(WRITE_FAILED, Write chunk failed at offset=0 len=281, null, null)
+04-10 19:47:13.799 I/flutter (26479): [BENCHMARK] TARGET_MAC:4C:D8:98:A6:A5:44 | EVENT:SCAN_HIT | TIMESTAMP:1775864833799
+04-10 19:47:13.834 I/flutter (26479): 📤 [DISCOVERY] Sending offer to 4C:D8:98:A6:A5:44 — vector has 4 entries
+04-10 19:47:13.836 D/NativeMeshService(26479): getRemoteLeDevice mac=4C:D8:98:A6:A5:44 using type=1 (API 31+)
+04-10 19:47:14.813 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0
+04-10 19:47:14.827 D/NativeMeshService(26479): [SERVER] Client disconnected: 6D:11:27:F8:01:6A status=0

@@ -1,0 +1,33 @@
+Running Gradle task 'assembleDebug'...                          
+lib/providers/ble_network_provider.dart:375:26: Error: The operator '[]' isn't defined for the type 'IncomingBleChunk'.
+ - 'IncomingBleChunk' is from 'package:bluetooth_app/services/native_mesh_service.dart' ('lib/services/native_mesh_service.dart').
+Try correcting the operator to an existing operator, or defining a '[]' operator.
+      final chunk = event['bytes'] as Uint8List;
+                         ^
+lib/providers/ble_network_provider.dart:376:30: Error: The operator '[]' isn't defined for the type 'IncomingBleChunk'.
+ - 'IncomingBleChunk' is from 'package:bluetooth_app/services/native_mesh_service.dart' ('lib/services/native_mesh_service.dart').
+Try correcting the operator to an existing operator, or defining a '[]' operator.
+      final senderMac = event['mac'] as String;
+                             ^
+lib/providers/ble_network_provider.dart:398:65: Error: The argument type 'String' can't be assigned to the parameter type 'List<int>?'.
+ - 'List' is from 'dart:core'.
+      if (chunk.length == eofMarker.length && listEquals(chunk, eofMarker)) {
+                                                                ^
+Target kernel_snapshot_program failed: Exception
+
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileFlutterBuildDebug'.
+> Process 'command 'C:\Users\Edison\develop\flutter\bin\flutter.bat'' finished with non-zero exit value 1
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 3s
+Running Gradle task 'assembleDebug'...                              3.9s
+Gradle task assembleDebug failed with exit code 1

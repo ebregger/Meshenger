@@ -35,6 +35,7 @@ class Telemetry:
         self.gatt_connected = [] # { device, mac, t }
         self.delta_received = [] # { device, mac, bytes, t }
         self.merged = defaultdict(dict)  # msg_id -> { device: t }
+        self.displayed = defaultdict(dict)  # msg_id -> { device: t }
 
 telemetry = Telemetry()
 
@@ -117,6 +118,10 @@ def logcat_worker(device_id, stop_event):
                     telemetry.delta_received.append({'device': device_id, 'mac': mac, 'bytes': int(data.get('BYTES', 0)), 't': t})
                 elif event == 'MERGED' and msg_id:
                     telemetry.merged[msg_id][device_id] = t
+                elif event == 'DISPLAYED' and msg_id:
+                    # Only record the *first* time it was displayed on this device
+                    if device_id not in telemetry.displayed[msg_id]:
+                        telemetry.displayed[msg_id][device_id] = t
                     
     process.terminate()
 
@@ -142,14 +147,16 @@ def run_benchmark(num_messages=30):
     time.sleep(2)
 
     sender_port = list(infos.keys())[0]
-    expected_merges_per_msg = len(adb_devices) - 1
+    expected_merges_per_msg = len(infos) - 1
 
-    print(f"\n{Colors.HEADER}--- BENCHMARK: Sending {num_messages} messages from Device 1 (Port {sender_port}) ---{Colors.ENDC}")
+    print(f"\n{Colors.HEADER}--- BENCHMARK: Sending {num_messages} messages across All Devices ---{Colors.ENDC}")
+    all_ports = list(infos.keys())
     for i in range(num_messages):
+        sender_port = all_ports[i % len(all_ports)]
         tag = f"BenchMsg#{i:03d}@{int(time.time()*1000)}"
         res = request(sender_port, '/send', 'POST', {'text': tag})
         time.sleep(0.3)
-        sys.stdout.write(f"\rSending: {i+1}/{num_messages}")
+        sys.stdout.write(f"\rSending: {i+1}/{num_messages} (from port {sender_port})")
         sys.stdout.flush()
     print()
 
@@ -161,10 +168,10 @@ def run_benchmark(num_messages=30):
         with telemetry.lock:
             fully_propagated = 0
             for msg_id, creation_info in telemetry.created.items():
-                if msg_id in telemetry.merged and len(telemetry.merged[msg_id]) >= expected_merges_per_msg:
+                if msg_id in telemetry.displayed and len(telemetry.displayed[msg_id]) >= expected_merges_per_msg:
                     fully_propagated += 1
             
-            sys.stdout.write(f"\rPropagated fully: {fully_propagated}/{num_messages} messages")
+            sys.stdout.write(f"\rPropagated and Displayed fully: {fully_propagated}/{num_messages} messages")
             sys.stdout.flush()
             
             if fully_propagated >= num_messages:
@@ -205,7 +212,7 @@ def run_benchmark(num_messages=30):
         base_create_tc = float('inf')
         for msg_id, info in telemetry.created.items():
             base_create_tc = min(base_create_tc, info['t'])
-            m_times = telemetry.merged.get(msg_id, {}).values()
+            m_times = telemetry.displayed.get(msg_id, {}).values()
             for t_merge in m_times:
                 abs_lats.append(t_merge - info['t'])
                 

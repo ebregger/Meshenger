@@ -174,7 +174,11 @@ class BleDiscoveryService {
 
     // Do not use [withServices] filtering here: some Android stacks omit/truncate 128-bit UUIDs
     // when the advertisement includes a device name. We'll filter manually in the listener.
-    await FlutterBluePlus.startScan();
+    debugPrint('⏳ [BENCHMARK] EVENT:SCAN_COMMANDED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
+    await FlutterBluePlus.startScan(
+      androidUsesFineLocation: true,
+      continuousUpdates: true, // Forces immediate delivery of scan hits
+    );
 
     _scanSub = FlutterBluePlus.scanResults.listen((results) {
       // CRITICAL: Sort by timestamp descending. FBP maintains a growing historical List.
@@ -364,11 +368,11 @@ class BleDiscoveryService {
         localSeenNodes.remove(mapped);
       }
     } finally {
-      if (device.isConnected) {
-        try {
-          await device.disconnect();
-        } catch (_) {}
-      }
+      // NOTE: Do NOT call device.disconnect() here.
+      // The native GATT layer now keeps the connection open so the Server can push
+      // the Delta reply back via NOTIFY. The Client's onCharacteristicChanged handler
+      // will close the connection cleanly when it receives the "||EOF||" notify chunk.
+      // The 60-second transferWatchdog guards against a server that never replies.
       try {
         await stateSub?.cancel();
       } catch (_) {}

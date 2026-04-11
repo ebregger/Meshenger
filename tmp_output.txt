@@ -1,0 +1,12 @@
+Port 18081: 101 messages
+  0f762451-57f7-43d1-bba6-85ff47f251f4 - BenchMsg#000@1775865913994
+  d093bdf9-d306-4f77-a67f-ecf7092a0b6c - BenchMsg#003@1775865915498
+  59bb59f5-bf50-4f92-95ad-f99b22747e39 - BenchMsg#006@1775865916770
+Port 18082: 8116 messages
+  19d38b1e-7ca7-4030-a8be-7dd48c05ae0b - Stage 1
+  11af4d4d-43c2-41ba-9594-86462fd53d29 - Message 1
+  ee0d1bd6-be79-449d-8673-90d7be4456e7 - Message 2
+Port 18083: 8136 messages
+  19d38b1e-7ca7-4030-a8be-7dd48c05ae0b - Stage 1
+  11af4d4d-43c2-41ba-9594-86462fd53d29 - Message 1
+  ee0d1bd6-be79-449d-8673-90d7be4456e7 - Message 2
