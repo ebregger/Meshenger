@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/database_provider.dart';
 import '../providers/identity_provider.dart';
 import '../providers/ble_network_provider.dart';
-import '../utils/ble_permission_result.dart';
+
 
 final localDisplayNameProvider = FutureProvider<String?>((ref) async {
   final myId = await ref.watch(myNodeIdProvider.future);

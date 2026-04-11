@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class IncomingBleChunk {
@@ -48,7 +49,7 @@ class NativeMeshService {
     try {
       await _bleMethodChannel.invokeMethod<void>('reset_server');
     } on PlatformException catch (e) {
-      print('🔥 Native reset_server failed: ${e.message}');
+      debugPrint('🔥 Native reset_server failed: ${e.message}');
     }
   }
 
@@ -70,11 +71,7 @@ class NativeMeshService {
         },
       );
     } on PlatformException catch (e) {
-      // ignore: avoid_print
-      // (debugPrint is preferred but services layer doesn't import flutter/foundation.)
-      // So we use print here strictly for runtime evidence.
-      // ignore: avoid_print
-      print(
+      debugPrint(
         '🔥 Native send_payload failed mac=$macAddress code=${e.code} message=${e.message} details=${e.details}',
       );
       rethrow;
@@ -91,7 +88,7 @@ class NativeMeshService {
         },
       );
     } on PlatformException catch (e) {
-      print(
+      debugPrint(
         '🔥 Native reply_payload failed mac=$macAddress code=${e.code} message=${e.message} details=${e.details}',
       );
       rethrow;

@@ -256,7 +256,7 @@ class BleDiscoveryService {
             ..[2] = 0x53 // S
             ..[3] = 0x48 // H
             // embed first 8 mac-code-units as placeholder hash
-            ..[4] = macBytes.length > 0 ? macBytes[0] : 0
+            ..[4] = macBytes.isNotEmpty ? macBytes[0] : 0
             ..[5] = macBytes.length > 1 ? macBytes[1] : 0
             ..[6] = macBytes.length > 2 ? macBytes[2] : 0
             ..[7] = macBytes.length > 3 ? macBytes[3] : 0

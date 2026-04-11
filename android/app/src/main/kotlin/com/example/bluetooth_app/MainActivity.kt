@@ -50,7 +50,6 @@ class MainActivity : FlutterActivity() {
   private var currentAdvertiserHash: ByteArray = byteArrayOf(1)
   private var currentNodeIdPrefix: ByteArray = byteArrayOf(0, 0, 0, 0)
   // Hybrid API state
-  private var syncSequenceNumber: Byte = 0
   private var advertisingSetCallback: AdvertisingSetCallback? = null
   private var currentAdvertisingSet: AdvertisingSet? = null
   private val MESH_MFG_ID = 0xFFE0
@@ -406,7 +405,6 @@ class MainActivity : FlutterActivity() {
       return
     }
     currentAdvertiserHash = newHash
-    syncSequenceNumber++ // Always increment so remote scanners know it's fresh data
 
     val nodeId = call.argument<String>("nodeId")
     if (nodeId != null && nodeId.length >= 4) {
@@ -422,9 +420,9 @@ class MainActivity : FlutterActivity() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && currentAdvertisingSet != null) {
       // MODERN FAST PATH: Update radio live — zero battery tear-down penalty.
       Log.d(TAG, "[ADV] Updating Modern AdvertisingSet with new hash...")
-      currentAdvertisingSet?.setAdvertisingData(buildPrimaryAd(currentAdvertiserHash, currentNodeIdPrefix))
+      currentAdvertisingSet?.setAdvertisingData(buildPrimaryAd())
       val hex = currentAdvertiserHash.joinToString("") { "%02x".format(it) }
-      Log.d(TAG, "[ADV] (Modern) Live hash update seq=${syncSequenceNumber.toInt() and 0xFF} hex=$hex")
+      Log.d(TAG, "[ADV] (Modern) Live hash update hex=$hex")
     } else {
       // LEGACY PATH: Debounce stop/start to avoid tearing down active GATT connections.
       val adv = advertiser ?: return result.success(null)
@@ -446,7 +444,7 @@ class MainActivity : FlutterActivity() {
   }
 
   /** Primary Ad: Service UUID triggers hardware filter. Kept minimal to fit all OEM 31-byte budgets. */
-  private fun buildPrimaryAd(hash: ByteArray? = null, prefix: ByteArray? = null): AdvertiseData {
+  private fun buildPrimaryAd(): AdvertiseData {
     // REVISED: For Legacy mode (which we are forcing for compatibility),
     // the manufacturer data MUST go into the scan response because
     // Flags (3) + 128-bit UUID (18) + Manufacturer Data (20) = 41 bytes (exceeds 31).

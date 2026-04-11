@@ -1,3 +1,0 @@
-Port 18081: 5618 total msgs, 5303 stress-test msgs
-Port 18082: 4751 total msgs, 4469 stress-test msgs
-Port 18083: 5665 total msgs, 5332 stress-test msgs
