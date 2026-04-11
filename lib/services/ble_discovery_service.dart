@@ -222,6 +222,7 @@ class BleDiscoveryService {
     }
 
     _scanSub = FlutterBluePlus.scanResults.listen((results) {
+      debugPrint('[DIAGNOSTIC] SCAN_TICK | count=${results.length}');
       if (results.isNotEmpty) {
         _lastResultAt = DateTime.now();
       }
@@ -242,6 +243,39 @@ class BleDiscoveryService {
         if (ownMacUpper != null && mac.toUpperCase() == ownMacUpper) {
           continue;
         }
+
+        // --- SMART TELEMETRY / ROUTING GUARD ---
+        final telemetryData = r.advertisementData.manufacturerData[0xFFE1];
+        if (telemetryData != null && telemetryData.length >= 4) {
+          final tBytes = Uint8List.fromList(telemetryData);
+
+          // Cache-Busting / Self-Drop
+          if (_localHash != null && _localHash!.length >= 8) {
+            if (tBytes[0] == _localHash![6] && tBytes[1] == _localHash![7]) {
+              continue; // Drop packet, matching hash implies identical data or self
+            }
+          } else if (_localHash != null && _localHash!.length >= 2) {
+            if (tBytes[0] == _localHash![0] && tBytes[1] == _localHash![1]) {
+              continue; // Fallback
+            }
+          }
+
+          // Bit Unpacking
+          final int flags = tBytes[2] | (tBytes[3] << 8);
+          final bool isGateway = (flags & (1 << 0)) != 0;
+          final bool isLowBattery = (flags & (1 << 1)) != 0;
+          final bool isLegacy = (flags & (1 << 2)) != 0;
+          final bool isIOS = (flags & (1 << 3)) != 0;
+          final bool isBusy = (flags & (1 << 4)) != 0;
+          final int hopDistance = (flags >> 5) & 0x03;
+
+          // Smart Routing Mutex
+          if (isBusy) {
+            debugPrint('Target is busy, skipping connection,');
+            continue;
+          }
+        }
+        // ---------------------------------------
 
         Uint8List? remotePayload = _tryGetRemoteHash(r);
         // If the hash scan response hasn't merged into this result yet,

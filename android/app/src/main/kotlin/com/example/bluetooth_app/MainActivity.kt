@@ -21,6 +21,11 @@ import android.bluetooth.le.AdvertisingSetCallback
 import android.bluetooth.le.AdvertisingSetParameters
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.os.Build
+import android.os.BatteryManager
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.annotation.RequiresApi
 import android.content.Context
 import android.content.pm.PackageManager
@@ -275,7 +280,6 @@ class MainActivity : FlutterActivity() {
           // cancelConnection() in response, it fires DISCONNECTED again, ad infinitum.
           if (isResettingServer) return
           if (newState == BluetoothProfile.STATE_CONNECTED) {
-            isGattBusy.set(true) // Lock mutex on server connection
             connectedServerClients[device.address] = true
             Log.d(TAG, "[SERVER] Client connected: ${device.address}")
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -285,7 +289,6 @@ class MainActivity : FlutterActivity() {
             // onConnectionStateChange(DISCONNECTED) callback — causing an infinite loop.
             val wasConnected = connectedServerClients.remove(device.address) != null
             if (wasConnected) {
-              isGattBusy.set(false) // Release mutex on server disconnect
               try { bluetoothGattServer?.cancelConnection(device) } catch (_: Throwable) {}
             }
           }
@@ -392,6 +395,7 @@ class MainActivity : FlutterActivity() {
     bluetoothGattServer = null
     connectedServerClients.clear()
     deadMacs.clear()
+    isGattBusy.set(false)
     isResettingServer = false
     Log.d(TAG, "[SERVER] GATT server reset complete.")
     result.success(null)
@@ -420,7 +424,7 @@ class MainActivity : FlutterActivity() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && currentAdvertisingSet != null) {
       // MODERN FAST PATH: Update radio live — zero battery tear-down penalty.
       Log.d(TAG, "[ADV] Updating Modern AdvertisingSet with new hash...")
-      currentAdvertisingSet?.setAdvertisingData(buildPrimaryAd())
+      currentAdvertisingSet?.setAdvertisingData(buildPrimaryAd(currentAdvertiserHash))
       val hex = currentAdvertiserHash.joinToString("") { "%02x".format(it) }
       Log.d(TAG, "[ADV] (Modern) Live hash update hex=$hex")
     } else {
@@ -434,7 +438,7 @@ class MainActivity : FlutterActivity() {
       handler.postDelayed({
         Log.d(TAG, "[ADV] Restarting Legacy Advertiser for hash update...")
         try { adv.stopAdvertising(cb) } catch (_: Throwable) {}
-        adv.startAdvertising(settings, buildPrimaryAd(), buildScanResponseData(currentAdvertiserHash, currentNodeIdPrefix), cb)
+        adv.startAdvertising(settings, buildPrimaryAd(currentAdvertiserHash), buildScanResponseData(currentAdvertiserHash, currentNodeIdPrefix), cb)
         val hex = currentAdvertiserHash.joinToString("") { "%02x".format(it) }
         Log.d(TAG, "[ADV] (Legacy) Advertiser hash updated to $hex (debounced)")
       }, 5000)
@@ -444,7 +448,7 @@ class MainActivity : FlutterActivity() {
   }
 
   /** Primary Ad: Service UUID triggers hardware filter. Kept minimal to fit all OEM 31-byte budgets. */
-  private fun buildPrimaryAd(): AdvertiseData {
+  private fun buildPrimaryAd(hashPayload: ByteArray): AdvertiseData {
     // REVISED: For Legacy mode (which we are forcing for compatibility),
     // the manufacturer data MUST go into the scan response because
     // Flags (3) + 128-bit UUID (18) + Manufacturer Data (20) = 41 bytes (exceeds 31).
@@ -452,7 +456,52 @@ class MainActivity : FlutterActivity() {
       .setIncludeTxPowerLevel(false)
       .setIncludeDeviceName(false)
       .addServiceUuid(ParcelUuid(SERVICE_UUID))
+      .addManufacturerData(0xFFE1, buildTelemetryBytes(hashPayload))
       .build()
+  }
+
+  private fun buildTelemetryBytes(hashPayload: ByteArray): ByteArray {
+      val telemetry = ByteArray(4)
+      if (hashPayload.size >= 8) {
+          telemetry[0] = hashPayload[6]
+          telemetry[1] = hashPayload[7]
+      } else if (hashPayload.size >= 2) {
+          telemetry[0] = hashPayload[0]
+          telemetry[1] = hashPayload[1]
+      }
+      
+      val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+      val activeNetwork = connectivityManager.activeNetwork
+      val networkCapabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+      val isGateway = networkCapabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+
+      val batteryStatus: Intent? = IntentFilter(Intent.ACTION_BATTERY_CHANGED).let { ifilter ->
+          applicationContext.registerReceiver(null, ifilter)
+      }
+      val level: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+      val scale: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+      val batteryPct = if (scale > 0) level * 100f / scale else 100f
+      val isLowBattery = batteryPct < 15f
+
+      val isLegacy = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+      val isIOS = false
+      val isBusy = isGattBusy.get()
+      val hopDistance = 0 
+
+      var flags = 0
+      if (isGateway) flags = flags or (1 shl 0)
+      if (isLowBattery) flags = flags or (1 shl 1)
+      if (isLegacy) flags = flags or (1 shl 2)
+      if (isIOS) flags = flags or (1 shl 3)
+      if (isBusy) flags = flags or (1 shl 4)
+      
+      val clampedHop = hopDistance.coerceIn(0, 3)
+      flags = flags or (clampedHop shl 5)
+
+      telemetry[2] = (flags and 0xFF).toByte()
+      telemetry[3] = ((flags shr 8) and 0xFF).toByte()
+
+      return telemetry
   }
 
   private fun buildScanResponseData(hash: ByteArray, prefix: ByteArray? = null): AdvertiseData {
@@ -491,7 +540,7 @@ class MainActivity : FlutterActivity() {
 
     // In Legacy Mode (forced), we MUST put the data in the scan response.
     val scanResponse = buildScanResponseData(hashPayload, currentNodeIdPrefix)
-    val primaryAd = buildPrimaryAd()
+    val primaryAd = buildPrimaryAd(hashPayload)
 
     advertisingSetCallback = object : AdvertisingSetCallback() {
       override fun onAdvertisingSetStarted(advertisingSet: AdvertisingSet?, txPower: Int, status: Int) {
@@ -540,13 +589,13 @@ class MainActivity : FlutterActivity() {
       }
     }
     try {
-      advertiser?.startAdvertising(settings, buildPrimaryAd(), buildScanResponseData(hashPayload, currentNodeIdPrefix), advertiseCallback)
+      advertiser?.startAdvertising(settings, buildPrimaryAd(hashPayload), buildScanResponseData(hashPayload, currentNodeIdPrefix), advertiseCallback)
     } catch (e: android.os.DeadObjectException) {
       Log.w(TAG, "[ADV] DeadObjectException on startAdvertising — re-acquiring advertiser and retrying")
       val bm = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
       advertiser = bm?.adapter?.bluetoothLeAdvertiser
       try {
-        advertiser?.startAdvertising(settings, buildPrimaryAd(), buildScanResponseData(hashPayload), advertiseCallback)
+        advertiser?.startAdvertising(settings, buildPrimaryAd(hashPayload), buildScanResponseData(hashPayload), advertiseCallback)
       } catch (e2: Throwable) {
         Log.e(TAG, "[ADV] Retry also failed: ${e2.message}")
       }
@@ -594,6 +643,11 @@ class MainActivity : FlutterActivity() {
       val isCompleted = AtomicBoolean(false)
       val taskLatch = CountDownLatch(1)
 
+      val lock = Object()
+      var lastWriteOk: Boolean? = null
+      var phase: String = "connecting"
+      var gatt: BluetoothGatt? = null
+
       fun completeSuccessOnMain() {
         if (isCompleted.compareAndSet(false, true)) {
           Handler(Looper.getMainLooper()).post { result.success(null) }
@@ -603,15 +657,13 @@ class MainActivity : FlutterActivity() {
 
       fun completeErrorOnMain(code: String, message: String) {
         if (isCompleted.compareAndSet(false, true)) {
+          isGattBusy.set(false)
+          try { gatt?.disconnect() } catch (_: Throwable) {}
+          try { gatt?.close() } catch (_: Throwable) {}
           Handler(Looper.getMainLooper()).post { result.error(code, message, null) }
           taskLatch.countDown()
         }
       }
-
-      val lock = Object()
-      var lastWriteOk: Boolean? = null
-      var phase: String = "connecting"
-      var gatt: BluetoothGatt? = null
       // Track the MTU negotiated by the OS. Android doesn't guarantee 512;
       // the peer may negotiate down to 256 or stay at the 23-byte default.
       // We subtract 3 for the ATT protocol header (opcode + handle = 3 bytes).
@@ -633,11 +685,11 @@ class MainActivity : FlutterActivity() {
         }
       }
       val transferWatchdog = Runnable {
+        isGattBusy.set(false)
+        Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:transfer_timeout")
+        try { gatt?.disconnect() } catch (_: Throwable) {}
+        try { gatt?.close() } catch (_: Throwable) {}
         if (isCompleted.compareAndSet(false, true)) {
-          isGattBusy.set(false)
-          Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:transfer_timeout")
-          try { gatt?.disconnect() } catch (_: Throwable) {}
-          try { gatt?.close() } catch (_: Throwable) {}
           Handler(Looper.getMainLooper()).post { result.error("timeout", "Timed out waiting for writing", null) }
           taskLatch.countDown()
         }
