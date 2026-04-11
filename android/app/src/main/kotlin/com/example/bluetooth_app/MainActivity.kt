@@ -16,7 +16,12 @@ import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
+import android.bluetooth.le.AdvertisingSet
+import android.bluetooth.le.AdvertisingSetCallback
+import android.bluetooth.le.AdvertisingSetParameters
 import android.bluetooth.le.BluetoothLeAdvertiser
+import android.os.Build
+import androidx.annotation.RequiresApi
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
@@ -43,6 +48,10 @@ class MainActivity : FlutterActivity() {
   private var advertiseCallback: AdvertiseCallback? = null
   private var advertiseSettings: AdvertiseSettings? = null
   private var currentAdvertiserHash: ByteArray = byteArrayOf(1)
+  // Hybrid API state
+  private var syncSequenceNumber: Byte = 0
+  private var advertisingSetCallback: AdvertisingSetCallback? = null
+  private var currentAdvertisingSet: AdvertisingSet? = null
   private val MESH_MFG_ID = 0xFFE0
   private val MESH_MAGIC: ByteArray = byteArrayOf(0x4D, 0x45, 0x53, 0x48) // 'M''E''S''H'
 
@@ -324,34 +333,17 @@ class MainActivity : FlutterActivity() {
         return
       }
 
-      // Start BLE advertising (manufacturer payload) after service is registered.
+      // Start BLE advertising after service is registered.
       advertiser = adapter.bluetoothLeAdvertiser
       if (advertiser == null) {
         result.error("advertiser_unavailable", "BluetoothLeAdvertiser is null", null)
         return
       }
 
-      val settings = AdvertiseSettings.Builder()
-        .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-        .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-        .setConnectable(true)
-        .build()
-      advertiseSettings = settings
-
-      val advertiseData = buildPrimaryAdvertiseData()
-      val scanResponse = buildScanResponseData(currentAdvertiserHash)
-
-      advertiseCallback = object : AdvertiseCallback() {
-        override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-          Log.d(TAG, "Advertising started (settings=$settingsInEffect)")
-        }
-
-        override fun onStartFailure(errorCode: Int) {
-          Log.e(TAG, "Advertising failed: $errorCode")
-        }
-      }
-
-      advertiser?.startAdvertising(settings, advertiseData, scanResponse, advertiseCallback)
+      // Start with the reliable legacy advertiser. The modern AdvertisingSet API
+      // (for zero-teardown live hash updates) is not started here because Android
+      // rejects 'connectable + non-scannable' when a legacy advertiser is already active.
+      startLegacyAdvertising(currentAdvertiserHash)
 
       // Return our own BLE address so Dart can filter self-advertisements from scan results.
       val ownAddress = try { adapter.address } catch (_: Throwable) { "" }
@@ -369,6 +361,13 @@ class MainActivity : FlutterActivity() {
     // by close() are silently swallowed instead of cascading into cancelConnection() calls.
     isResettingServer = true
     try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        advertisingSetCallback?.let { cb ->
+          try { advertiser?.stopAdvertisingSet(cb) } catch (_: Throwable) {}
+        }
+        advertisingSetCallback = null
+        currentAdvertisingSet = null
+      }
       advertiser?.let { adv ->
         advertiseCallback?.let { cb ->
           try { adv.stopAdvertising(cb) } catch (_: Throwable) {}
@@ -393,34 +392,41 @@ class MainActivity : FlutterActivity() {
       return
     }
     currentAdvertiserHash = newHash
+    syncSequenceNumber++ // Always increment so remote scanners know it's fresh data
 
-    val adv = advertiser
-    val cb = advertiseCallback
-    val settings = advertiseSettings
-    if (adv == null || cb == null || settings == null) {
+    if (advertiser == null) {
       result.success(null) // Not started yet, hash stored for when server starts.
       return
     }
 
-    // Debounce: cancel any pending restart and schedule a new one in 5s.
-    // This prevents the advertiser from stop/starting (which tears down active GATT
-    // connections) on every single message send during a rapid burst.
-    pendingHashUpdateHandler?.removeCallbacksAndMessages(null)
-    val handler = Handler(Looper.getMainLooper())
-    pendingHashUpdateHandler = handler
-    handler.postDelayed({
-      try { adv.stopAdvertising(cb) } catch (_: Throwable) {}
-      val advertiseData = buildPrimaryAdvertiseData()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && currentAdvertisingSet != null) {
+      // MODERN FAST PATH: Update radio live — zero battery tear-down penalty.
       val scanResponse = buildScanResponseData(currentAdvertiserHash)
-      adv.startAdvertising(settings, advertiseData, scanResponse, cb)
+      currentAdvertisingSet?.setAdvertisingData(buildPrimaryAd())
+      currentAdvertisingSet?.setScanResponseData(scanResponse)
       val hex = currentAdvertiserHash.joinToString("") { "%02x".format(it) }
-      Log.d(TAG, "[ADV] Advertiser hash updated to $hex (debounced)")
-    }, 5000)
+      Log.d(TAG, "[ADV] (Modern) Live hash update seq=${syncSequenceNumber.toInt() and 0xFF} hex=$hex")
+    } else {
+      // LEGACY PATH: Debounce stop/start to avoid tearing down active GATT connections.
+      val adv = advertiser ?: return result.success(null)
+      val cb = advertiseCallback ?: return result.success(null)
+      val settings = advertiseSettings ?: return result.success(null)
+      pendingHashUpdateHandler?.removeCallbacksAndMessages(null)
+      val handler = Handler(Looper.getMainLooper())
+      pendingHashUpdateHandler = handler
+      handler.postDelayed({
+        try { adv.stopAdvertising(cb) } catch (_: Throwable) {}
+        adv.startAdvertising(settings, buildPrimaryAd(), buildScanResponseData(currentAdvertiserHash), cb)
+        val hex = currentAdvertiserHash.joinToString("") { "%02x".format(it) }
+        Log.d(TAG, "[ADV] (Legacy) Advertiser hash updated to $hex (debounced)")
+      }, 5000)
+    }
 
     result.success(null)
   }
 
-  private fun buildPrimaryAdvertiseData(): AdvertiseData {
+  /** Primary Ad: Service UUID triggers hardware filter. Kept minimal to fit all OEM 31-byte budgets. */
+  private fun buildPrimaryAd(): AdvertiseData {
     return AdvertiseData.Builder()
       .setIncludeTxPowerLevel(false)
       .setIncludeDeviceName(false)
@@ -428,6 +434,7 @@ class MainActivity : FlutterActivity() {
       .build()
   }
 
+  /** Scan Response: delivers the heavy hash payload when the scanner actively requests it. */
   private fun buildScanResponseData(hash: ByteArray): AdvertiseData {
     val payload = ByteArray(MESH_MAGIC.size + hash.size)
     System.arraycopy(MESH_MAGIC, 0, payload, 0, MESH_MAGIC.size)
@@ -435,6 +442,79 @@ class MainActivity : FlutterActivity() {
     return AdvertiseData.Builder()
       .addManufacturerData(MESH_MFG_ID, payload)
       .build()
+  }
+
+  @SuppressLint("MissingPermission")
+  @RequiresApi(Build.VERSION_CODES.O)
+  private fun startModernAdvertising(hashPayload: ByteArray) {
+    val parameters = AdvertisingSetParameters.Builder()
+      .setLegacyMode(true) // BLE 4.x compatibility
+      .setConnectable(true)
+      .setInterval(AdvertisingSetParameters.INTERVAL_LOW)
+      .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH)
+      .build()
+
+    val scanResponse = buildScanResponseData(hashPayload)
+
+    advertisingSetCallback = object : AdvertisingSetCallback() {
+      override fun onAdvertisingSetStarted(advertisingSet: AdvertisingSet?, txPower: Int, status: Int) {
+        if (status == ADVERTISE_SUCCESS) {
+          currentAdvertisingSet = advertisingSet
+          Log.d(TAG, "[ADV] Modern AdvertisingSet started txPower=$txPower")
+        } else {
+          Log.e(TAG, "[ADV] Modern AdvertisingSet FAILED status=$status — falling back to legacy advertiser")
+          currentAdvertisingSet = null
+          // Legacy fallback: use the classic AdvertiseCallback API
+          Handler(Looper.getMainLooper()).post { startLegacyAdvertising(hashPayload) }
+        }
+      }
+      override fun onAdvertisingSetStopped(advertisingSet: AdvertisingSet?) {
+        if (currentAdvertisingSet == advertisingSet) currentAdvertisingSet = null
+        Log.d(TAG, "[ADV] Modern AdvertisingSet stopped")
+      }
+      override fun onAdvertisingEnabled(advertisingSet: AdvertisingSet?, enable: Boolean, status: Int) {
+        Log.d(TAG, "[ADV] Modern advertising enabled=$enable status=$status")
+      }
+    }
+
+    try {
+      advertiser?.startAdvertisingSet(parameters, buildPrimaryAd(), scanResponse, null, null, advertisingSetCallback)
+    } catch (e: Throwable) {
+      Log.e(TAG, "[ADV] startAdvertisingSet threw exception: ${e.message} — falling back to legacy advertiser")
+      startLegacyAdvertising(hashPayload)
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun startLegacyAdvertising(hashPayload: ByteArray) {
+    val settings = AdvertiseSettings.Builder()
+      .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+      .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+      .setConnectable(true)
+      .build()
+    advertiseSettings = settings
+    advertiseCallback = object : AdvertiseCallback() {
+      override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
+        Log.d(TAG, "[ADV] Legacy advertiser started")
+      }
+      override fun onStartFailure(errorCode: Int) {
+        Log.e(TAG, "[ADV] Legacy advertiser failed: $errorCode")
+      }
+    }
+    try {
+      advertiser?.startAdvertising(settings, buildPrimaryAd(), buildScanResponseData(hashPayload), advertiseCallback)
+    } catch (e: android.os.DeadObjectException) {
+      Log.w(TAG, "[ADV] DeadObjectException on startAdvertising — re-acquiring advertiser and retrying")
+      val bm = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+      advertiser = bm?.adapter?.bluetoothLeAdvertiser
+      try {
+        advertiser?.startAdvertising(settings, buildPrimaryAd(), buildScanResponseData(hashPayload), advertiseCallback)
+      } catch (e2: Throwable) {
+        Log.e(TAG, "[ADV] Retry also failed: ${e2.message}")
+      }
+    } catch (e: Throwable) {
+      Log.e(TAG, "[ADV] startAdvertising threw: ${e.message}")
+    }
   }
 
   @SuppressLint("MissingPermission")

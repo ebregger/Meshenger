@@ -137,11 +137,15 @@ class BleDiscoveryService {
   }
 
   bool _isLikelyNativeMeshAdvert(ScanResult r) {
-    // Only accept devices running our mesh program:
-    // they must advertise our manufacturer payload (0xFFE0) containing a magic header + 4-byte hash.
+    // Fast path: the primary advertisement always contains our Service UUID.
+    // Accept the packet immediately so we don't drop results where the Scan
+    // Response (which carries the 0xFFE0 manufacturer hash) hasn't merged yet.
+    if (advertisesMeshService(r)) return true;
+
+    // Legacy / fallback path: older builds that don't emit the service UUID
+    // yet can still be matched by the full manufacturer magic-header check.
     final raw = r.advertisementData.manufacturerData[meshManufacturerId];
-    if (raw == null) return false;
-    if (raw.length < 8) return false;
+    if (raw == null || raw.length < 8) return false;
     return raw[0] == 0x4D && // M
         raw[1] == 0x45 && // E
         raw[2] == 0x53 && // S
@@ -193,8 +197,8 @@ class BleDiscoveryService {
         if (attempts > 1) await Future.delayed(const Duration(milliseconds: 500));
 
         await FlutterBluePlus.startScan(
-          withServices: [meshServiceUuid],
           androidUsesFineLocation: true,
+          androidScanMode: AndroidScanMode.lowLatency,
           continuousUpdates: true,
         );
         // If we reach here, it started!
@@ -238,7 +242,28 @@ class BleDiscoveryService {
           continue;
         }
 
-        final remotePayload = _tryGetRemoteHash(r);
+        Uint8List? remotePayload = _tryGetRemoteHash(r);
+        // If the hash scan response hasn't merged into this result yet,
+        // synthesize a unique per-MAC placeholder so the loop can proceed.
+        // Using MAC bytes ensures each peer gets its own independent _hashCooldowns slot.
+        if (remotePayload == null && advertisesMeshService(r)) {
+          // Build a 12-byte placeholder: 4-byte MESH magic + 8 bytes derived from MAC.
+          final macBytes = mac.replaceAll(':', '').codeUnits;
+          remotePayload = Uint8List(12)
+            ..[0] = 0x4D // M
+            ..[1] = 0x45 // E
+            ..[2] = 0x53 // S
+            ..[3] = 0x48 // H
+            // embed first 8 mac-code-units as placeholder hash
+            ..[4] = macBytes.length > 0 ? macBytes[0] : 0
+            ..[5] = macBytes.length > 1 ? macBytes[1] : 0
+            ..[6] = macBytes.length > 2 ? macBytes[2] : 0
+            ..[7] = macBytes.length > 3 ? macBytes[3] : 0
+            ..[8] = macBytes.length > 4 ? macBytes[4] : 0
+            ..[9] = macBytes.length > 5 ? macBytes[5] : 0
+            ..[10] = macBytes.length > 6 ? macBytes[6] : 0
+            ..[11] = macBytes.length > 7 ? macBytes[7] : 0;
+        }
         if (remotePayload == null) continue;
         if (remotePayload.length < 8) continue; // Need at least 8 bytes for the 64-bit hash
 

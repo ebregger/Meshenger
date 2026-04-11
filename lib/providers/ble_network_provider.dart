@@ -677,7 +677,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         const Duration(seconds: 2),
         (_) => _refreshNeighborClassification(),
       );
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('🔥 [MESH] _startMeshSession FAILED: $e\n$st');
       _meshSessionActive = false;
       await _discovery.stopAll();
       _neighborRefreshTimer?.cancel();
