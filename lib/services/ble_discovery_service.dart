@@ -193,6 +193,7 @@ class BleDiscoveryService {
         if (attempts > 1) await Future.delayed(const Duration(milliseconds: 500));
 
         await FlutterBluePlus.startScan(
+          withServices: [meshServiceUuid],
           androidUsesFineLocation: true,
           continuousUpdates: true,
         );

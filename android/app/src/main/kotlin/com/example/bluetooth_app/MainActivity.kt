@@ -48,6 +48,7 @@ class MainActivity : FlutterActivity() {
 
   private val gattExecutor = Executors.newSingleThreadExecutor()
   private val deadMacs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+  private val failureCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
   private var pendingHashUpdateHandler: Handler? = null
   // Tracks MACs that are currently connected to our GATT server.
   // Used to guard cancelConnection() — calling it on an already-disconnected
@@ -201,6 +202,7 @@ class MainActivity : FlutterActivity() {
             if (characteristic.uuid != CHARACTERISTIC_UUID) return
             val bytes = value ?: ByteArray(0)
             deadMacs.remove(device.address)
+            failureCounts.remove(device.address)
             Handler(Looper.getMainLooper()).post {
               // Include sender MAC so Dart can reply even if scan routing isn't ready.
               val payload: HashMap<String, Any> = hashMapOf(
@@ -336,7 +338,8 @@ class MainActivity : FlutterActivity() {
         .build()
       advertiseSettings = settings
 
-      val data = buildAdvertiseData(currentAdvertiserHash)
+      val advertiseData = buildPrimaryAdvertiseData()
+      val scanResponse = buildScanResponseData(currentAdvertiserHash)
 
       advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
@@ -348,7 +351,7 @@ class MainActivity : FlutterActivity() {
         }
       }
 
-      advertiser?.startAdvertising(settings, data, advertiseCallback)
+      advertiser?.startAdvertising(settings, advertiseData, scanResponse, advertiseCallback)
 
       // Return our own BLE address so Dart can filter self-advertisements from scan results.
       val ownAddress = try { adapter.address } catch (_: Throwable) { "" }
@@ -407,8 +410,9 @@ class MainActivity : FlutterActivity() {
     pendingHashUpdateHandler = handler
     handler.postDelayed({
       try { adv.stopAdvertising(cb) } catch (_: Throwable) {}
-      val data = buildAdvertiseData(currentAdvertiserHash)
-      adv.startAdvertising(settings, data, cb)
+      val advertiseData = buildPrimaryAdvertiseData()
+      val scanResponse = buildScanResponseData(currentAdvertiserHash)
+      adv.startAdvertising(settings, advertiseData, scanResponse, cb)
       val hex = currentAdvertiserHash.joinToString("") { "%02x".format(it) }
       Log.d(TAG, "[ADV] Advertiser hash updated to $hex (debounced)")
     }, 5000)
@@ -416,7 +420,15 @@ class MainActivity : FlutterActivity() {
     result.success(null)
   }
 
-  private fun buildAdvertiseData(hash: ByteArray): AdvertiseData {
+  private fun buildPrimaryAdvertiseData(): AdvertiseData {
+    return AdvertiseData.Builder()
+      .setIncludeTxPowerLevel(false)
+      .setIncludeDeviceName(false)
+      .addServiceUuid(ParcelUuid(SERVICE_UUID))
+      .build()
+  }
+
+  private fun buildScanResponseData(hash: ByteArray): AdvertiseData {
     val payload = ByteArray(MESH_MAGIC.size + hash.size)
     System.arraycopy(MESH_MAGIC, 0, payload, 0, MESH_MAGIC.size)
     System.arraycopy(hash, 0, payload, MESH_MAGIC.size, hash.size)
@@ -489,9 +501,11 @@ class MainActivity : FlutterActivity() {
 
       val connectionWatchdog = Runnable {
         if (isCompleted.compareAndSet(false, true)) {
-          // 4s dead-cache matches the Dart-side _deadlistDurationForError timeout cooldown.
-          deadMacs[macAddress] = System.currentTimeMillis() + 4000L
-          Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:4")
+          val count = failureCounts.getOrDefault(macAddress, 0) + 1
+          failureCounts[macAddress] = count
+          val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 16000L)
+          deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
+          Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
           Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:timeout")
           try { gatt?.disconnect() } catch (_: Throwable) {}
           try { gatt?.close() } catch (_: Throwable) {}
@@ -540,8 +554,11 @@ class MainActivity : FlutterActivity() {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
               Log.d(TAG, "[GATT] STATE_DISCONNECTED phase=$phase status=$status mac=$macAddress")
               if (!isCompleted.get()) {
-                deadMacs[macAddress] = System.currentTimeMillis() + 8000L
-                Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:8")
+                val count = failureCounts.getOrDefault(macAddress, 0) + 1
+                failureCounts[macAddress] = count
+                val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 16000L)
+                deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
+                Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
                 Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:$status")
                 try { g.close() } catch (_: Throwable) {}
                 completeErrorOnMain("DISCONNECTED", "Disconnected during phase=$phase status=$status")
@@ -575,8 +592,11 @@ class MainActivity : FlutterActivity() {
                 }
               }, 50)
             } else {
-              deadMacs[macAddress] = System.currentTimeMillis() + 15000L
-              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:15")
+              val count = failureCounts.getOrDefault(macAddress, 0) + 1
+              failureCounts[macAddress] = count
+              val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 16000L)
+              deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
+              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:mtu_failure_$status")
               g.disconnect()
               g.close()
@@ -683,6 +703,7 @@ class MainActivity : FlutterActivity() {
                     // closed by onCharacteristicChanged when we receive the "||EOF||" notify.
                     // transferWatchdog (60s) guards against a silent server that never replies.
                     Log.d(TAG, "[GATT] Offer sent. Waiting for notify Delta reply mac=$macAddress")
+                    failureCounts.remove(macAddress)
                     completeSuccessOnMain()
                   } catch (t: Throwable) {
                     try { g.disconnect() } catch (_: Throwable) {}
@@ -707,8 +728,11 @@ class MainActivity : FlutterActivity() {
                 )
               }
             } else {
-              deadMacs[macAddress] = System.currentTimeMillis() + 15000L
-              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:15")
+              val count = failureCounts.getOrDefault(macAddress, 0) + 1
+              failureCounts[macAddress] = count
+              val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 16000L)
+              deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
+              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:discovery_failed_$status")
               g.disconnect()
               g.close()
@@ -778,12 +802,18 @@ class MainActivity : FlutterActivity() {
           }
         }
 
-        Handler(Looper.getMainLooper()).post {
+        val jitterMs = (500..4500).random().toLong()
+        Handler(Looper.getMainLooper()).postDelayed({
+          if (connectedServerClients[macAddress] == true) {
+            completeErrorOnMain("already_connected", "Already connected as Server to this MAC")
+            taskLatch.countDown()
+            return@postDelayed
+          }
           gatt = device.connectGatt(this@MainActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
           if (gatt == null) {
             completeErrorOnMain("connect_failed", "connectGatt returned null")
           }
-        }
+        }, jitterMs)
 
         // Block the single-thread queue until this connection attempt finishes (success, fail, or 25s timeout)
         taskLatch.await()
