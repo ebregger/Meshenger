@@ -1,0 +1,10 @@
+--------- beginning of main
+04-11 00:01:32.618 I/flutter (24112): ≡ƒôí [SYNC] Chunk from 52:A0:8D:71:72:3F: 232 bytes (total buffer: 232)
+04-11 00:01:32.704 I/flutter (24112): ≡ƒôÑ [SYNC] EOF received from 52:A0:8D:71:72:3F ΓÇö buffer=232 bytes
+04-11 00:01:32.704 I/flutter (24112): [BENCHMARK] TARGET_MAC:52:A0:8D:71:72:3F | EVENT:DELTA_RECEIVED | BYTES:232 | TIMESTAMP:1775880092704
+04-11 00:01:32.718 I/flutter (24112): ≡ƒöä [SYNC] Decompressing payload from 52:A0:8D:71:72:3F (232 bytes)...
+04-11 00:01:32.737 I/flutter (24112): ≡ƒôª [SYNC] Received type=offer from 52:A0:8D:71:72:3F
+04-11 00:01:32.741 I/flutter (24112): ≡ƒôñ [SYNC] Computing delta for offer from senderId=5dd4aaf7-76a2-4e36-97fa-7141bcb44f48...
+04-11 00:01:32.763 I/flutter (24112): ≡ƒôñ [SYNC] Delta has 0 entries ΓÇö replying to 52:A0:8D:71:72:3F
+--------- beginning of system
+04-11 00:01:32.861 I/flutter (24112): Γ£à [SYNC] Delta reply sent to 52:A0:8D:71:72:3F via NOTIFY (136 bytes)

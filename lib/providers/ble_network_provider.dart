@@ -26,6 +26,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     _discovery = BleDiscoveryService(
       _ref,
       onConnectionPhaseChanged: _handleMeshConnectionPhaseChanged,
+      onScannerError: _handleScannerError,
+      onScannerStalled: _handleScannerStalled,
     );
     Future<void>.microtask(_bootstrap);
   }
@@ -58,6 +60,41 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   final StreamController<void> _presenceBump =
       StreamController<void>.broadcast();
+
+  void _handleScannerError(String error) {
+    debugPrint('🚨 [MESH] Scanner hardware error: $error');
+    state = state.copyWith(scannerHealthy: false);
+  }
+
+  void _handleScannerStalled() {
+    // Only flag if we haven't already flagged a hardware error (Code 2).
+    if (state.scannerHealthy && !state.scannerStalled) {
+      debugPrint('🚨 [MESH] Scanner heuristic stalled!');
+      state = state.copyWith(scannerStalled: true);
+    }
+  }
+
+  /// Hard reset of the mesh radio stack (useful when Android's GATT/Scan slots are jammed).
+  Future<void> resetRadio() async {
+    debugPrint('♻️ [MESH] Resetting radio stack (Software)...');
+    await _stopMeshSession();
+    state = state.copyWith(scannerHealthy: true, scannerStalled: false);
+    await _startMeshSession();
+  }
+
+  /// System-level power cycle of the Bluetooth adapter (Force OFF then ON).
+  Future<void> powerCycleBluetooth() async {
+    debugPrint('🔥 [MESH] POWER CYCLING Bluetooth hardware...');
+    await _stopMeshSession();
+    final attempted = await _nativeMesh.forceToggleBluetooth();
+    if (!attempted) {
+      debugPrint('⚠️ [MESH] Power cycle restricted by OS version. Please toggle manually.');
+    }
+    // Cool down to let the OS adapter state stabilize.
+    await Future.delayed(const Duration(seconds: 4));
+    state = state.copyWith(scannerHealthy: true, scannerStalled: false);
+    await _startMeshSession();
+  }
 
   Uint8List _buildAdvertiserPayload(Uint8List hashBytes) {
     // Payload layout: [8 bytes: 64-bit FNV hash][4 bytes: node ID prefix] = 12 bytes total.
@@ -260,8 +297,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   void _attachAdapterListener() {
     unawaited(_adapterSub?.cancel());
-    _adapterSub = FlutterBluePlus.adapterState.listen(_onAdapterState);
+    _adapterSub = FlutterBluePlus.adapterState.listen((event) {
+      _onAdapterState(event);
+      unawaited(refreshMeshHealth());
+    });
     _onAdapterState(FlutterBluePlus.adapterStateNow);
+    unawaited(refreshMeshHealth());
   }
 
   void _onAdapterState(BluetoothAdapterState value) {
@@ -685,9 +726,30 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     _publishRadioFlags();
   }
 
+  /// Pulls the latest hardware and permission statuses into the state.
+  Future<void> refreshMeshHealth() async {
+    final report = await PermissionsHelper.checkMeshHealth();
+    
+    final Map<String, String> statusMap = {};
+    report.permissions.forEach((perm, status) {
+      // Permission types: location, bluetoothScan, bluetoothConnect, bluetoothAdvertise, bluetooth
+      final key = perm.toString().split('.').last;
+      // Statuses: granted, denied, permanentlyDenied, restricted, limited, provisional
+      final value = status.toString().split('.').last;
+      statusMap[key] = value;
+    });
+
+    state = state.copyWith(
+      locationServicesEnabled: report.locationServicesEnabled,
+      bluetoothHardwareEnabled: FlutterBluePlus.adapterStateNow == BluetoothAdapterState.on,
+      permissionStatuses: statusMap,
+    );
+  }
+
   /// Re-runs Android permission prompts (e.g. after returning from Settings).
   Future<BlePermissionRequestResult> retryAndroidPermissions() async {
     final outcome = await PermissionsHelper.requestAndroidBlePermissions();
+    await refreshMeshHealth();
 
     if (outcome != BlePermissionRequestResult.granted) {
       state = state.copyWith(
@@ -711,6 +773,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     state = state.copyWith(lastPermissionResult: outcome);
     _attachAdapterListener();
     return outcome;
+  }
+
+  /// Opens the system app settings to allow manual permission overrides.
+  Future<void> promptOpenSettings() async {
+    await PermissionsHelper.openApplicationSettings();
   }
 
   /// System UI to enable the Bluetooth radio when [BleAdapterStatus.off].

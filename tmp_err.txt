@@ -1,2 +1,22 @@
-Running Gradle task 'assembleDebug'...                           2,369ms
-ΓêÜ Built build\app\outputs\flutter-apk\app-debug.apk
+Running Gradle task 'assembleDebug'...                          
+lib/screens/config_screen.dart:121:63: Error: Member not found: 'deniedPermanently'.
+              } else if (result == BlePermissionRequestResult.deniedPermanently) {
+                                                              ^^^^^^^^^^^^^^^^^
+Target kernel_snapshot_program failed: Exception
+
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileFlutterBuildDebug'.
+> Process 'command 'C:\Users\Edison\develop\flutter\bin\flutter.bat'' finished with non-zero exit value 1
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 3s
+Running Gradle task 'assembleDebug'...                              3.7s
+Gradle task assembleDebug failed with exit code 1

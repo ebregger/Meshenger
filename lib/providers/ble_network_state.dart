@@ -27,6 +27,11 @@ class BleNetworkState {
     this.indirectNeighborIds = const <String>{},
     this.radioMeshConnecting = false,
     this.radioMeshAdvertising = false,
+    this.locationServicesEnabled = false,
+    this.bluetoothHardwareEnabled = false,
+    this.scannerHealthy = true,
+    this.scannerStalled = false,
+    this.permissionStatuses = const <String, String>{},
   });
 
   final BleAdapterStatus adapterStatus;
@@ -49,6 +54,21 @@ class BleNetworkState {
   /// Mesh session active and peripheral advertising (not mid-handshake).
   final bool radioMeshAdvertising;
 
+  /// Whether System Location Services (GPS) are enabled (mandatory for scan on older Android).
+  final bool locationServicesEnabled;
+
+  /// Whether Bluetooth radio is currently powered on.
+  final bool bluetoothHardwareEnabled;
+
+  /// Whether the BLE scanner hardware instance started successfully.
+  final bool scannerHealthy;
+
+  /// Heuristic: whether we are supposedly scanning but haven't seen a single result in 25s.
+  final bool scannerStalled;
+
+  /// Granular permission status map (Permission Name -> Status Name).
+  final Map<String, String> permissionStatuses;
+
   static final initial = BleNetworkState(
     adapterStatus: BleAdapterStatus.unknown,
     lastPermissionResult: null,
@@ -57,6 +77,11 @@ class BleNetworkState {
     indirectNeighborIds: <String>{},
     radioMeshConnecting: false,
     radioMeshAdvertising: false,
+    locationServicesEnabled: false,
+    bluetoothHardwareEnabled: false,
+    scannerHealthy: true,
+    scannerStalled: false,
+    permissionStatuses: <String, String>{},
   );
 
   BleNetworkState copyWith({
@@ -67,6 +92,11 @@ class BleNetworkState {
     Set<String>? indirectNeighborIds,
     bool? radioMeshConnecting,
     bool? radioMeshAdvertising,
+    bool? locationServicesEnabled,
+    bool? bluetoothHardwareEnabled,
+    bool? scannerHealthy,
+    bool? scannerStalled,
+    Map<String, String>? permissionStatuses,
   }) {
     return BleNetworkState(
       adapterStatus: adapterStatus ?? this.adapterStatus,
@@ -77,6 +107,13 @@ class BleNetworkState {
       indirectNeighborIds: indirectNeighborIds ?? this.indirectNeighborIds,
       radioMeshConnecting: radioMeshConnecting ?? this.radioMeshConnecting,
       radioMeshAdvertising: radioMeshAdvertising ?? this.radioMeshAdvertising,
+      locationServicesEnabled:
+          locationServicesEnabled ?? this.locationServicesEnabled,
+      bluetoothHardwareEnabled:
+          bluetoothHardwareEnabled ?? this.bluetoothHardwareEnabled,
+      scannerHealthy: scannerHealthy ?? this.scannerHealthy,
+      scannerStalled: scannerStalled ?? this.scannerStalled,
+      permissionStatuses: permissionStatuses ?? this.permissionStatuses,
     );
   }
 }

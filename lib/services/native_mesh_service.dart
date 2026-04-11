@@ -50,6 +50,13 @@ class NativeMeshService {
     }
   }
 
+  /// Power-cycles the Bluetooth adapter (Force OFF then ON) on Android 11 and below.
+  /// Returns true if the toggle was attempted, false if restricted by OS version.
+  Future<bool> forceToggleBluetooth() async {
+    final result = await _bleMethodChannel.invokeMethod<bool>('force_toggle_bluetooth');
+    return result ?? false;
+  }
+
   Future<void> sendPayload(String macAddress, Uint8List payload, {bool isRandom = false}) async {
     try {
       await _bleMethodChannel.invokeMethod<void>(

@@ -167,15 +167,27 @@ def run_benchmark(num_messages=30):
     while time.time() - poll_start < max_wait:
         with telemetry.lock:
             fully_propagated = 0
-            for msg_id, creation_info in telemetry.created.items():
-                if msg_id in telemetry.displayed and len(telemetry.displayed[msg_id]) >= expected_merges_per_msg:
+            for msg_id in telemetry.created:
+                nodes_reached = set()
+                if msg_id in telemetry.merged:
+                    nodes_reached.update(telemetry.merged[msg_id].keys())
+                if msg_id in telemetry.displayed:
+                    nodes_reached.update(telemetry.displayed[msg_id].keys())
+                
+                if len(nodes_reached) >= expected_merges_per_msg:
                     fully_propagated += 1
             
-            sys.stdout.write(f"\rPropagated and Displayed fully: {fully_propagated}/{num_messages} messages")
+            # Periodically show current bandwidth in the poll status
+            total_kb = sum(d['bytes'] for d in telemetry.delta_received) / 1024.0
+            total_time_s = sum(d['t'] - min(o['t'] for o in telemetry.offer_sent if o['device'] == d['device'] and o['mac'] == d['mac'] and o['t'] <= d['t'])
+                              for d in telemetry.delta_received if any(o['t'] for o in telemetry.offer_sent if o['device'] == d['device'] and o['mac'] == d['mac'] and o['t'] <= d['t'])) / 1000.0
+            cur_kbps = total_kb / total_time_s if total_time_s > 0 else 0
+            
+            sys.stdout.write(f"\rPropagated: {fully_propagated}/{num_messages} | Data: {total_kb:.1f}KB | Rate: {cur_kbps:.2f}KB/s")
             sys.stdout.flush()
             
             if fully_propagated >= num_messages:
-                print(f"\n{Colors.OKGREEN}[SUCCESS] All messages merged!{Colors.ENDC}\n")
+                print(f"\n{Colors.OKGREEN}[SUCCESS] All messages merged and propagated!{Colors.ENDC}\n")
                 break
         time.sleep(1)
     else:
@@ -231,9 +243,14 @@ def run_benchmark(num_messages=30):
         if transfer_lats and sum(trans_bytes) > 0:
             total_kb = sum(trans_bytes) / 1024.0
             total_time_s = sum(transfer_lats) / 1000.0
-            agg_bw = total_kb / total_time_s if total_time_s > 0 else 0
-            print(f"  Total Data Recevied: {Colors.OKGREEN}{total_kb:.2f} KB{Colors.ENDC}")
-            print(f"  Average Bandwidth:   {Colors.OKGREEN}{agg_bw:.2f} KB/s{Colors.ENDC}")
+            agg_bw_kb = total_kb / total_time_s if total_time_s > 0 else 0
+            agg_bw_mb = agg_bw_kb / 1024.0
+            agg_bw_gb = agg_bw_mb / 1024.0
+            print(f"  Total Data Received: {Colors.OKGREEN}{total_kb:.2f} KB{Colors.ENDC}")
+            print(f"  Average Bandwidth:")
+            print(f"    {Colors.OKGREEN}{agg_bw_kb:.4f} KB/s{Colors.ENDC}")
+            print(f"    {Colors.OKGREEN}{agg_bw_mb:.6f} MB/s{Colors.ENDC}")
+            print(f"    {Colors.OKGREEN}{agg_bw_gb:.9f} GB/s{Colors.ENDC}")
         else:
             print(f"  {Colors.WARNING}No valid Transfer data{Colors.ENDC}")
 

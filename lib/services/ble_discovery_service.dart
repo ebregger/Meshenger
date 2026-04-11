@@ -44,14 +44,21 @@ class BleDiscoveryService {
   BleDiscoveryService(
     this._ref, {
     this.onConnectionPhaseChanged,
+    this.onScannerError,
+    this.onScannerStalled,
   });
 
   final Ref _ref;
   final void Function()? onConnectionPhaseChanged;
+  final void Function(String error)? onScannerError;
+  final void Function()? onScannerStalled;
 
   final NativeMeshService _nativeMesh = NativeMeshService();
   Uint8List? _localHash;
   StreamSubscription<List<ScanResult>>? _scanSub;
+  Timer? _heartbeatTimer;
+  DateTime? _lastResultAt;
+
   /// When true, scan callbacks must not start another handshake or fire discovery churn.
   bool _isConnecting = false;
   final Map<int, DateTime> _hashCooldowns = {};
@@ -169,18 +176,49 @@ class BleDiscoveryService {
     _notifyConnectionPhase();
 
     await _scanSub?.cancel();
+    _heartbeatTimer?.cancel();
 
     final ownMacUpper = ownMac?.toUpperCase();
 
-    // Do not use [withServices] filtering here: some Android stacks omit/truncate 128-bit UUIDs
-    // when the advertisement includes a device name. We'll filter manually in the listener.
     debugPrint('⏳ [BENCHMARK] EVENT:SCAN_COMMANDED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
-    await FlutterBluePlus.startScan(
-      androidUsesFineLocation: true,
-      continuousUpdates: true, // Forces immediate delivery of scan hits
-    );
+    
+    // Robust startScan with retry for "APPLICATION_REGISTRATION_FAILED" (Android code 2).
+    int attempts = 0;
+    while (attempts < 3) {
+      try {
+        attempts++;
+        // Explicitly stop any existing scan before starting a new one.
+        // This clears any stale scanner registrations in some Android stacks.
+        await FlutterBluePlus.stopScan();
+        if (attempts > 1) await Future.delayed(const Duration(milliseconds: 500));
+
+        await FlutterBluePlus.startScan(
+          androidUsesFineLocation: true,
+          continuousUpdates: true,
+        );
+        // If we reach here, it started!
+        _lastResultAt = DateTime.now();
+        _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+          final last = _lastResultAt;
+          if (last != null && DateTime.now().difference(last).inSeconds > 25) {
+            debugPrint('⚠️ [SCAN] Watchdog: No scan results for 25s. Scanner may be stalled.');
+            onScannerStalled?.call();
+          }
+        });
+        break; 
+      } catch (e) {
+        debugPrint('⚠️ [SCAN] Start failure (attempt $attempts): $e');
+        if (attempts >= 3) {
+          onScannerError?.call(e.toString());
+          return;
+        }
+      }
+    }
 
     _scanSub = FlutterBluePlus.scanResults.listen((results) {
+      if (results.isNotEmpty) {
+        _lastResultAt = DateTime.now();
+      }
       // CRITICAL: Sort by timestamp descending. FBP maintains a growing historical List.
       // Dead/ghost MACs will fall to the bottom, ensuring we process actively broadcasting peers first,
       // avoiding catastrophic 12s timeout deadlocks trying to connect to dead iterations of ourselves.
@@ -391,6 +429,8 @@ class BleDiscoveryService {
   Future<void> stopScanning() async {
     await _scanSub?.cancel();
     _scanSub = null;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
     await FlutterBluePlus.stopScan();
   }
 

@@ -1,0 +1,64 @@
+--------- beginning of main
+04-10 23:52:49.718  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=5E:AE:0E:9A:EE:89, newState=1
+04-10 23:52:49.721  5591  5632 E bt_stack: [ERROR:bta_gatts_act.cc(475)] bta_gatts_cancel_open: failed for open request
+--------- beginning of system
+04-10 23:52:51.900  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=7E:26:29:BB:5E:14, newState=0
+04-10 23:52:52.614  5591  5632 E bt_stack: [ERROR:gatt_sr.cc(752)] MTU request PDU with MTU size 517
+04-10 23:52:53.930  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=7E:26:29:BB:5E:14, newState=1
+04-10 23:52:53.932  5591  5632 E bt_stack: [ERROR:bta_gatts_act.cc(475)] bta_gatts_cancel_open: failed for open request
+04-10 23:52:55.560  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=5E:AE:0E:9A:EE:89, newState=0
+04-10 23:52:56.298  5591  5632 E bt_stack: [ERROR:gatt_sr.cc(752)] MTU request PDU with MTU size 517
+04-10 23:52:57.768  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=5E:AE:0E:9A:EE:89, newState=1
+04-10 23:52:57.773  5591  5632 E bt_stack: [ERROR:bta_gatts_act.cc(475)] bta_gatts_cancel_open: failed for open request
+04-10 23:52:59.733  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=7E:26:29:BB:5E:14, newState=0
+04-10 23:53:00.448  5591  5632 E bt_stack: [ERROR:gatt_sr.cc(752)] MTU request PDU with MTU size 517
+04-10 23:53:01.760  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=7E:26:29:BB:5E:14, newState=1
+04-10 23:53:01.760  5591  5632 E bt_stack: [ERROR:bta_gatts_act.cc(475)] bta_gatts_cancel_open: failed for open request
+04-10 23:53:03.491  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=5E:AE:0E:9A:EE:89, newState=0
+04-10 23:53:04.150  5591  5632 E bt_stack: [ERROR:gatt_sr.cc(752)] MTU request PDU with MTU size 517
+04-10 23:53:05.551  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=5E:AE:0E:9A:EE:89, newState=1
+04-10 23:53:05.554  5591  5632 E bt_stack: [ERROR:bta_gatts_act.cc(475)] bta_gatts_cancel_open: failed for open request
+04-10 23:53:07.756  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=7E:26:29:BB:5E:14, newState=0
+04-10 23:53:08.463  5591  5632 E bt_stack: [ERROR:gatt_sr.cc(752)] MTU request PDU with MTU size 517
+04-10 23:53:08.498   828   828 E android.hardware.power@1.3-service.crosshatch-libperfmgr: extract_stats: failed to open: /d/wlan0/power_stats Error = No such file or directory
+04-10 23:53:08.498   828   828 E android.hardware.power@1.3-service.crosshatch-libperfmgr: getSubsystemLowPowerStats: failed to process wlan stats
+04-10 23:53:08.545 32393 32405 E AuthPII : [RequestTokenManager] getToken() -> BAD_AUTHENTICATION. App: com.android.vending, Service: oauth2:https://www.googleapis.com/auth/googleplay
+04-10 23:53:08.545 32393 32405 E AuthPII : bfor: Long live credential not available.
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afpt.a(:com.google.android.gms@261133013@26.11.33 (100400-887465546):1347)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afqa.b(:com.google.android.gms@261133013@26.11.33 (100400-887465546):26)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afpy.a(:com.google.android.gms@261133013@26.11.33 (100400-887465546):738)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afpx.b(:com.google.android.gms@261133013@26.11.33 (100400-887465546):145)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at zie.d(:com.google.android.gms@261133013@26.11.33 (100400-887465546):800)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afjt.getAuthToken(:com.google.android.gms@261133013@26.11.33 (100400-887465546):411)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.accounts.AbstractAccountAuthenticator$Transport.getAuthToken(AbstractAccountAuthenticator.java:247)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.accounts.IAccountAuthenticator$Stub.onTransact(IAccountAuthenticator.java:114)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.os.Binder.transact(Binder.java:667)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at cjcq.onTransact(:com.google.android.gms@261133013@26.11.33 (100400-887465546):10)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.os.Binder.transact(Binder.java:667)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at bxlw.onTransact(:com.google.android.gms@261133013@26.11.33 (100400-887465546):161)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.os.Binder.execTransact(Binder.java:731)
+04-10 23:53:08.545 32393 32405 E AuthPII : Message is Long live credential not available.
+04-10 23:53:08.545 32393 32405 E AuthPII : bfor: Long live credential not available.
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afpt.a(:com.google.android.gms@261133013@26.11.33 (100400-887465546):1347)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afqa.b(:com.google.android.gms@261133013@26.11.33 (100400-887465546):26)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afpy.a(:com.google.android.gms@261133013@26.11.33 (100400-887465546):738)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afpx.b(:com.google.android.gms@261133013@26.11.33 (100400-887465546):145)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at zie.d(:com.google.android.gms@261133013@26.11.33 (100400-887465546):800)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at afjt.getAuthToken(:com.google.android.gms@261133013@26.11.33 (100400-887465546):411)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.accounts.AbstractAccountAuthenticator$Transport.getAuthToken(AbstractAccountAuthenticator.java:247)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.accounts.IAccountAuthenticator$Stub.onTransact(IAccountAuthenticator.java:114)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.os.Binder.transact(Binder.java:667)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at cjcq.onTransact(:com.google.android.gms@261133013@26.11.33 (100400-887465546):10)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.os.Binder.transact(Binder.java:667)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at bxlw.onTransact(:com.google.android.gms@261133013@26.11.33 (100400-887465546):161)
+04-10 23:53:08.545 32393 32405 E AuthPII : 	at android.os.Binder.execTransact(Binder.java:731)
+04-10 23:53:09.739  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=7E:26:29:BB:5E:14, newState=1
+04-10 23:53:09.741  5591  5632 E bt_stack: [ERROR:bta_gatts_act.cc(475)] bta_gatts_cancel_open: failed for open request
+04-10 23:53:11.605  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=5E:AE:0E:9A:EE:89, newState=0
+04-10 23:53:12.604  5591  5632 E bt_stack: [ERROR:gatt_sr.cc(752)] MTU request PDU with MTU size 517
+04-10 23:53:13.982  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=5E:AE:0E:9A:EE:89, newState=1
+04-10 23:53:13.984  5591  5632 E bt_stack: [ERROR:bta_gatts_act.cc(475)] bta_gatts_cancel_open: failed for open request
+04-10 23:53:15.735  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=7E:26:29:BB:5E:14, newState=0
+04-10 23:53:16.441  5591  5632 E bt_stack: [ERROR:gatt_sr.cc(752)] MTU request PDU with MTU size 517
+04-10 23:53:17.755  5591  5612 E BluetoothRemoteDevices: aclStateChangeCallback: device is NULL, address=7E:26:29:BB:5E:14, newState=1
+04-10 23:53:17.757  5591  5632 E bt_stack: [ERROR:bta_gatts_act.cc(475)] bta_gatts_cancel_open: failed for open request

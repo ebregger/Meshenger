@@ -1,0 +1,9 @@
+--------- beginning of main
+04-10 23:59:28.656 I/flutter (23913): Stress Test API running on port 8080
+--------- beginning of system
+04-10 23:59:31.635 I/flutter (23913): dynamic_color: Dynamic color not detected on this device.
+04-10 23:59:31.996 I/flutter (23913): [MESH] Own BLE MAC: 02:00:00:00:00:00 (will filter from scan results)
+04-10 23:59:32.007 I/flutter (23913): ΓÅ│ [BENCHMARK] EVENT:SCAN_COMMANDED | TIMESTAMP:1775879972004
+04-10 23:59:32.008 I/flutter (23913): [FBP] stopScan: already stopped
+04-10 23:59:32.170 E/flutter (23913): [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception: FlutterBluePlusException | scan | android-code: 2 | SCAN_FAILED_APPLICATION_REGISTRATION_FAILED
+04-10 23:59:32.170 E/flutter (23913): 

@@ -103,6 +103,9 @@ class MainActivity : FlutterActivity() {
         "update_hash" -> {
           updateAdvertiserHash(call, result)
         }
+        "force_toggle_bluetooth" -> {
+          forceToggleBluetooth(result)
+        }
         "send_payload" -> {
           sendPayloadToPeer(call, result)
         }
@@ -111,6 +114,35 @@ class MainActivity : FlutterActivity() {
         }
         else -> result.notImplemented()
       }
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun forceToggleBluetooth(result: MethodChannel.Result) {
+    val adapter = BluetoothAdapter.getDefaultAdapter() ?: run {
+      result.error("no_adapter", "Bluetooth adapter not available", null)
+      return
+    }
+
+    if (android.os.Build.VERSION.SDK_INT >= 31) {
+      // Android 12+ requires a specific system intent to toggle BT;
+      // manual enable/disable is restricted for third-party apps.
+      result.success(false) 
+      return
+    }
+
+    try {
+      Log.w(TAG, "!!! [HARD RESET] Manually power-cycling Bluetooth adapter...")
+      adapter.disable()
+      // Wait for the adapter to actually turn off before turning it back on.
+      Handler(Looper.getMainLooper()).postDelayed({
+        adapter.enable()
+        Log.w(TAG, "!!! [HARD RESET] Bluetooth adapter re-enabled.")
+        result.success(true)
+      }, 2000)
+    } catch (t: Throwable) {
+      Log.e(TAG, "Failed to power-cycle Bluetooth", t)
+      result.error("reset_failed", t.message, null)
     }
   }
 
