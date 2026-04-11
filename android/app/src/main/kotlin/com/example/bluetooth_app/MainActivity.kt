@@ -117,6 +117,16 @@ class MainActivity : FlutterActivity() {
     }
   }
 
+  override fun onPause() {
+    super.onPause()
+    Log.d(TAG, "[DIAGNOSTIC] APP_STATE:BACKGROUND")
+  }
+
+  override fun onResume() {
+    super.onResume()
+    Log.d(TAG, "[DIAGNOSTIC] APP_STATE:FOREGROUND")
+  }
+
   @SuppressLint("MissingPermission")
   private fun forceToggleBluetooth(result: MethodChannel.Result) {
     val adapter = BluetoothAdapter.getDefaultAdapter() ?: run {
@@ -481,6 +491,8 @@ class MainActivity : FlutterActivity() {
         if (isCompleted.compareAndSet(false, true)) {
           // 4s dead-cache matches the Dart-side _deadlistDurationForError timeout cooldown.
           deadMacs[macAddress] = System.currentTimeMillis() + 4000L
+          Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:4")
+          Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:timeout")
           try { gatt?.disconnect() } catch (_: Throwable) {}
           try { gatt?.close() } catch (_: Throwable) {}
           Handler(Looper.getMainLooper()).post { result.error("timeout", "Timed out waiting for connection", null) }
@@ -489,6 +501,7 @@ class MainActivity : FlutterActivity() {
       }
       val transferWatchdog = Runnable {
         if (isCompleted.compareAndSet(false, true)) {
+          Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:transfer_timeout")
           try { gatt?.disconnect() } catch (_: Throwable) {}
           try { gatt?.close() } catch (_: Throwable) {}
           Handler(Looper.getMainLooper()).post { result.error("timeout", "Timed out waiting for writing", null) }
@@ -528,6 +541,8 @@ class MainActivity : FlutterActivity() {
               Log.d(TAG, "[GATT] STATE_DISCONNECTED phase=$phase status=$status mac=$macAddress")
               if (!isCompleted.get()) {
                 deadMacs[macAddress] = System.currentTimeMillis() + 8000L
+                Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:8")
+                Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:$status")
                 try { g.close() } catch (_: Throwable) {}
                 completeErrorOnMain("DISCONNECTED", "Disconnected during phase=$phase status=$status")
               } else {
@@ -561,6 +576,8 @@ class MainActivity : FlutterActivity() {
               }, 50)
             } else {
               deadMacs[macAddress] = System.currentTimeMillis() + 15000L
+              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:15")
+              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:mtu_failure_$status")
               g.disconnect()
               g.close()
               completeErrorOnMain("MTU_FAILED", "Failed to request MTU")
@@ -691,6 +708,8 @@ class MainActivity : FlutterActivity() {
               }
             } else {
               deadMacs[macAddress] = System.currentTimeMillis() + 15000L
+              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:15")
+              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:discovery_failed_$status")
               g.disconnect()
               g.close()
               completeErrorOnMain("DISCOVERY_FAILED", "Failed to discover services")

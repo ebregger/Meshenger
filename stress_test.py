@@ -25,6 +25,7 @@ class Colors:
     BOLD = '\033[1m'
 
 BENCHMARK_REGEX = re.compile(r'\[BENCHMARK\] (.*)')
+DIAGNOSTIC_REGEX = re.compile(r'\[DIAGNOSTIC\] (.*)')
 
 class Telemetry:
     def __init__(self):
@@ -36,6 +37,9 @@ class Telemetry:
         self.delta_received = [] # { device, mac, bytes, t }
         self.merged = defaultdict(dict)  # msg_id -> { device: t }
         self.displayed = defaultdict(dict)  # msg_id -> { device: t }
+        self.connection_failed = [] # { device, mac, reason }
+        self.penalty_box = [] # { device, mac, duration }
+        self.app_state_changes = [] # { device, state, t }
 
 telemetry = Telemetry()
 
@@ -87,6 +91,37 @@ def logcat_worker(device_id, stop_event):
             time.sleep(0.1)
             continue
             
+        diag_match = DIAGNOSTIC_REGEX.search(line)
+        if diag_match:
+            payload = diag_match.group(1).strip()
+            parts = [p.strip() for p in payload.split('|')]
+            data = {}
+            for part in parts:
+                if ':' in part:
+                    k, v = part.split(':', 1)
+                    data[k.strip()] = v.strip()
+                elif '=' in part:
+                    k, v = part.split('=', 1)
+                    data[k.strip()] = v.strip()
+                
+            event = data.get('EVENT')
+            t = int(time.time()*1000)
+            
+            app_state = data.get('APP_STATE')
+            if app_state:
+                with telemetry.lock:
+                    telemetry.app_state_changes.append({'device': device_id, 'state': app_state, 't': t})
+                continue
+                
+            mac = data.get('TARGET_MAC', '')
+            if event == 'CONNECTION_FAILED' and mac:
+                with telemetry.lock:
+                    telemetry.connection_failed.append({'device': device_id, 'mac': mac, 'reason': data.get('REASON', '')})
+            elif event == 'PENALTY_BOX_ENTERED' and mac:
+                with telemetry.lock:
+                    telemetry.penalty_box.append({'device': device_id, 'mac': mac, 'duration': data.get('DURATION', '')})
+            continue
+
         match = BENCHMARK_REGEX.search(line)
         if match:
             payload = match.group(1).strip()
@@ -261,6 +296,34 @@ def run_benchmark(num_messages=30):
             print(f"  Average:    {Colors.OKCYAN}{(sum(abs_lats)/len(abs_lats))/1000.0:.3f}s{Colors.ENDC}")
         else:
             print(f"  {Colors.WARNING}No valid Merges{Colors.ENDC}")
+
+        print(f"\n{Colors.BOLD}--- Failure Analytics ---{Colors.ENDC}")
+        total_connections = len(telemetry.connection_failed) + len(telemetry.gatt_connected)
+        successes = len(telemetry.gatt_connected)
+        print(f"  Connection Attempts: {total_connections}")
+        print(f"  Connection Success:  {Colors.OKGREEN}{successes}{Colors.ENDC} ({successes/total_connections*100:.1f}%)" if total_connections > 0 else f"  Connection Success:  0")
+        print(f"  Penalty Box Entries: {Colors.WARNING}{len(telemetry.penalty_box)}{Colors.ENDC}")
+        
+        fg_lats = []
+        bg_lats = []
+        for s in telemetry.scan_hit:
+            if s['t'] >= base_create_tc:
+                lat = s['t'] - base_create_tc
+                device_states = [state for state in telemetry.app_state_changes if state['device'] == s['device'] and state['t'] <= s['t']]
+                current_state = device_states[-1]['state'] if device_states else 'FOREGROUND'
+                if current_state == 'FOREGROUND':
+                    fg_lats.append(lat)
+                elif current_state == 'BACKGROUND':
+                    bg_lats.append(lat)
+                    
+        if fg_lats:
+            print(f"  Foreground Discovery Target: {Colors.OKCYAN}{(sum(fg_lats)/len(fg_lats))/1000.0:.3f}s{Colors.ENDC}")
+        else:
+            print(f"  Foreground Discovery Target: {Colors.WARNING}N/A{Colors.ENDC}")
+        if bg_lats:
+            print(f"  Background Discovery Target: {Colors.OKCYAN}{(sum(bg_lats)/len(bg_lats))/1000.0:.3f}s{Colors.ENDC}")
+        else:
+            print(f"  Background Discovery Target: {Colors.WARNING}N/A{Colors.ENDC}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
