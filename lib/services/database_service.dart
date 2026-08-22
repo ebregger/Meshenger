@@ -151,6 +151,32 @@ class DatabaseService {
     return delta;
   }
 
+  /// When FNV hashes differ but the version-vector delta is empty, older rows were
+  /// skipped (later HLCs from the same node already merged). Send a rotating
+  /// oldest-first slice so stranded rows eventually converge.
+  Future<Map<String, dynamic>> getHashRepairChangeset({int maxRows = 80}) async {
+    await init();
+    final fullChangeset = await _crdt.getChangeset();
+    final out = <String, dynamic>{};
+    final epoch = DateTime.now().millisecondsSinceEpoch ~/ 12000;
+    fullChangeset.forEach((table, records) {
+      final rows = List<dynamic>.from(records as List);
+      if (rows.isEmpty) return;
+      rows.sort((a, b) {
+        final ha = a is Map ? (a['hlc']?.toString() ?? '') : '';
+        final hb = b is Map ? (b['hlc']?.toString() ?? '') : '';
+        return ha.compareTo(hb); // oldest first
+      });
+      final start = rows.isEmpty ? 0 : (epoch * maxRows) % rows.length;
+      final slice = <dynamic>[];
+      for (var i = 0; i < maxRows && i < rows.length; i++) {
+        slice.add(rows[(start + i) % rows.length]);
+      }
+      out[table] = slice;
+    });
+    return out;
+  }
+
   Future<void> dispose() async {
     await _db?.close();
     _db = null;

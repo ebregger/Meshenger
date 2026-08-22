@@ -45,6 +45,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   String? _localNodeId;
   bool _primeMessageListLength = true;
   String? _lastAdvertisedHashB64;
+  Timer? _advertHashDebounce;
+  DateTime? _lastAdvertHashPushedAt;
+  /// Cap how often we rewrite ADV during a write burst (radio-facing rate limit).
+  static const Duration _advertHashMinInterval = Duration(milliseconds: 400);
 
   int? _lastLocalProfileTimestampMs;
   final Map<String, String> _nameById = <String, String>{};
@@ -338,6 +342,43 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     }
   }
 
+  /// Publish DB hash into ADV as writes happen, rate-limited to the radio — not
+  /// "wait until sending stops". Pending updates flush as soon as the interval allows.
+  void _scheduleAdvertiserHashUpdate(String myId) {
+    Future<void> push() async {
+      try {
+        final db = await _ref.read(databaseProvider.future);
+        final hashBytes = await db.getDatabaseHashBytes();
+        final b64 = base64Encode(hashBytes);
+        final payload = _buildAdvertiserPayload(hashBytes);
+        _discovery.setLocalHash(payload);
+        if (b64 == _lastAdvertisedHashB64) return;
+        debugPrint('📡 [ADV] Hash changed to $b64 (rate-limited)');
+        _lastAdvertisedHashB64 = b64;
+        _lastAdvertHashPushedAt = DateTime.now();
+        await _nativeMesh.updateAdvertiserHash(payload, myId);
+      } catch (e, st) {
+        debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
+      }
+    }
+
+    final last = _lastAdvertHashPushedAt;
+    final elapsed = last == null
+        ? _advertHashMinInterval
+        : DateTime.now().difference(last);
+    if (elapsed >= _advertHashMinInterval) {
+      _advertHashDebounce?.cancel();
+      _advertHashDebounce = null;
+      unawaited(push());
+      return;
+    }
+
+    _advertHashDebounce?.cancel();
+    _advertHashDebounce = Timer(_advertHashMinInterval - elapsed, () {
+      unawaited(push());
+    });
+  }
+
   Future<void> _attachLocalMessageQuickScanTrigger(String myId) async {
     await _localMessagesSub?.cancel();
     _primeMessageListLength = true;
@@ -352,23 +393,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         return;
       }
 
-      Future<void>.microtask(() async {
-        try {
-          final hashBytes = await db.getDatabaseHashBytes();
-          final b64 = base64Encode(hashBytes);
-          if (b64 != _lastAdvertisedHashB64) {
-            debugPrint('📡 [ADV] Hash changed to $b64 (triggered by messages)');
-            _lastAdvertisedHashB64 = b64;
-            final payload = _buildAdvertiserPayload(hashBytes);
-            await _nativeMesh.updateAdvertiserHash(payload, myId);
-            _discovery.setLocalHash(payload);
-          }
-        } catch (e, st) {
-          debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
-        }
-      });
-
-      // Scanner stays on; advertiser hash update is enough.
+      _scheduleAdvertiserHashUpdate(myId);
     });
   }
 
@@ -394,21 +419,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       if (_lastLocalProfileTimestampMs == tsMs) return;
       _lastLocalProfileTimestampMs = tsMs;
 
-      Future<void>.microtask(() async {
-        try {
-          final hashBytes = await db.getDatabaseHashBytes();
-          final b64 = base64Encode(hashBytes);
-          if (b64 != _lastAdvertisedHashB64) {
-            debugPrint('📡 [ADV] Hash changed to $b64 (triggered by profiles)');
-            _lastAdvertisedHashB64 = b64;
-            final payload = _buildAdvertiserPayload(hashBytes);
-            await _nativeMesh.updateAdvertiserHash(payload, myId);
-            _discovery.setLocalHash(payload);
-          }
-        } catch (e, st) {
-          debugPrint('NATIVE MESH HASH UPDATE FAILED: $e\n$st');
-        }
-      });
+      _scheduleAdvertiserHashUpdate(myId);
     });
   }
 
@@ -537,10 +548,20 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               }
 
               debugPrint('📤 [SYNC] Computing delta for offer from senderId=$senderId...');
-              final delta = await db.getDeltaChangeset(remoteVector);
+              var delta = await db.getDeltaChangeset(remoteVector);
+              final ourSenderHash = await db.getDatabaseHash();
+              var usedRepair = false;
+              if (delta.isEmpty && senderHash != ourSenderHash) {
+                // Version vectors ignore older gaps once a newer HLC from the same node exists.
+                delta = await db.getHashRepairChangeset();
+                usedRepair = delta.isNotEmpty;
+                debugPrint(
+                  '⚠️ [SYNC] Hash-mismatch repair for $senderId — '
+                  'slice tables=${delta.keys.toList()}',
+                );
+              }
               debugPrint('📤 [SYNC] Delta has ${delta.length} entries — replying to $targetMac');
 
-              final ourSenderHash = await db.getDatabaseHash();
               final localId = _localNodeId ?? db.localNodeId;
 
               // Always send back a delta envelope so the initiator receives our
@@ -552,16 +573,53 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 'neighbors': _discovery.currentNeighborIds,
                 'data': delta,
               };
-              final outBytes = zlib.encode(
+              var outBytes = zlib.encode(
                 utf8.encode(jsonEncode(deltaEnvelope)),
               );
-              
+              // Oversized replies hit the same 60s GATT watchdog as full pushes.
+              // Send newest rows first; remainder syncs on the next dial.
+              var replyComplete = true;
+              if (outBytes.length > BleDiscoveryService.maxOfferPushBytes) {
+                delta = BleDiscoveryService.shrinkChangesetForBle(delta);
+                deltaEnvelope['data'] = delta;
+                outBytes = zlib.encode(
+                  utf8.encode(jsonEncode(deltaEnvelope)),
+                );
+                replyComplete =
+                    outBytes.length <= BleDiscoveryService.maxOfferPushBytes;
+                if (!replyComplete) {
+                  deltaEnvelope['data'] = <String, dynamic>{};
+                  outBytes = zlib.encode(
+                    utf8.encode(jsonEncode(deltaEnvelope)),
+                  );
+                  replyComplete = false;
+                }
+                debugPrint(
+                  '⚠️ [SYNC] Delta reply capped for $targetMac '
+                  '(${outBytes.length} bytes, complete=$replyComplete)',
+                );
+              }
+
               await _nativeMesh.replyPayload(
                 targetMac,
                 Uint8List.fromList(outBytes),
               );
               debugPrint('✅ [SYNC] Delta reply sent to $targetMac via NOTIFY (${outBytes.length} bytes)');
-              if (delta.isNotEmpty) {
+
+              if (senderId != null) {
+                final normalizedRemote = <String, String>{
+                  for (final e in remoteVector.entries)
+                    if (e.value != null) e.key.toString(): e.value.toString(),
+                };
+                // Store what the peer *claimed*, not our full DB — otherwise the next
+                // push looks empty while older stranded rows still differ.
+                BleDiscoveryService.rememberPeerVector(
+                  senderId,
+                  normalizedRemote,
+                );
+                if (replyComplete && !usedRepair) {
+                  BleDiscoveryService.markSyncComplete(senderId);
+                }
               }
               return;
 
@@ -635,6 +693,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 }
               } else {
                 debugPrint('ℹ️ [SYNC] Empty changeset from $senderMac — nothing to merge');
+              }
+
+              // Client handshake finished once the server's delta reply arrives.
+              if (senderId != null) {
+                BleDiscoveryService.markSyncComplete(senderId);
               }
 
               try {
@@ -739,6 +802,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     _localNodeId = null;
     _neighborRefreshTimer?.cancel();
     _neighborRefreshTimer = null;
+    _advertHashDebounce?.cancel();
+    _advertHashDebounce = null;
     _meshTopology.clear();
     state = state.copyWith(
       directNeighborIds: const <String>{},
@@ -856,6 +921,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   @override
   void dispose() {
+    _advertHashDebounce?.cancel();
     unawaited(_adapterSub?.cancel());
     unawaited(_nativePayloadSub?.cancel());
     unawaited(_localMessagesSub?.cancel());

@@ -14,6 +14,7 @@ from collections import defaultdict
 
 PORTS = [18081, 18082, 18083]
 
+
 class Colors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -24,25 +25,29 @@ class Colors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
 
+
 BENCHMARK_REGEX = re.compile(r'\[BENCHMARK\] (.*)')
 DIAGNOSTIC_REGEX = re.compile(r'\[DIAGNOSTIC\] (.*)')
+
 
 class Telemetry:
     def __init__(self):
         self.lock = threading.Lock()
         self.created = {}  # msg_id -> { device, t }
-        self.scan_hit = [] # { device, mac, t }
-        self.offer_sent = [] # { device, mac, t }
-        self.gatt_connected = [] # { device, mac, t }
-        self.delta_received = [] # { device, mac, bytes, t }
+        self.scan_hit = []  # { device, mac, t }
+        self.offer_sent = []  # { device, mac, t }
+        self.gatt_connected = []  # { device, mac, t }
+        self.delta_received = []  # { device, mac, bytes, t }
         self.merged = defaultdict(dict)  # msg_id -> { device: t }
         self.displayed = defaultdict(dict)  # msg_id -> { device: t }
         self.ui_changed = []  # { device, revision, count, t }
-        self.connection_failed = [] # { device, mac, reason }
-        self.penalty_box = [] # { device, mac, duration }
-        self.app_state_changes = [] # { device, state, t }
+        self.connection_failed = []  # { device, mac, reason }
+        self.penalty_box = []  # { device, mac, duration }
+        self.app_state_changes = []  # { device, state, t }
+
 
 telemetry = Telemetry()
+
 
 def request(port, path, method='GET', body=None):
     url = f'http://127.0.0.1:{port}{path}'
@@ -56,26 +61,9 @@ def request(port, path, method='GET', body=None):
         else:
             with urllib.request.urlopen(req, timeout=10) as response:
                 return json.loads(response.read().decode())
-    except Exception as e:
+    except Exception:
         return None
 
-def check_devices():
-    infos = {}
-    print(f"{Colors.OKCYAN}Checking device APIs...{Colors.ENDC}")
-    for p in PORTS:
-        res = request(p, '/info')
-        if res and 'nodeId' in res:
-            infos[p] = res['nodeId']
-            print(f"  Device at port {p}: OK  nodeId={res['nodeId']}")
-            # Kick the BLE stack in case bootstrap ran before permissions were granted
-            kick = request(p, '/reset_ble', method='POST')
-            if kick:
-                print(f"  Device at port {p}: BLE restarted")
-            else:
-                print(f"  Device at port {p}: BLE kick failed (may already be running)")
-        else:
-            print(f"  Device at port {p}: UNREACHABLE")
-    return infos
 
 def get_adb_devices():
     result = subprocess.run(["adb", "devices"], capture_output=True, text=True)
@@ -84,6 +72,7 @@ def get_adb_devices():
         if "\tdevice" in line:
             devices.append(line.split("\t")[0].strip())
     return devices
+
 
 def get_port_to_device():
     """Map host forward ports → serial via `adb forward --list` (not adb device order)."""
@@ -99,6 +88,46 @@ def get_port_to_device():
             except ValueError:
                 pass
     return mapping
+
+
+def discover_ports():
+    """Use forwarded ports that actually answer /info (any device count ≥1)."""
+    forward_map = get_port_to_device()
+    candidates = sorted(p for p in forward_map if 18081 <= p <= 18099) or list(PORTS)
+    # One port per serial (duplicate forwards from remaps).
+    seen_serial = set()
+    live = []
+    for p in candidates:
+        serial = forward_map.get(p)
+        if serial in seen_serial:
+            continue
+        res = request(p, '/info')
+        if res and 'nodeId' in res:
+            live.append(p)
+            if serial:
+                seen_serial.add(serial)
+    if live:
+        return live
+    return [p for p in PORTS if request(p, '/info')]
+
+
+def check_devices(ports=None):
+    infos = {}
+    ports = ports or discover_ports()
+    print(f"{Colors.OKCYAN}Checking device APIs on ports {ports}...{Colors.ENDC}")
+    for p in ports:
+        res = request(p, '/info')
+        if res and 'nodeId' in res:
+            infos[p] = res['nodeId']
+            print(f"  Device at port {p}: OK  nodeId={res['nodeId']}")
+            kick = request(p, '/reset_ble', method='POST')
+            if kick:
+                print(f"  Device at port {p}: BLE restarted")
+            else:
+                print(f"  Device at port {p}: BLE kick failed (may already be running)")
+        else:
+            print(f"  Device at port {p}: UNREACHABLE")
+    return infos
 
 def logcat_worker(device_id, stop_event):
     cmd = ["adb", "-s", device_id, "logcat", "-v", "raw", "-s", "flutter,NativeMeshService"]
@@ -116,8 +145,8 @@ def logcat_worker(device_id, stop_event):
         diag_match = DIAGNOSTIC_REGEX.search(line)
         if diag_match:
             payload = diag_match.group(1).strip()
-            if "TELEMETRY" in payload or "COLLISION" in payload:
-                print(f"\\n[{device_id}] DIAGNOSTIC: {payload}")
+            if "COLLISION" in payload or "CONNECTION_REJECTED" in payload:
+                print(f"\n[{device_id}] DIAGNOSTIC: {payload}")
             parts = [p.strip() for p in payload.split('|')]
             data = {}
             for part in parts:

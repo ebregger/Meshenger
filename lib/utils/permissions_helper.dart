@@ -56,11 +56,15 @@ class PermissionsHelper {
       final android = await DeviceInfoPlugin().androidInfo;
       final sdkInt = android.version.sdkInt;
 
+      // Always include location: flutter_blue_plus with androidUsesFineLocation:true
+      // requires ACCESS_FINE_LOCATION to receive manufacturer data in scan results,
+      // even on Android 12+ (API 31+) where the new BT permissions were added.
       final List<Permission> toCheck = sdkInt >= _android12ApiLevel
           ? [
               Permission.bluetoothScan,
               Permission.bluetoothAdvertise,
               Permission.bluetoothConnect,
+              Permission.location,  // Required for manufacturer data in scan results
             ]
           : [
               Permission.location,
@@ -100,11 +104,14 @@ class PermissionsHelper {
     final android = await DeviceInfoPlugin().androidInfo;
     final sdkInt = android.version.sdkInt;
 
+    // Always include location: flutter_blue_plus requires ACCESS_FINE_LOCATION
+    // even on Android 12+ when androidUsesFineLocation is true.
     final List<Permission> permissions = sdkInt >= _android12ApiLevel
         ? const [
             Permission.bluetoothScan,
             Permission.bluetoothAdvertise,
             Permission.bluetoothConnect,
+            Permission.location,  // Required for manufacturer data in scan results
           ]
         : const [
             Permission.location,

@@ -29,8 +29,42 @@ class BleDiscoveryService {
   /// Stable nodeId -> last known MAC address (best-effort, may go stale/out of range).
   static final Map<String, String> nodeIdToMac = {};
 
-  /// MAC -> last time we performed a full sync handshake (anti-entropy heartbeat).
+  /// Stable nodeId -> last time a sync handshake *completed* (anti-entropy heartbeat).
+  /// Keyed by nodeId (not MAC) because Android RPAs rotate every connection.
   static final Map<String, DateTime> lastFullSync = {};
+
+  /// Stable nodeId -> last version vector we believe that peer held.
+  /// Used so initiator pushes are true deltas instead of the entire DB every dial.
+  static final Map<String, Map<String, String>> lastKnownPeerVector = {};
+
+  /// Soft cap for compressed offer+push payloads. Larger pushes routinely hit the
+  /// 60s GATT transfer watchdog and leave lagging nodes stuck mid-transfer.
+  static const int maxOfferPushBytes = 48 * 1024;
+
+  /// Keep BLE payloads under the GATT transfer budget by preferring newest rows.
+  static Map<String, dynamic> shrinkChangesetForBle(Map<String, dynamic> delta) {
+    const maxRowsPerTable = 120;
+    final out = <String, dynamic>{};
+    for (final entry in delta.entries) {
+      final rows = entry.value;
+      if (rows is! List) {
+        out[entry.key] = rows;
+        continue;
+      }
+      if (rows.length <= maxRowsPerTable) {
+        out[entry.key] = rows;
+        continue;
+      }
+      final sorted = List<dynamic>.from(rows)
+        ..sort((a, b) {
+          final ha = a is Map ? (a['hlc']?.toString() ?? '') : '';
+          final hb = b is Map ? (b['hlc']?.toString() ?? '') : '';
+          return hb.compareTo(ha);
+        });
+      out[entry.key] = sorted.take(maxRowsPerTable).toList();
+    }
+    return out;
+  }
 
   /// MAC -> suppress presence until this time (failed/uncallable peer).
   static final Map<String, DateTime> deadMacUntil = {};
@@ -40,6 +74,24 @@ class BleDiscoveryService {
 
   /// Best-effort MAC → stable nodeId mapping (filled after first offer/delta).
   static final Map<String, String> macToNodeId = {};
+
+  /// First 4 chars of nodeId → full nodeId (survives advert hash rotation between syncs).
+  static final Map<String, String> nodeIdPrefixToNodeId = {};
+
+  /// Record a completed bidirectional sync with [peerNodeId].
+  static void markSyncComplete(String peerNodeId) {
+    if (peerNodeId.isEmpty) return;
+    lastFullSync[peerNodeId] = DateTime.now();
+  }
+
+  /// Cache [vector] as what we last knew about [peerNodeId]'s CRDT frontier.
+  static void rememberPeerVector(
+    String peerNodeId,
+    Map<String, String> vector,
+  ) {
+    if (peerNodeId.isEmpty) return;
+    lastKnownPeerVector[peerNodeId] = Map<String, String>.from(vector);
+  }
 
   /// Bind a stable nodeId to a BLE MAC (and optional advertised hash).
   ///
@@ -52,6 +104,10 @@ class BleDiscoveryService {
   }) {
     final resolvedMac =
         (mac != null && mac.isNotEmpty && mac != '<unknown>') ? mac : null;
+
+    if (nodeId.length >= 4) {
+      nodeIdPrefixToNodeId[nodeId.substring(0, 4)] = nodeId;
+    }
 
     if (hash != null) {
       hashToNodeId[hash] = nodeId;
@@ -92,8 +148,11 @@ class BleDiscoveryService {
 
   /// Set of remote hash values currently being connected to (prevents duplicate in-flight attempts).
   final Set<int> _connectingHashes = {};
-  /// Queue of (remoteHashInt, device) pairs waiting for a connection slot.
-  final List<({int hash, BluetoothDevice device})> _pendingQueue = [];
+  /// NodeIds with an in-flight handshake (advertised DB hash rotates; nodeId does not).
+  final Set<String> _connectingNodeIds = {};
+  /// Queue of peers waiting for a connection slot.
+  final List<({int hash, BluetoothDevice device, String? peerNodeId, bool hashTrusted})>
+      _pendingQueue = [];
   final Map<int, DateTime> _hashCooldowns = {};
 
   /// Exposed for UI / notifier guards while a GATT sync is in flight.
@@ -201,14 +260,17 @@ class BleDiscoveryService {
     required void Function(String shortNodeId) onDiscovered,
   }) async {
     _connectingHashes.clear();
+    _connectingNodeIds.clear();
     _pendingQueue.clear();
     _hashCooldowns.clear();
     hashToMac.clear();
     hashToNodeId.clear();
     macToNodeId.clear();
+    nodeIdPrefixToNodeId.clear();
     localSeenNodes.clear();
     nodeIdToMac.clear();
     lastFullSync.clear();
+    lastKnownPeerVector.clear();
     deadMacUntil.clear();
     deadHashUntil.clear();
     _notifyConnectionPhase();
@@ -301,35 +363,51 @@ class BleDiscoveryService {
           final bool isBusy = (flags & (1 << 4)) != 0;
           final int hopDistance = (flags >> 5) & 0x03;
 
-          // Smart Routing Mutex
+          // Busy is advisory only. Hard-skipping caused a mesh deadlock during heavy
+          // floods: every node advertised busy, so nobody initiated and peers vanished.
           if (isBusy) {
-            debugPrint('[ROUTING] Target $mac is busy, skipping connection.');
-            continue;
+            debugPrint('[ROUTING] Target $mac reports busy (still eligible to dial)');
           }
         }
         // ---------------------------------------
 
         Uint8List? remotePayload = _tryGetRemoteHash(r);
-        // If the hash scan response hasn't merged into this result yet,
-        // synthesize a unique per-MAC placeholder so the loop can proceed.
-        // Using MAC bytes ensures each peer gets its own independent _hashCooldowns slot.
-        if (remotePayload == null && advertisesMeshService(r)) {
-          // Build a 12-byte placeholder: 4-byte MESH magic + 8 bytes derived from MAC.
-          final macBytes = mac.replaceAll(':', '').codeUnits;
-          remotePayload = Uint8List(12)
-            ..[0] = 0x4D // M
-            ..[1] = 0x45 // E
-            ..[2] = 0x53 // S
-            ..[3] = 0x48 // H
-            // embed first 8 mac-code-units as placeholder hash
-            ..[4] = macBytes.isNotEmpty ? macBytes[0] : 0
-            ..[5] = macBytes.length > 1 ? macBytes[1] : 0
-            ..[6] = macBytes.length > 2 ? macBytes[2] : 0
-            ..[7] = macBytes.length > 3 ? macBytes[3] : 0
-            ..[8] = macBytes.length > 4 ? macBytes[4] : 0
-            ..[9] = macBytes.length > 5 ? macBytes[5] : 0
-            ..[10] = macBytes.length > 6 ? macBytes[6] : 0
-            ..[11] = macBytes.length > 7 ? macBytes[7] : 0;
+        final hasRealHash = remotePayload != null && remotePayload.length >= 8;
+
+        // Service UUID / telemetry often arrive before the 0xFFE0 scan-response hash.
+        // Still dial those peers — skipping them left the mesh with zero peers after restart.
+        if (!hasRealHash && advertisesMeshService(r)) {
+          final known = macToNodeId[mac];
+          if (known != null) {
+            localSeenNodes[known] = DateTime.now();
+            nodeIdToMac[known] = mac;
+          }
+          // Stable per-MAC cooldown key (not a DB hash — never compare for hashesMatch).
+          final coolKey = mac.hashCode | 0x100000000;
+          final last = _hashCooldowns[coolKey];
+          final coolSecs = 10 + (coolKey.abs() % 5);
+          if (last == null ||
+              DateTime.now().difference(last).inSeconds >= coolSecs) {
+            final syncKey = known ?? mac;
+            final lastSync = lastFullSync[syncKey];
+            final needsAntiEntropy = lastSync == null ||
+                DateTime.now().difference(lastSync).inSeconds > 12;
+            if (needsAntiEntropy) {
+              onDiscovered(known ?? mac);
+              unawaited(
+                _runMeshInitiatorHandshake(
+                  myNodeId,
+                  coolKey,
+                  r.device,
+                  peerNodeId: known,
+                  remoteHashTrusted: false,
+                ),
+              );
+            } else {
+              _hashCooldowns[coolKey] = DateTime.now();
+            }
+          }
+          continue;
         }
         if (remotePayload == null) {
           debugPrint('[ROUTING] Dropping $mac: remotePayload is null (no 0xFFE0 and advertisesMeshService=false)');
@@ -369,6 +447,29 @@ class BleDiscoveryService {
 
         hashToMac[remoteHashInt] = mac;
 
+        // Resolve identity + refresh UI presence BEFORE connect cooldowns/deadlists.
+        // A peer in the penalty box is still "nearby" if we keep hearing its ads.
+        String? prefix;
+        if (remotePayload.length >= 12) {
+          try {
+            prefix =
+                utf8.decode(remotePayload.sublist(8, 12), allowMalformed: true);
+          } catch (_) {}
+        }
+        final stableNodeId = hashToNodeId[remoteHashInt] ??
+            macToNodeId[mac] ??
+            (prefix != null ? nodeIdPrefixToNodeId[prefix] : null);
+
+        if (stableNodeId != null) {
+          hashToNodeId[remoteHashInt] = stableNodeId;
+          macToNodeId[mac] = stableNodeId;
+          nodeIdToMac[stableNodeId] = mac;
+          localSeenNodes[stableNodeId] = DateTime.now();
+          if (prefix != null && prefix.isNotEmpty) {
+            nodeIdPrefixToNodeId[prefix] = stableNodeId;
+          }
+        }
+
         final deadHashTime = deadHashUntil[remoteHashInt];
         if (deadHashTime != null && DateTime.now().isBefore(deadHashTime)) {
           continue;
@@ -379,39 +480,17 @@ class BleDiscoveryService {
           continue;
         }
 
-        // Passive mapping: if we already mapped this hash to a stable nodeId, remember its MAC.
-        // IMPORTANT: do NOT refresh `localSeenNodes` purely from scan packets; Android can keep
-        // emitting cached advertisements even after the peer app is killed.
-        final mapped = hashToNodeId[remoteHashInt];
-        if (mapped != null) {
-          nodeIdToMac[mapped] = mac;
-          final lastOk = lastFullSync[mac];
-          if (lastOk != null &&
-              DateTime.now().difference(lastOk) <=
-                  const Duration(seconds: 15)) {
-            localSeenNodes[mapped] = DateTime.now();
-          }
-        }
-
-        // Update active neighbor table using the stable nodeId mapped from the advertised hash.
-        final stableNodeId =
-            hashToNodeId[remoteHashInt] ?? macToNodeId[mac];
-        if (stableNodeId != null) {
-          final lastOk = lastFullSync[mac];
-          if (lastOk != null &&
-              DateTime.now().difference(lastOk) <=
-                  const Duration(seconds: 15)) {
-            localSeenNodes[stableNodeId] = DateTime.now();
-          }
-        }
         final discoveredId = stableNodeId ?? mac;
 
         final last = _hashCooldowns[remoteHashInt];
         // Cooldown must be longer than _deadlistDurationForError to ensure the hash
         // path doesn't immediately retry a peer that's in the deadMacUntil window.
-        // 8s matches the DISCONNECTED/timeout cooldown (4s) with enough headroom.
-        if (last != null && DateTime.now().difference(last).inSeconds < 8) {
-          continue;
+        // Add small jitter so N phones don't stampede the same peer in lockstep.
+        if (last != null) {
+          final coolSecs = 10 + (remoteHashInt.abs() % 5);
+          if (DateTime.now().difference(last).inSeconds < coolSecs) {
+            continue;
+          }
         }
 
         final localHashBytes = _localHash;
@@ -421,20 +500,53 @@ class BleDiscoveryService {
               ByteData.sublistView(localHashBytes).getUint32(4, Endian.big)
             : null;
 
-        // 20s anti-entropy heartbeat: even if hashes match, force a connection periodically.
-        // Reduced from 50s so missed or failed syncs are retried within the test window.
-        final lastSync = lastFullSync[mac];
-        final needsAntiEntropy = lastSync == null ||
-            DateTime.now().difference(lastSync).inSeconds > 20;
+        final hashesMatch =
+            localHashInt != null && remoteHashInt == localHashInt;
 
-        // If hashes match and we don't need anti-entropy, skip and cooldown this hash.
-        if (localHashInt != null && remoteHashInt == localHashInt && !needsAntiEntropy) {
+        // Anti-entropy: when DBs already match, dial rarely. When they diverge, retry sooner.
+        // Prefer stable nodeId — MAC keys never hit after RPA rotation.
+        final syncKey = stableNodeId ?? mac;
+        final lastSync = lastFullSync[syncKey];
+        final antiEntropySecs = hashesMatch ? 90 : 12;
+        final needsAntiEntropy = lastSync == null ||
+            DateTime.now().difference(lastSync).inSeconds > antiEntropySecs;
+
+        if (hashesMatch && !needsAntiEntropy) {
           _hashCooldowns[remoteHashInt] = DateTime.now();
           continue;
         }
 
+        // Initiator election ONLY for matched-hash anti-entropy. When hashes differ,
+        // either side may dial — otherwise the lowest node-id becomes a single
+        // point of failure (seen: Pixel 9 stuck behind while peers never pull).
+        if (hashesMatch) {
+          String? remotePrefix = prefix;
+          final localPrefix = myNodeId.length >= 4
+              ? myNodeId.substring(0, 4)
+              : myNodeId.padRight(4, '0');
+          if (remotePrefix != null && remotePrefix.isNotEmpty) {
+            final cmp = localPrefix.compareTo(remotePrefix);
+            if (cmp > 0) {
+              continue; // Peer owns idle anti-entropy.
+            }
+            if (cmp == 0 &&
+                localHashInt != null &&
+                localHashInt >= remoteHashInt) {
+              continue;
+            }
+          }
+        }
+
         onDiscovered(discoveredId);
-        unawaited(_runMeshInitiatorHandshake(myNodeId, remoteHashInt, r.device));
+        unawaited(
+          _runMeshInitiatorHandshake(
+            myNodeId,
+            remoteHashInt,
+            r.device,
+            peerNodeId: stableNodeId,
+            remoteHashTrusted: true,
+          ),
+        );
       }
     });
   }
@@ -443,29 +555,52 @@ class BleDiscoveryService {
   Future<void> _runMeshInitiatorHandshake(
     String myNodeId,
     int remoteHashInt,
-    BluetoothDevice device,
-  ) async {
+    BluetoothDevice device, {
+    String? peerNodeId,
+    bool remoteHashTrusted = true,
+  }) async {
     // If already connecting to this exact hash, skip entirely (duplicate).
     if (_connectingHashes.contains(remoteHashInt)) return;
+    // Same peer under a rotated DB hash — don't stack parallel dials.
+    if (peerNodeId != null && _connectingNodeIds.contains(peerNodeId)) return;
 
     // If another connection is already in flight, enqueue this peer instead of dropping it.
     if (_connectingHashes.isNotEmpty) {
-      // Only enqueue if not already pending.
-      if (!_pendingQueue.any((e) => e.hash == remoteHashInt)) {
-        _pendingQueue.add((hash: remoteHashInt, device: device));
+      // Only enqueue if not already pending for this hash or nodeId.
+      final alreadyQueued = _pendingQueue.any(
+        (e) =>
+            e.hash == remoteHashInt ||
+            (peerNodeId != null && e.peerNodeId == peerNodeId),
+      );
+      if (!alreadyQueued) {
+        _pendingQueue.add((
+          hash: remoteHashInt,
+          device: device,
+          peerNodeId: peerNodeId,
+          hashTrusted: remoteHashTrusted,
+        ));
       }
       return;
     }
 
-    await _doHandshake(myNodeId, remoteHashInt, device);
+    await _doHandshake(
+      myNodeId,
+      remoteHashInt,
+      device,
+      peerNodeId: peerNodeId,
+      remoteHashTrusted: remoteHashTrusted,
+    );
   }
 
   Future<void> _doHandshake(
     String myNodeId,
     int remoteHashInt,
-    BluetoothDevice device,
-  ) async {
+    BluetoothDevice device, {
+    String? peerNodeId,
+    bool remoteHashTrusted = true,
+  }) async {
     _connectingHashes.add(remoteHashInt);
+    if (peerNodeId != null) _connectingNodeIds.add(peerNodeId);
     // Even if the connection fails/cancels, keep a short cooldown for this remote hash so
     // we don't spam connect() attempts to stale/cached advertisers.
     _hashCooldowns[remoteHashInt] = DateTime.now();
@@ -487,18 +622,30 @@ class BleDiscoveryService {
     }
     try {
       final db = await _ref.read(databaseProvider.future);
-      // Send a combined 'offer+push' packet:
-      //   - 'vector': our version vector so the server can compute what WE are missing
-      //   - 'initiator_data': our own full changeset so the server can merge what IT is missing
-      // This makes the handshake bidirectional in a single GATT write+reply round-trip.
-      // Previously the offer only contained the vector, so the server could compute D3's
-      // missing rows and reply with them, but D1/D2 never received D3's new messages.
+      // Combined offer+push: vector so the server can compute what WE lack, plus a
+      // *delta* of what we think the peer still lacks (from lastKnownPeerVector).
+      // Full-DB pushes balloon past the GATT transfer watchdog and stall lagging nodes.
       final myVector = await db.getVersionVector();
       final myHashInt = await db.getDatabaseHash();
       final myNodeId2 = myNodeId;
-      // Build our own full changeset using an empty remote vector (we want to push everything).
-      final ourChangeset = await db.getDeltaChangeset({});
-      debugPrint('📤 [DISCOVERY] Sending offer+push to $targetMac — vector=${myVector.length} entries, pushing ${ourChangeset.length} table(s)');
+      final resolvedPeer = peerNodeId ??
+          macToNodeId[targetMac] ??
+          hashToNodeId[remoteHashInt];
+      final priorVector = resolvedPeer != null
+          ? Map<String, dynamic>.from(lastKnownPeerVector[resolvedPeer] ?? {})
+          : <String, dynamic>{};
+      var ourChangeset = await db.getDeltaChangeset(priorVector);
+      if (ourChangeset.isEmpty &&
+          remoteHashTrusted &&
+          remoteHashInt != myHashInt) {
+        ourChangeset = await db.getHashRepairChangeset();
+        if (ourChangeset.isNotEmpty) {
+          debugPrint(
+            '⚠️ [DISCOVERY] Hash-mismatch repair push to $targetMac '
+            '(peer=$resolvedPeer)',
+          );
+        }
+      }
       final offerEnvelope = <String, dynamic>{
         'type': 'offer',
         'sender_id': myNodeId2,
@@ -507,17 +654,56 @@ class BleDiscoveryService {
         'vector': myVector,
         'initiator_data': ourChangeset,
       };
-      final payload = zlib.encode(utf8.encode(jsonEncode(offerEnvelope)));
+      var payload = zlib.encode(utf8.encode(jsonEncode(offerEnvelope)));
+      if (payload.length > maxOfferPushBytes) {
+        if (priorVector.isEmpty) {
+          // Full-DB dump + newest-N shrink permanently strands older unique rows
+          // (seen: BenchMsg#001 stuck on 2/3 nodes). Vector-only; peer replies with
+          // what we lack, and our older rows move when they dial with a real vector.
+          offerEnvelope.remove('initiator_data');
+          payload = zlib.encode(utf8.encode(jsonEncode(offerEnvelope)));
+          debugPrint(
+            '⚠️ [DISCOVERY] Offer push capped for $targetMac — '
+            'vector-only (${payload.length} bytes; peer=$resolvedPeer prior=empty)',
+          );
+        } else {
+          ourChangeset = shrinkChangesetForBle(ourChangeset);
+          offerEnvelope['initiator_data'] = ourChangeset;
+          payload = zlib.encode(utf8.encode(jsonEncode(offerEnvelope)));
+          if (payload.length > maxOfferPushBytes) {
+            offerEnvelope.remove('initiator_data');
+            payload = zlib.encode(utf8.encode(jsonEncode(offerEnvelope)));
+            debugPrint(
+              '⚠️ [DISCOVERY] Offer push capped for $targetMac — '
+              'vector-only (${payload.length} bytes; peer=$resolvedPeer)',
+            );
+          } else {
+            final rowCounts = ourChangeset.map(
+              (t, rows) => MapEntry(t, (rows as List).length),
+            );
+            debugPrint(
+              '⚠️ [DISCOVERY] Offer push shrunk for $targetMac — '
+              'rows=$rowCounts peer=$resolvedPeer',
+            );
+          }
+        }
+      } else {
+        final rowCounts = ourChangeset.map(
+          (t, rows) => MapEntry(t, (rows as List).length),
+        );
+        debugPrint(
+          '📤 [DISCOVERY] Sending offer+push to $targetMac — '
+          'vector=${myVector.length} prior=${priorVector.length} rows=$rowCounts peer=$resolvedPeer',
+        );
+      }
       final macAddress = device.remoteId.str;
       // Android mesh advertisers use Random Resolvable Addresses.
       // We pass isRandom: true to ensure the native layer uses the correct addressing mode.
       await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload), isRandom: true);
-      debugPrint('✅ [DISCOVERY] Offer+push sent to $targetMac (${payload.length} bytes) — awaiting delta reply');
+      debugPrint('✅ [DISCOVERY] Offer sent to $targetMac (${payload.length} bytes) — awaiting delta reply');
       debugPrint('[BENCHMARK] TARGET_MAC:$targetMac | EVENT:OFFER_SENT | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
-      // Only mark lastFullSync on a SUCCESSFUL offer send — do NOT set this on the error
-      // path. If we set it even on failed sends, the 20s anti-entropy timer starts from a
-      // failed attempt and the peer won't be retried until the window expires.
-      lastFullSync[targetMac] = DateTime.now();
+      // Do NOT mark lastFullSync here — send ≠ completed sync. Completion is recorded
+      // when we process the peer's delta (or finish serving their offer).
     } catch (e) {
       debugPrint('🟥 Connection/GATT failed for $targetMac: $e');
       // Refresh hash cooldown so retries respect the scan debounce window.
@@ -532,7 +718,7 @@ class BleDiscoveryService {
         deadHashUntil[remoteHashInt] = DateTime.now().add(duration);
       }
       // Best-effort: remove from direct presence so UI can drop it.
-      final mapped = macToNodeId[targetMac];
+      final mapped = macToNodeId[targetMac] ?? peerNodeId;
       if (mapped != null) {
         localSeenNodes.remove(mapped);
       }
@@ -546,12 +732,21 @@ class BleDiscoveryService {
         await stateSub?.cancel();
       } catch (_) {}
       _connectingHashes.remove(remoteHashInt);
+      if (peerNodeId != null) _connectingNodeIds.remove(peerNodeId);
       _notifyConnectionPhase();
       // Drain one item from the queue and attempt it now that we have a free slot.
       if (_pendingQueue.isNotEmpty) {
         final next = _pendingQueue.removeAt(0);
         // Fire-and-forget: don't await so this finally block can return promptly.
-        unawaited(_doHandshake(myNodeId, next.hash, next.device));
+        unawaited(
+          _doHandshake(
+            myNodeId,
+            next.hash,
+            next.device,
+            peerNodeId: next.peerNodeId,
+            remoteHashTrusted: next.hashTrusted,
+          ),
+        );
       }
     }
   }

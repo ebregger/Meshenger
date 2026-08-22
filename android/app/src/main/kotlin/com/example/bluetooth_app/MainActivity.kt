@@ -72,8 +72,8 @@ class MainActivity : FlutterActivity() {
   // Set to true during resetNativeServer() to suppress re-entrant disconnect callbacks.
   @Volatile private var isResettingServer = false
   // Connection collision mutex: only one outbound GATT attempt may run at a time.
-  // compareAndSet(false, true) to acquire; set(false) to release.
-  private val isGattBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+  private val isOutboundClientBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+  private val activeInboundServers = java.util.concurrent.atomic.AtomicInteger(0)
 
   private val SERVICE_UUID = UUID.fromString("c7e4f1a2-9b3d-4a8e-a1f6-2d5e8b9c0a4f")
   private val CHARACTERISTIC_UUID =
@@ -85,6 +85,7 @@ class MainActivity : FlutterActivity() {
   private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
   // Lock + state for the Server→Client notifyCharacteristicChanged flow.
+  private val serverReplyExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
   private val serverNotifyLock = Object()
   @Volatile private var lastNotifyOk: Boolean? = null
   // Per-client MTU negotiated on the server side so we know the notify chunk size.
@@ -280,15 +281,37 @@ class MainActivity : FlutterActivity() {
           // cancelConnection() in response, it fires DISCONNECTED again, ad infinitum.
           if (isResettingServer) return
           if (newState == BluetoothProfile.STATE_CONNECTED) {
-            connectedServerClients[device.address] = true
-            Log.d(TAG, "[SERVER] Client connected: ${device.address}")
+            // Soft cap: Android GATT server slots get flaky under many concurrent clients.
+            val currentInbound = activeInboundServers.get()
+            if (currentInbound >= 3) {
+              Log.w(
+                TAG,
+                "[DIAGNOSTIC] TARGET_MAC:${device.address} | EVENT:CONNECTION_REJECTED | REASON:inbound_cap_$currentInbound"
+              )
+              try {
+                bluetoothGattServer?.cancelConnection(device)
+              } catch (_: Throwable) {}
+              return
+            }
+            val wasAlreadyConnected = connectedServerClients.put(device.address, true) != null
+            if (!wasAlreadyConnected) {
+              val activeConns = activeInboundServers.incrementAndGet()
+              Log.d(TAG, "[SERVER] Client connected: ${device.address}. Active inbound connections: $activeConns")
+              if (activeConns > 1) {
+                Log.w(TAG, "[DIAGNOSTIC] SERVER COLLISION WARNING! Multiple concurrent clients connected ($activeConns). This may cause GATT 133 panics.")
+              }
+              updateServerBusyState()
+            }
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-            Log.d(TAG, "[SERVER] Client disconnected: ${device.address} status=$status")
-            // Only call cancelConnection() if the device was actually connected to us.
-            // Calling it on an already-disconnected device triggers another
-            // onConnectionStateChange(DISCONNECTED) callback — causing an infinite loop.
+            val activeConnsBefore = activeInboundServers.get()
             val wasConnected = connectedServerClients.remove(device.address) != null
             if (wasConnected) {
+              val activeConnsAfter = activeInboundServers.decrementAndGet()
+              Log.d(TAG, "[SERVER] Client disconnected: ${device.address} status=$status. Active inbound connections now: $activeConnsAfter")
+              if (status != 0 && activeConnsBefore > 1) {
+                Log.e(TAG, "[DIAGNOSTIC] SERVER COLLISION ERROR! Disconnection with status=$status while having $activeConnsBefore active connections.")
+              }
+              updateServerBusyState()
               try { bluetoothGattServer?.cancelConnection(device) } catch (_: Throwable) {}
             }
           }
@@ -395,10 +418,20 @@ class MainActivity : FlutterActivity() {
     bluetoothGattServer = null
     connectedServerClients.clear()
     deadMacs.clear()
-    isGattBusy.set(false)
+    isOutboundClientBusy.set(false)
+    activeInboundServers.set(0)
     isResettingServer = false
     Log.d(TAG, "[SERVER] GATT server reset complete.")
     result.success(null)
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun updateServerBusyState() {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && currentAdvertisingSet != null) {
+          try {
+              currentAdvertisingSet?.setAdvertisingData(buildPrimaryAd(currentAdvertiserHash))
+          } catch (_: Throwable) {}
+      }
   }
 
   @SuppressLint("MissingPermission")
@@ -421,28 +454,37 @@ class MainActivity : FlutterActivity() {
       return
     }
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && currentAdvertisingSet != null) {
-      // MODERN FAST PATH: Update radio live — zero battery tear-down penalty.
-      Log.d(TAG, "[ADV] Updating Modern AdvertisingSet with new hash...")
-      currentAdvertisingSet?.setAdvertisingData(buildPrimaryAd(currentAdvertiserHash))
+    // Both Modern and Legacy APIs: use a debounced stop+restart to update the advertisement.
+    // setAdvertisingData/setScanResponseData are silently dropped by many Qualcomm/Samsung HALs
+    // in LegacyMode after the first call — the only reliable approach is to stop and restart.
+    // MAC rotation from restart is acceptable: scanner-side identity is keyed on the 64-bit DB
+    // hash in the scan response packet, not the random resolvable address.
+    pendingHashUpdateHandler?.removeCallbacksAndMessages(null)
+    val handler = Handler(Looper.getMainLooper())
+    pendingHashUpdateHandler = handler
+    handler.postDelayed({
       val hex = currentAdvertiserHash.joinToString("") { "%02x".format(it) }
-      Log.d(TAG, "[ADV] (Modern) Live hash update hex=$hex")
-    } else {
-      // LEGACY PATH: Debounce stop/start to avoid tearing down active GATT connections.
-      val adv = advertiser ?: return result.success(null)
-      val cb = advertiseCallback ?: return result.success(null)
-      val settings = advertiseSettings ?: return result.success(null)
-      pendingHashUpdateHandler?.removeCallbacksAndMessages(null)
-      val handler = Handler(Looper.getMainLooper())
-      pendingHashUpdateHandler = handler
-      handler.postDelayed({
-        Log.d(TAG, "[ADV] Restarting Legacy Advertiser for hash update...")
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && currentAdvertisingSet != null) {
+        Log.d(TAG, "[ADV] Restarting Modern AdvertisingSet for hash update hex=$hex...")
+        try {
+          advertiser?.stopAdvertisingSet(advertisingSetCallback!!)
+        } catch (e: Throwable) {
+          Log.e(TAG, "[ADV] stopAdvertisingSet error: ${e.message}")
+        }
+        currentAdvertisingSet = null
+        startModernAdvertising(currentAdvertiserHash)
+        Log.d(TAG, "[ADV] (Modern) Restarted AdvertisingSet with hash=$hex")
+      } else {
+        val adv = advertiser ?: return@postDelayed
+        val cb = advertiseCallback ?: return@postDelayed
+        val settings = advertiseSettings ?: return@postDelayed
+        Log.d(TAG, "[ADV] Restarting Legacy Advertiser for hash update hex=$hex...")
         try { adv.stopAdvertising(cb) } catch (_: Throwable) {}
         adv.startAdvertising(settings, buildPrimaryAd(currentAdvertiserHash), buildScanResponseData(currentAdvertiserHash, currentNodeIdPrefix), cb)
-        val hex = currentAdvertiserHash.joinToString("") { "%02x".format(it) }
         Log.d(TAG, "[ADV] (Legacy) Advertiser hash updated to $hex (debounced)")
-      }, 5000)
-    }
+      }
+    }, 3000)
+
 
     result.success(null)
   }
@@ -462,9 +504,9 @@ class MainActivity : FlutterActivity() {
 
   private fun buildTelemetryBytes(hashPayload: ByteArray): ByteArray {
       val telemetry = ByteArray(4)
-      if (hashPayload.size >= 8) {
-          telemetry[0] = hashPayload[6]
-          telemetry[1] = hashPayload[7]
+      if (hashPayload.size >= 4) {
+          telemetry[0] = hashPayload[2]
+          telemetry[1] = hashPayload[3]
       } else if (hashPayload.size >= 2) {
           telemetry[0] = hashPayload[0]
           telemetry[1] = hashPayload[1]
@@ -485,7 +527,8 @@ class MainActivity : FlutterActivity() {
 
       val isLegacy = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
       val isIOS = false
-      val isBusy = isGattBusy.get()
+      // Near inbound capacity only — a single active sync must not freeze the mesh.
+      val isBusy = activeInboundServers.get() >= 2
       val hopDistance = 0 
 
       var flags = 0
@@ -500,6 +543,10 @@ class MainActivity : FlutterActivity() {
 
       telemetry[2] = (flags and 0xFF).toByte()
       telemetry[3] = ((flags shr 8) and 0xFF).toByte()
+
+      val hex0 = String.format("%02X", telemetry[0].toInt() and 0xFF)
+      val hex1 = String.format("%02X", telemetry[1].toInt() and 0xFF)
+      Log.d(TAG, "[DIAGNOSTIC] BROADCASTING TELEMETRY HEADER BYTES: 0x$hex0 0x$hex1")
 
       return telemetry
   }
@@ -657,7 +704,7 @@ class MainActivity : FlutterActivity() {
 
       fun completeErrorOnMain(code: String, message: String) {
         if (isCompleted.compareAndSet(false, true)) {
-          isGattBusy.set(false)
+          isOutboundClientBusy.set(false)
           try { gatt?.disconnect() } catch (_: Throwable) {}
           try { gatt?.close() } catch (_: Throwable) {}
           Handler(Looper.getMainLooper()).post { result.error(code, message, null) }
@@ -671,7 +718,7 @@ class MainActivity : FlutterActivity() {
 
       val connectionWatchdog = Runnable {
         if (isCompleted.compareAndSet(false, true)) {
-          isGattBusy.set(false)
+          isOutboundClientBusy.set(false)
           val count = failureCounts.getOrDefault(macAddress, 0) + 1
           failureCounts[macAddress] = count
           val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 16000L)
@@ -685,7 +732,7 @@ class MainActivity : FlutterActivity() {
         }
       }
       val transferWatchdog = Runnable {
-        isGattBusy.set(false)
+        isOutboundClientBusy.set(false)
         Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:transfer_timeout")
         try { gatt?.disconnect() } catch (_: Throwable) {}
         try { gatt?.close() } catch (_: Throwable) {}
@@ -705,6 +752,7 @@ class MainActivity : FlutterActivity() {
             if (g == null) return
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+              isOutboundClientBusy.set(true)
               Log.d(TAG, "[GATT] STATE_CONNECTED mac=$macAddress")
               Log.d(TAG, "[BENCHMARK] TARGET_MAC:$macAddress | EVENT:GATT_CONNECTED | TIMESTAMP:${System.currentTimeMillis()}")
               mainHandler.removeCallbacks(connectionWatchdog)
@@ -725,7 +773,7 @@ class MainActivity : FlutterActivity() {
               }, 50)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
               Log.d(TAG, "[GATT] STATE_DISCONNECTED phase=$phase status=$status mac=$macAddress")
-              isGattBusy.set(false) // Always release the mutex on disconnect.
+              isOutboundClientBusy.set(false) // Always release the mutex on disconnect.
               if (!isCompleted.get()) {
                 val count = failureCounts.getOrDefault(macAddress, 0) + 1
                 failureCounts[macAddress] = count
@@ -976,23 +1024,23 @@ class MainActivity : FlutterActivity() {
         }
 
         // Connection collision guard: only one outbound GATT attempt at a time.
-        if (!isGattBusy.compareAndSet(false, true)) {
+        if (!isOutboundClientBusy.compareAndSet(false, true)) {
           Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_SKIPPED | REASON:gatt_busy")
           Handler(Looper.getMainLooper()).post { result.error("gatt_busy", "GATT is currently busy, retry on next scan cycle", null) }
           return@submit
         }
 
-        val jitterMs = (500..4500).random().toLong()
+        val jitterMs = (200..1800).random().toLong()
         Handler(Looper.getMainLooper()).postDelayed({
           if (connectedServerClients[macAddress] == true) {
-            isGattBusy.set(false)
+            isOutboundClientBusy.set(false)
             completeErrorOnMain("already_connected", "Already connected as Server to this MAC")
             taskLatch.countDown()
             return@postDelayed
           }
           gatt = device.connectGatt(this@MainActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
           if (gatt == null) {
-            isGattBusy.set(false)
+            isOutboundClientBusy.set(false)
             completeErrorOnMain("connect_failed", "connectGatt returned null")
           }
         }, jitterMs)
@@ -1000,7 +1048,7 @@ class MainActivity : FlutterActivity() {
         // Block the single-thread queue until this connection attempt finishes (success, fail, or 25s timeout)
         taskLatch.await()
       } catch (e: Exception) {
-        isGattBusy.set(false)
+        isOutboundClientBusy.set(false)
         completeErrorOnMain("queue_exception", e.message ?: "queue exception")
       } finally {
         mainHandler.removeCallbacks(connectionWatchdog)
@@ -1026,7 +1074,7 @@ class MainActivity : FlutterActivity() {
     val notifyChar = service?.getCharacteristic(NOTIFY_CHARACTERISTIC_UUID)
       ?: return result.error("no_char", "NOTIFY characteristic not found in service", null)
 
-    Thread {
+    serverReplyExecutor.submit {
       try {
         val mtu = serverMtuMap[macAddress] ?: 23
         val chunkSize = (mtu - 3).coerceIn(20, 512)
@@ -1059,7 +1107,7 @@ class MainActivity : FlutterActivity() {
           if (!notifyBlocking(chunk)) {
             Log.e(TAG, "[GATT-NOTIFY] Notify chunk failed at offset=$offset")
             Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify chunk failed at offset=$offset", null) }
-            return@Thread
+            return@submit
           }
           offset += length
         }
@@ -1067,7 +1115,7 @@ class MainActivity : FlutterActivity() {
         val eof = "||EOF||".toByteArray()
         if (!notifyBlocking(eof)) {
           Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify EOF failed", null) }
-          return@Thread
+          return@submit
         }
 
         Log.d(TAG, "[GATT-NOTIFY] Delta fully sent to mac=$macAddress")
@@ -1076,7 +1124,7 @@ class MainActivity : FlutterActivity() {
         Log.e(TAG, "[GATT-NOTIFY] Exception during reply", t)
         Handler(Looper.getMainLooper()).post { result.error("NOTIFY_EXCEPTION", t.message ?: "Unknown", null) }
       }
-    }.start()
+    }
   }
 
   private fun coercePayloadBytes(payloadAny: Any?): ByteArray? {
