@@ -10,6 +10,7 @@ import '../providers/chat_provider.dart';
 import '../providers/identity_provider.dart';
 import '../providers/node_profiles_provider.dart';
 import '../screens/config_screen.dart';
+import '../services/ui_debug_snapshot.dart';
 import '../widgets/chat/chat_bubble.dart';
 import '../widgets/chat/chat_input_dock.dart';
 import '../widgets/chat/device_chip.dart';
@@ -145,6 +146,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 Positioned.fill(
                   child: ref.watch(chatProvider).when(
                         data: (messages) {
+                          // After paint: expose rendered chat list to stress-test /ui API.
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            UiDebugSnapshot.reportRendered([
+                              for (final m in messages)
+                                {
+                                  'msgId': m.msgId,
+                                  'textContent': m.textContent,
+                                  'originNodeId': m.originNodeId,
+                                },
+                            ]);
+                          });
+
                           final myId = myIdAsync.value;
                           if (messages.isEmpty) {
                             return Center(
@@ -174,12 +187,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               final messageIndex = messages.length - 1 - index;
                               final tm = messages[messageIndex];
                               final isSent = myId != null && tm.originNodeId == myId;
-                              
-                              if (!isSent) {
-                                // To prevent spamming, we only need to show the UI displayed log once,
-                                // but doing it here guarantees the Flutter framework actually processed it.
-                                debugPrint('[BENCHMARK] MSG_ID:${tm.msgId} | EVENT:DISPLAYED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
-                              }
 
                               final bubble = ChatMessage(
                                 id: tm.msgId,
@@ -437,7 +444,12 @@ class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
                   const Text('MAC Address'),
                   const SizedBox(height: 4),
                   SelectableText(
-                    currentMacAddress ?? 'Unknown (Out of Range)',
+                    currentMacAddress ??
+                        (currentStatus == PeerStatus.indirect
+                            ? 'Unknown (Out of Range)'
+                            : currentStatus == PeerStatus.direct
+                                ? 'Unknown (awaiting bind)'
+                                : 'Unknown'),
                     style: const TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 12,

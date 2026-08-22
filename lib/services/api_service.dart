@@ -9,6 +9,7 @@ import '../providers/database_provider.dart';
 import '../providers/identity_provider.dart';
 import '../providers/ble_network_provider.dart';
 import '../services/native_mesh_service.dart';
+import '../services/ui_debug_snapshot.dart';
 
 class ApiService {
   static HttpServer? _server;
@@ -36,14 +37,35 @@ class ApiService {
           } else if (path == '/messages' && request.method == 'GET') {
             final db = await container.read(databaseProvider.future);
             final msgs = await db.fetchTextMessages();
+            // Return only fields needed for propagation checking to minimize payload size
             final jsonList = msgs.map((m) => {
               'msgId': m.msgId,
-              'originNodeId': m.originNodeId,
               'textContent': m.textContent,
-              'timestamp': m.timestamp.toInt()
             }).toList();
             _respond(request, 200, {'messages': jsonList});
-            
+
+          } else if (path == '/ui' && request.method == 'GET') {
+            // What the chat list has painted — revision bumps only when UI content changes.
+            _respond(request, 200, UiDebugSnapshot.toJson());
+
+          } else if (path == '/peers' && request.method == 'GET') {
+            final peers =
+                container.read(activePeersProvider).asData?.value ?? const [];
+            _respond(request, 200, {
+              'peers': [
+                for (final p in peers)
+                  {
+                    'id': p.id,
+                    'name': p.name,
+                    'status': p.status.name,
+                    'macAddress': p.macAddress,
+                    'routeViaId': p.routeViaId,
+                    'routeViaName': p.routeViaName,
+                    'lastSeenMs': p.lastSeen.millisecondsSinceEpoch,
+                  },
+              ],
+            });
+
           } else if (path == '/send' && request.method == 'POST') {
             final bodyStr = await utf8.decoder.bind(request).join();
             var body = <String, dynamic>{};

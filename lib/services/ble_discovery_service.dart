@@ -41,6 +41,37 @@ class BleDiscoveryService {
   /// Best-effort MAC → stable nodeId mapping (filled after first offer/delta).
   static final Map<String, String> macToNodeId = {};
 
+  /// Bind a stable nodeId to a BLE MAC (and optional advertised hash).
+  ///
+  /// Call this on every successful sync so the UI can show a real MAC for
+  /// direct peers — not only after a later scan tick updates [nodeIdToMac].
+  static void bindPeerIdentity({
+    required String nodeId,
+    String? mac,
+    int? hash,
+  }) {
+    final resolvedMac =
+        (mac != null && mac.isNotEmpty && mac != '<unknown>') ? mac : null;
+
+    if (hash != null) {
+      hashToNodeId[hash] = nodeId;
+      if (resolvedMac != null) {
+        hashToMac[hash] = resolvedMac;
+      }
+    }
+    if (resolvedMac != null) {
+      macToNodeId[resolvedMac] = nodeId;
+      nodeIdToMac[nodeId] = resolvedMac;
+    } else if (hash != null) {
+      // Fall back to last scanned MAC for this hash (initiator path).
+      final scanned = hashToMac[hash];
+      if (scanned != null) {
+        macToNodeId[scanned] = nodeId;
+        nodeIdToMac[nodeId] = scanned;
+      }
+    }
+  }
+
   BleDiscoveryService(
     this._ref, {
     this.onConnectionPhaseChanged,
@@ -59,12 +90,14 @@ class BleDiscoveryService {
   Timer? _heartbeatTimer;
   DateTime? _lastResultAt;
 
-  /// When true, scan callbacks must not start another handshake or fire discovery churn.
-  bool _isConnecting = false;
+  /// Set of remote hash values currently being connected to (prevents duplicate in-flight attempts).
+  final Set<int> _connectingHashes = {};
+  /// Queue of (remoteHashInt, device) pairs waiting for a connection slot.
+  final List<({int hash, BluetoothDevice device})> _pendingQueue = [];
   final Map<int, DateTime> _hashCooldowns = {};
 
   /// Exposed for UI / notifier guards while a GATT sync is in flight.
-  bool get isConnecting => _isConnecting;
+  bool get isConnecting => _connectingHashes.isNotEmpty;
 
   Duration _deadlistDurationForError(Object error) {
     // Keep all cooldowns short so real peers are retried quickly after transient failures.
@@ -167,7 +200,8 @@ class BleDiscoveryService {
     String? ownMac,
     required void Function(String shortNodeId) onDiscovered,
   }) async {
-    _isConnecting = false;
+    _connectingHashes.clear();
+    _pendingQueue.clear();
     _hashCooldowns.clear();
     hashToMac.clear();
     hashToNodeId.clear();
@@ -233,8 +267,14 @@ class BleDiscoveryService {
         ..sort((a, b) => b.timeStamp.compareTo(a.timeStamp));
 
       for (final r in sortedResults) {
-        if (_isConnecting) continue;
-        if (!_isLikelyNativeMeshAdvert(r)) continue;
+        if (!_isLikelyNativeMeshAdvert(r)) {
+          // Check if this might be D3 being erroneously dropped
+          final mac = r.device.remoteId.str;
+          final svc = r.advertisementData.serviceUuids;
+          final mfg = r.advertisementData.manufacturerData.keys.toList();
+          debugPrint('[ROUTING] _isLikelyNativeMeshAdvert rejected MAC $mac. Svcs: $svc, MfgKeys: $mfg');
+          continue;
+        }
 
         final mac = r.device.remoteId.str;
 
@@ -248,17 +288,9 @@ class BleDiscoveryService {
         final telemetryData = r.advertisementData.manufacturerData[0xFFE1];
         if (telemetryData != null && telemetryData.length >= 4) {
           final tBytes = Uint8List.fromList(telemetryData);
-
-          // Cache-Busting / Self-Drop
-          if (_localHash != null && _localHash!.length >= 8) {
-            if (tBytes[0] == _localHash![6] && tBytes[1] == _localHash![7]) {
-              continue; // Drop packet, matching hash implies identical data or self
-            }
-          } else if (_localHash != null && _localHash!.length >= 2) {
-            if (tBytes[0] == _localHash![0] && tBytes[1] == _localHash![1]) {
-              continue; // Fallback
-            }
-          }
+          final hex0 = tBytes[0].toRadixString(16).padLeft(2, '0').toUpperCase();
+          final hex1 = tBytes[1].toRadixString(16).padLeft(2, '0').toUpperCase();
+          debugPrint('[DIAGNOSTIC] SCANNED TELEMETRY HEADER FROM $mac: 0x$hex0 0x$hex1');
 
           // Bit Unpacking
           final int flags = tBytes[2] | (tBytes[3] << 8);
@@ -271,7 +303,7 @@ class BleDiscoveryService {
 
           // Smart Routing Mutex
           if (isBusy) {
-            debugPrint('Target is busy, skipping connection,');
+            debugPrint('[ROUTING] Target $mac is busy, skipping connection.');
             continue;
           }
         }
@@ -299,8 +331,14 @@ class BleDiscoveryService {
             ..[10] = macBytes.length > 6 ? macBytes[6] : 0
             ..[11] = macBytes.length > 7 ? macBytes[7] : 0;
         }
-        if (remotePayload == null) continue;
-        if (remotePayload.length < 8) continue; // Need at least 8 bytes for the 64-bit hash
+        if (remotePayload == null) {
+          debugPrint('[ROUTING] Dropping $mac: remotePayload is null (no 0xFFE0 and advertisesMeshService=false)');
+          continue;
+        }
+        if (remotePayload.length < 8) {
+          debugPrint('[ROUTING] Dropping $mac: remotePayload < 8 bytes');
+          continue; // Need at least 8 bytes for the 64-bit hash
+        }
 
         // CRITICAL: Extract 4-byte node ID prefix (at bytes 8-11) and skip if it's our own advertisement!
         // Payload layout: [8 bytes hash][4 bytes nodeId prefix]
@@ -401,17 +439,36 @@ class BleDiscoveryService {
     });
   }
 
-  /// Higher short node id acts as GATT client once per discovery stream event (collision avoidance).
+  /// Initiates a GATT sync handshake to the given device, or queues it if one is already in flight.
   Future<void> _runMeshInitiatorHandshake(
     String myNodeId,
     int remoteHashInt,
     BluetoothDevice device,
   ) async {
-    if (_isConnecting) return;
+    // If already connecting to this exact hash, skip entirely (duplicate).
+    if (_connectingHashes.contains(remoteHashInt)) return;
+
+    // If another connection is already in flight, enqueue this peer instead of dropping it.
+    if (_connectingHashes.isNotEmpty) {
+      // Only enqueue if not already pending.
+      if (!_pendingQueue.any((e) => e.hash == remoteHashInt)) {
+        _pendingQueue.add((hash: remoteHashInt, device: device));
+      }
+      return;
+    }
+
+    await _doHandshake(myNodeId, remoteHashInt, device);
+  }
+
+  Future<void> _doHandshake(
+    String myNodeId,
+    int remoteHashInt,
+    BluetoothDevice device,
+  ) async {
+    _connectingHashes.add(remoteHashInt);
     // Even if the connection fails/cancels, keep a short cooldown for this remote hash so
     // we don't spam connect() attempts to stale/cached advertisers.
     _hashCooldowns[remoteHashInt] = DateTime.now();
-    _isConnecting = true;
     _notifyConnectionPhase();
     final targetMac = device.remoteId.str;
     debugPrint('[BENCHMARK] TARGET_MAC:$targetMac | EVENT:SCAN_HIT | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
@@ -430,28 +487,32 @@ class BleDiscoveryService {
     }
     try {
       final db = await _ref.read(databaseProvider.future);
-      // Send a compact 'offer' packet containing our local version vector.
-      // The receiver's offer-handler (in ble_network_provider._attachNativeIncomingSync)
-      // will compute only the rows we are missing and reply with a surgical 'delta'.
-      // This replaces the old full-dump approach (empty remoteVector → every row sent)
-      // which was timing out on every transfer due to 5,000+ row payloads.
+      // Send a combined 'offer+push' packet:
+      //   - 'vector': our version vector so the server can compute what WE are missing
+      //   - 'initiator_data': our own full changeset so the server can merge what IT is missing
+      // This makes the handshake bidirectional in a single GATT write+reply round-trip.
+      // Previously the offer only contained the vector, so the server could compute D3's
+      // missing rows and reply with them, but D1/D2 never received D3's new messages.
       final myVector = await db.getVersionVector();
       final myHashInt = await db.getDatabaseHash();
       final myNodeId2 = myNodeId;
-      debugPrint('📤 [DISCOVERY] Sending offer to $targetMac — vector has ${myVector.length} entries');
+      // Build our own full changeset using an empty remote vector (we want to push everything).
+      final ourChangeset = await db.getDeltaChangeset({});
+      debugPrint('📤 [DISCOVERY] Sending offer+push to $targetMac — vector=${myVector.length} entries, pushing ${ourChangeset.length} table(s)');
       final offerEnvelope = <String, dynamic>{
         'type': 'offer',
         'sender_id': myNodeId2,
         'sender_hash': myHashInt,
         'neighbors': currentNeighborIds,
         'vector': myVector,
+        'initiator_data': ourChangeset,
       };
       final payload = zlib.encode(utf8.encode(jsonEncode(offerEnvelope)));
       final macAddress = device.remoteId.str;
       // Android mesh advertisers use Random Resolvable Addresses.
       // We pass isRandom: true to ensure the native layer uses the correct addressing mode.
       await _nativeMesh.sendPayload(macAddress, Uint8List.fromList(payload), isRandom: true);
-      debugPrint('✅ [DISCOVERY] Offer sent to $targetMac (${payload.length} bytes) — awaiting delta reply');
+      debugPrint('✅ [DISCOVERY] Offer+push sent to $targetMac (${payload.length} bytes) — awaiting delta reply');
       debugPrint('[BENCHMARK] TARGET_MAC:$targetMac | EVENT:OFFER_SENT | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
       // Only mark lastFullSync on a SUCCESSFUL offer send — do NOT set this on the error
       // path. If we set it even on failed sends, the 20s anti-entropy timer starts from a
@@ -484,8 +545,14 @@ class BleDiscoveryService {
       try {
         await stateSub?.cancel();
       } catch (_) {}
-      _isConnecting = false;
+      _connectingHashes.remove(remoteHashInt);
       _notifyConnectionPhase();
+      // Drain one item from the queue and attempt it now that we have a free slot.
+      if (_pendingQueue.isNotEmpty) {
+        final next = _pendingQueue.removeAt(0);
+        // Fire-and-forget: don't await so this finally block can return promptly.
+        unawaited(_doHandshake(myNodeId, next.hash, next.device));
+      }
     }
   }
 

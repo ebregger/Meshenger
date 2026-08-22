@@ -37,6 +37,7 @@ class Telemetry:
         self.delta_received = [] # { device, mac, bytes, t }
         self.merged = defaultdict(dict)  # msg_id -> { device: t }
         self.displayed = defaultdict(dict)  # msg_id -> { device: t }
+        self.ui_changed = []  # { device, revision, count, t }
         self.connection_failed = [] # { device, mac, reason }
         self.penalty_box = [] # { device, mac, duration }
         self.app_state_changes = [] # { device, state, t }
@@ -50,10 +51,10 @@ def request(port, path, method='GET', body=None):
         if body is not None:
             req.add_header('Content-Type', 'application/json')
             data = json.dumps(body).encode('utf-8')
-            with urllib.request.urlopen(req, data=data, timeout=5) as response:
+            with urllib.request.urlopen(req, data=data, timeout=10) as response:
                 return json.loads(response.read().decode())
         else:
-            with urllib.request.urlopen(req, timeout=5) as response:
+            with urllib.request.urlopen(req, timeout=10) as response:
                 return json.loads(response.read().decode())
     except Exception as e:
         return None
@@ -66,6 +67,12 @@ def check_devices():
         if res and 'nodeId' in res:
             infos[p] = res['nodeId']
             print(f"  Device at port {p}: OK  nodeId={res['nodeId']}")
+            # Kick the BLE stack in case bootstrap ran before permissions were granted
+            kick = request(p, '/reset_ble', method='POST')
+            if kick:
+                print(f"  Device at port {p}: BLE restarted")
+            else:
+                print(f"  Device at port {p}: BLE kick failed (may already be running)")
         else:
             print(f"  Device at port {p}: UNREACHABLE")
     return infos
@@ -77,6 +84,21 @@ def get_adb_devices():
         if "\tdevice" in line:
             devices.append(line.split("\t")[0].strip())
     return devices
+
+def get_port_to_device():
+    """Map host forward ports → serial via `adb forward --list` (not adb device order)."""
+    result = subprocess.run(["adb", "forward", "--list"], capture_output=True, text=True)
+    mapping = {}
+    for line in result.stdout.strip().split("\n"):
+        parts = line.split()
+        # e.g. "46071FDAS009EH tcp:18081 tcp:8080"
+        if len(parts) >= 2 and parts[1].startswith("tcp:"):
+            try:
+                port = int(parts[1].split(":", 1)[1])
+                mapping[port] = parts[0]
+            except ValueError:
+                pass
+    return mapping
 
 def logcat_worker(device_id, stop_event):
     cmd = ["adb", "-s", device_id, "logcat", "-v", "raw", "-s", "flutter,NativeMeshService"]
@@ -94,6 +116,8 @@ def logcat_worker(device_id, stop_event):
         diag_match = DIAGNOSTIC_REGEX.search(line)
         if diag_match:
             payload = diag_match.group(1).strip()
+            if "TELEMETRY" in payload or "COLLISION" in payload:
+                print(f"\\n[{device_id}] DIAGNOSTIC: {payload}")
             parts = [p.strip() for p in payload.split('|')]
             data = {}
             for part in parts:
@@ -157,6 +181,13 @@ def logcat_worker(device_id, stop_event):
                     # Only record the *first* time it was displayed on this device
                     if device_id not in telemetry.displayed[msg_id]:
                         telemetry.displayed[msg_id][device_id] = t
+                elif event == 'UI_CHANGED':
+                    rev = int(data.get('REVISION', 0) or 0)
+                    count = int(data.get('COUNT', 0) or 0)
+                    telemetry.ui_changed.append({
+                        'device': device_id, 'revision': rev, 'count': count, 't': t
+                    })
+                    print(f"\n[{device_id}] UI changed → revision={rev} count={count}")
                     
     process.terminate()
 
@@ -170,61 +201,104 @@ def run_benchmark(num_messages=30):
     if len(adb_devices) < 2:
         print(f"{Colors.FAIL}Ensure at least 2 devices are connected via adb.{Colors.ENDC}")
         return
+
+    forward_map = get_port_to_device()
+    # Only stream logcat for devices whose stress API is reachable.
+    active_devices = []
+    for port in sorted(infos.keys()):
+        serial = forward_map.get(port)
+        if serial and serial not in active_devices:
+            active_devices.append(serial)
+    if len(active_devices) < 2:
+        # Fallback: old deploy.py ordering assumption
+        active_devices = adb_devices[: len(infos)]
         
-    print(f"\n{Colors.OKCYAN}Starting adb logcat streams for devices: {adb_devices}{Colors.ENDC}")
+    print(f"\n{Colors.OKCYAN}Starting adb logcat streams for devices: {active_devices}{Colors.ENDC}")
     stop_event = threading.Event()
     threads = []
-    for d in adb_devices:
+    for d in active_devices:
         t = threading.Thread(target=logcat_worker, args=(d, stop_event), daemon=True)
         t.start()
         threads.append(t)
         
     time.sleep(2)
 
-    sender_port = list(infos.keys())[0]
     expected_merges_per_msg = len(infos) - 1
+    all_ports = list(infos.keys())
+    port_to_device = {port: forward_map.get(port, f'port:{port}') for port in all_ports}
+    device_to_port = {v: k for k, v in port_to_device.items()}
+
+    # Ground-truth tracking: store (tag, sender_port) for each sent message
+    sent_messages = []  # list of {'tag': str, 'sender_port': int, 'sender_device': str}
 
     print(f"\n{Colors.HEADER}--- BENCHMARK: Sending {num_messages} messages across All Devices ---{Colors.ENDC}")
-    all_ports = list(infos.keys())
     for i in range(num_messages):
         sender_port = all_ports[i % len(all_ports)]
         tag = f"BenchMsg#{i:03d}@{int(time.time()*1000)}"
         res = request(sender_port, '/send', 'POST', {'text': tag})
+        sender_device = port_to_device.get(sender_port, '')
+        sent_messages.append({'tag': tag, 'sender_port': sender_port, 'sender_device': sender_device})
         time.sleep(0.3)
         sys.stdout.write(f"\rSending: {i+1}/{num_messages} (from port {sender_port})")
         sys.stdout.flush()
     print()
 
-    print(f"\n{Colors.OKBLUE}Waiting for propagation ({expected_merges_per_msg} merges per message)...{Colors.ENDC}")
+    print(f"\n{Colors.OKBLUE}Waiting for propagation (polling /ui — painted chat list)...{Colors.ENDC}")
     poll_start = time.time()
-    max_wait = max(90, num_messages * 3)
+    max_wait = max(90, num_messages * 4)
+
+    # receipt_matrix[sender_device][receiver_device] = set of received tags
+    receipt_matrix = defaultdict(lambda: defaultdict(set))
+    # Track per-device UI revisions so we can print when the painted list changes
+    last_ui_revision = {port: 0 for port in all_ports}
+    total_kb_received = 0.0
 
     while time.time() - poll_start < max_wait:
-        with telemetry.lock:
-            fully_propagated = 0
-            for msg_id in telemetry.created:
-                nodes_reached = set()
-                if msg_id in telemetry.merged:
-                    nodes_reached.update(telemetry.merged[msg_id].keys())
-                if msg_id in telemetry.displayed:
-                    nodes_reached.update(telemetry.displayed[msg_id].keys())
-                
-                if len(nodes_reached) >= expected_merges_per_msg:
-                    fully_propagated += 1
-            
-            # Periodically show current bandwidth in the poll status
-            total_kb = sum(d['bytes'] for d in telemetry.delta_received) / 1024.0
-            total_time_s = sum(d['t'] - min(o['t'] for o in telemetry.offer_sent if o['device'] == d['device'] and o['mac'] == d['mac'] and o['t'] <= d['t'])
-                              for d in telemetry.delta_received if any(o['t'] for o in telemetry.offer_sent if o['device'] == d['device'] and o['mac'] == d['mac'] and o['t'] <= d['t'])) / 1000.0
-            cur_kbps = total_kb / total_time_s if total_time_s > 0 else 0
-            
-            sys.stdout.write(f"\rPropagated: {fully_propagated}/{num_messages} | Data: {total_kb:.1f}KB | Rate: {cur_kbps:.2f}KB/s")
-            sys.stdout.flush()
-            
-            if fully_propagated >= num_messages:
-                print(f"\n{Colors.OKGREEN}[SUCCESS] All messages merged and propagated!{Colors.ENDC}\n")
-                break
-        time.sleep(1)
+        # Poll each device for what the UI has actually rendered
+        device_messages = {}  # device -> set of text contents
+        for port in all_ports:
+            dev = port_to_device.get(port, str(port))
+            res = request(port, '/ui')
+            if not res or not isinstance(res, dict):
+                continue
+            rev = int(res.get('revision', 0) or 0)
+            msgs = res.get('messages') or []
+            if rev != last_ui_revision[port]:
+                prev = last_ui_revision[port]
+                last_ui_revision[port] = rev
+                print(
+                    f"\n{Colors.OKCYAN}[UI] port {port} ({dev[-6:]}): "
+                    f"revision {prev} → {rev} | count={res.get('count', len(msgs))} "
+                    f"| changedAtMs={res.get('changedAtMs', '?')}{Colors.ENDC}"
+                )
+            device_messages[dev] = {m.get('text', m.get('textContent', '')) for m in msgs}
+            total_kb_received = sum(len(str(m)) for m in msgs) / 1024.0
+
+        # Score: for each sent message, check which non-sender devices have painted it
+        fully_propagated = 0
+        for sent in sent_messages:
+            tag = sent['tag']
+            sender_dev = sent['sender_device']
+            receivers = 0
+            for dev, texts in device_messages.items():
+                if dev != sender_dev and tag in texts:
+                    receipt_matrix[sender_dev][dev].add(tag)
+                    receivers += 1
+            if receivers >= len(infos) - 1:
+                fully_propagated += 1
+
+        elapsed = time.time() - poll_start
+        rev_summary = ",".join(f"{p}:{last_ui_revision[p]}" for p in all_ports)
+        sys.stdout.write(
+            f"\rUI Propagated: {fully_propagated}/{num_messages} | Elapsed: {elapsed:.0f}s "
+            f"| revs=[{rev_summary}] | Data: {total_kb_received:.1f}KB"
+        )
+        sys.stdout.flush()
+
+        if fully_propagated >= num_messages:
+            print(f"\n{Colors.OKGREEN}[SUCCESS] All {num_messages} messages painted on all device UIs!{Colors.ENDC}\n")
+            break
+        time.sleep(2)
     else:
         print(f"\n{Colors.WARNING}[TIMEOUT] Propagation did not finish within {max_wait}s{Colors.ENDC}\n")
 
@@ -325,6 +399,50 @@ def run_benchmark(num_messages=30):
         else:
             print(f"  Background Discovery Target: {Colors.WARNING}N/A{Colors.ENDC}")
 
+        print(f"\n{Colors.BOLD}--- UI Change Events (logcat) ---{Colors.ENDC}")
+        if telemetry.ui_changed:
+            for ev in telemetry.ui_changed:
+                print(
+                    f"  {ev['device'][-6:]}  rev={ev['revision']}  "
+                    f"count={ev['count']}  t={ev['t']}"
+                )
+        else:
+            print(f"  {Colors.WARNING}No UI_CHANGED logcat events captured{Colors.ENDC}")
+
+        # --- PER-DEVICE RECEIPT MATRIX (sourced from /ui polling — painted list) ---
+        print(f"\n{Colors.BOLD}--- Device-to-Device Receipt Matrix (UI) ---{Colors.ENDC}")
+        all_devices = sorted(port_to_device.values())
+        sent_count = defaultdict(int)
+        for sent in sent_messages:
+            sent_count[sent['sender_device']] += 1
+
+
+        # Print header row
+        header = f"  {'Sender':<20}" + "".join(f" {'->'+r[-6:]:>12}" for r in all_devices)
+        print(header)
+        has_blackout = False
+        for sender in all_devices:
+            row = f"  {sender:<20}"
+            for receiver in all_devices:
+                if sender == receiver:
+                    row += f" {'(self)':>12}"
+                else:
+                    count = len(receipt_matrix[sender][receiver])
+                    total = sent_count[sender]
+                    cell = f"{count}/{total}"
+                    if total > 0 and count == 0:
+                        row += f" {Colors.FAIL}{cell:>12}{Colors.ENDC}"
+                        has_blackout = True
+                    elif total > 0 and count < total:
+                        row += f" {Colors.WARNING}{cell:>12}{Colors.ENDC}"
+                    else:
+                        row += f" {Colors.OKGREEN}{cell:>12}{Colors.ENDC}"
+            print(row)
+        if has_blackout:
+            print(f"  {Colors.FAIL}*** BLACKOUT DETECTED: One or more sender->receiver paths received 0 messages! ***{Colors.ENDC}")
+        else:
+            print(f"  {Colors.OKGREEN}All device paths propagated successfully.{Colors.ENDC}")
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--messages", type=int, default=10, help="Messages to burst")
@@ -333,3 +451,4 @@ if __name__ == '__main__':
         run_benchmark(args.messages)
     except KeyboardInterrupt:
         print("\nAborted.")
+

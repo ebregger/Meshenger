@@ -201,7 +201,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         return now.difference(t).inSeconds > 85;
       });
 
-      final directNodes = BleDiscoveryService.localSeenNodes.keys.toSet();
+      // Active direct = recent physical contact (sync / GATT), not merely gossip.
+      final activeDirectNodes = BleDiscoveryService.localSeenNodes.entries
+          .where((e) => now.difference(e.value).inSeconds <= 60)
+          .map((e) => e.key)
+          .toSet();
+
       final allUsers = <String>{
         ...BleDiscoveryService.localSeenNodes.keys,
         ...networkLastSeen.keys,
@@ -225,29 +230,26 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         PeerStatus? status;
 
         if (singleRemotePeerTopology) {
-          // Exactly one other node in presence maps: there is no multi-hop path.
-          // Gossip can refresh [networkLastSeen] (e.g. via `neighbors` lists) without
-          // refreshing [localSeenNodes], which previously produced spurious INDIRECT.
+          // Exactly one other node: there is no multi-hop path possible.
           if (secondsSinceLocal <= 60 || secondsSinceNetwork <= 60) {
             status = PeerStatus.direct;
           } else if (secondsSinceLocal <= 75 || secondsSinceNetwork <= 75) {
             status = PeerStatus.disconnected;
           }
-        } else {
-          // 0 to 60 Seconds: Node is Active (Green or Yellow)
-          if (secondsSinceLocal <= 60) {
-            status = PeerStatus.direct;
-          } else if (secondsSinceNetwork <= 60) {
-            // Pruning-race guard: ignore "microscopic" self-gossip near disconnect.
-            if (localTime == null ||
-                networkTime!.difference(localTime).inSeconds > 2) {
-              status = PeerStatus.indirect;
-            }
-          }
-          // 61 to 75 Seconds: Node is Offline/Tombstoned (Gray)
-          else if (secondsSinceLocal <= 75 || secondsSinceNetwork <= 75) {
+        } else if (secondsSinceLocal <= 75) {
+          // Still have (or recently had) direct contact. Stay direct — a fresher
+          // gossip touch on networkLastSeen must not paint this peer yellow.
+          status = PeerStatus.direct;
+        } else if (secondsSinceNetwork <= 60) {
+          // Directly inaccessible; only mesh gossip knows this peer.
+          // Yellow only when a live direct neighbor can bridge to them.
+          if (_findRoute(id, activeDirectNodes) != null) {
+            status = PeerStatus.indirect;
+          } else {
             status = PeerStatus.disconnected;
           }
+        } else if (secondsSinceLocal <= 75 || secondsSinceNetwork <= 75) {
+          status = PeerStatus.disconnected;
         }
 
         if (status == null) continue;
@@ -260,7 +262,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         final name = nameById[id] ?? (id.length <= 8 ? id : id.substring(0, 8));
         final mac = BleDiscoveryService.nodeIdToMac[id];
         final routeViaId =
-            status == PeerStatus.indirect ? _findRoute(id, directNodes) : null;
+            status == PeerStatus.indirect ? _findRoute(id, activeDirectNodes) : null;
         final routeViaName =
             routeViaId == null ? null : (nameById[routeViaId] ?? routeViaId);
 
@@ -475,19 +477,19 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 }
                 _meshTopology[senderId] = neighborSet;
 
-                // Also teach neighbor-table routing: advertised hash -> node id.
-                if (senderHash != null) {
-                  BleDiscoveryService.hashToNodeId[senderHash] = senderId;
-                  final mac = BleDiscoveryService.hashToMac[senderHash];
-                  if (mac != null) {
-                    BleDiscoveryService.macToNodeId[mac] = senderId;
-
-                    // Upgrade UI "discovered" label from MAC -> nodeId.
-                    final ids = Set<String>.from(state.discoveredNodeIds);
-                    if (ids.remove(mac)) {
-                      ids.add(senderId);
-                      state = state.copyWith(discoveredNodeIds: ids);
-                    }
+                // Prefer GATT callback MAC (server path); hash→MAC covers initiator scans.
+                BleDiscoveryService.bindPeerIdentity(
+                  nodeId: senderId,
+                  mac: senderMac,
+                  hash: senderHash,
+                );
+                final boundMac = BleDiscoveryService.nodeIdToMac[senderId];
+                if (boundMac != null) {
+                  // Upgrade UI "discovered" label from MAC -> nodeId.
+                  final ids = Set<String>.from(state.discoveredNodeIds);
+                  if (ids.remove(boundMac)) {
+                    ids.add(senderId);
+                    state = state.copyWith(discoveredNodeIds: ids);
                   }
                 }
                 _refreshNeighborClassification();
@@ -508,6 +510,30 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   '⚠️ Offer: no hash route for sender_hash=$senderHash',
                 );
                 return;
+              }
+
+              // 2a) Merge the initiator's own pushed changeset (offer+push bidirectional sync).
+              // This is the key fix for the one-way propagation blackout: previously the server
+              // (D1/D2) only replied to D3 with what D3 was missing, but never received D3's
+              // own messages. Now D3 includes its changeset in the offer, and we merge it here.
+              final initiatorDataRaw = root['initiator_data'];
+              if (initiatorDataRaw is Map && initiatorDataRaw.isNotEmpty) {
+                final initiatorChangeset = Map<String, dynamic>.from(initiatorDataRaw);
+                final rowCounts = initiatorChangeset.map((t, rows) => MapEntry(t, (rows as List).length));
+                final totalRows = rowCounts.values.fold(0, (a, b) => a + b);
+                debugPrint('📥 [SYNC] Merging initiator_data from $senderMac — $totalRows rows: $rowCounts');
+                await db.mergeSyncChangeset(initiatorChangeset);
+                final messagesRaw = initiatorChangeset['messages'];
+                if (messagesRaw is List) {
+                  for (final row in messagesRaw) {
+                    if (row is Map) {
+                      final msgId = row['msg_id'] ?? row['msgId'];
+                      if (msgId != null) {
+                        debugPrint('[BENCHMARK] MSG_ID:$msgId | EVENT:MERGED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
+                      }
+                    }
+                  }
+                }
               }
 
               debugPrint('📤 [SYNC] Computing delta for offer from senderId=$senderId...');
@@ -538,6 +564,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               if (delta.isNotEmpty) {
               }
               return;
+
             }
 
             if (type == 'delta' || type == null) {
@@ -565,17 +592,17 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 }
                 _meshTopology[senderId] = neighborSet;
 
-                if (senderHash != null) {
-                  BleDiscoveryService.hashToNodeId[senderHash] = senderId;
-                  final mac = BleDiscoveryService.hashToMac[senderHash];
-                  if (mac != null) {
-                    BleDiscoveryService.macToNodeId[mac] = senderId;
-
-                    final ids = Set<String>.from(state.discoveredNodeIds);
-                    if (ids.remove(mac)) {
-                      ids.add(senderId);
-                      state = state.copyWith(discoveredNodeIds: ids);
-                    }
+                BleDiscoveryService.bindPeerIdentity(
+                  nodeId: senderId,
+                  mac: senderMac,
+                  hash: senderHash,
+                );
+                final boundMac = BleDiscoveryService.nodeIdToMac[senderId];
+                if (boundMac != null) {
+                  final ids = Set<String>.from(state.discoveredNodeIds);
+                  if (ids.remove(boundMac)) {
+                    ids.add(senderId);
+                    state = state.copyWith(discoveredNodeIds: ids);
                   }
                 }
 
