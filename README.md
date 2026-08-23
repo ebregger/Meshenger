@@ -16,6 +16,7 @@ Project conventions live in [`.cursorrules`](.cursorrules) (Riverpod, Protobuf O
 | `android/.../MainActivity.kt` | Native mesh GATT / scan / connect |
 | `proto/mesh_data.proto` | Protobuf schemas |
 | `deploy.py` | Build debug APK, install on all `adb` devices, port-forward, launch |
+| `probe_5s.py` | **2-node catch-up probe** — alternating sends, measure propagation ≤5s |
 | `stress_test.py` | Multi-device mesh benchmark using the API + logcat |
 
 Package / activity: `com.example.bluetooth_app/.MainActivity`
@@ -40,15 +41,19 @@ Builds a debug APK, installs it on **every** connected device, forwards a host p
 python deploy.py
 ```
 
-Port assignment (sorted by `adb devices` order):
+Port assignment: first **deployable** device (API ≥24, sorted `adb devices` order) gets `18081`, second gets `18082`, etc. Nexus 7 (API 18) is skipped automatically.
 
-| Device index | Host port → device |
-|--------------|--------------------|
-| 0 | `127.0.0.1:18081` → `:8080` |
-| 1 | `127.0.0.1:18082` → `:8080` |
-| 2 | `127.0.0.1:18083` → `:8080` |
+**Current lab mapping (Aug 2026):**
 
-`stress_test.py` expects these same ports (`PORTS = [18081, 18082, 18083]`).
+| Device | Serial | Host port |
+|--------|--------|-----------|
+| Clear 3 (Pixel 3, SDK 28) | `88LX01L45` | `18081` |
+| Red 3 (Pixel 3, SDK 35) | `8AKX0UCPK` | `18082` |
+| Nexus 7 (skipped) | `0598e1e8` | — |
+
+Confirm with `adb forward --list` after deploy — do **not** assume port order if device list changes.
+
+`stress_test.py` discovers live ports via `/info` and `adb forward --list` when possible; fallback list is `[18081, 18082, 18083]`.
 
 **Manual equivalent for one device:**
 
@@ -71,6 +76,8 @@ Bound on the device at `0.0.0.0:8080`. Reach it via the forwarded host port afte
 |--------|------|---------|
 | `GET` | `/info` | `{ nodeId, status }` — liveness + identity |
 | `GET` | `/messages` | Messages in the **local DB** (`msgId`, `textContent`) |
+| `GET` | `/has_message?text=...` | `{ found, text }` — fast propagation check (no full list) |
+| `GET` | `/peers` | Live neighbor list (`id`, `name`, `status`, `macAddress`, `lastSeenMs`) |
 | `GET` | `/ui` | What the chat list has **painted** (see below) |
 | `POST` | `/send` | Body: `{ "text": "..." }` — create/send a chat message |
 | `POST` | `/config` | Simulation knobs: `dropRate`, `ignoreMac`, or `{ "reset": true }` |
@@ -143,7 +150,37 @@ Port ↔ serial mapping assumes the same order as `deploy.py` (`sorted` host por
 
 ---
 
-## Tool 4: Logcat telemetry
+## Tool 4: `probe_5s.py` (2-node catch-up benchmark)
+
+Targets the **single-message propagation SLA**: after `POST /send` on one phone, both nodes must have the tag in DB within **5 seconds**.
+
+```bash
+python deploy.py
+# wait ~15s for mesh + permissions
+python probe_5s.py 30    # 30 alternating probes (Clear→Red→Clear…)
+```
+
+Behavior:
+
+1. `POST /reset_ble` on both forwarded ports + 2s settle
+2. Two warmup sends (one per device, 4s apart)
+3. Alternating `POST /send` with unique tags; polls `GET /has_message?text=...` on **both** ports every 80ms (8s hard fail)
+4. 3s gap between probes
+5. Exit code **0** only if **100%** OK and ≤5000ms
+
+PowerShell one-liner smoke test:
+
+```powershell
+$tag = "SMOKE_$(Get-Date -UFormat %s)"
+Invoke-RestMethod http://127.0.0.1:18081/send -Method POST -ContentType 'application/json' -Body (@{text=$tag} | ConvertTo-Json)
+# poll 18081 + 18082 /has_message?text=$tag until both found=true
+```
+
+**Do not** call `/reset_ble` after every failed probe during a batch — it destabilizes the mesh mid-run. Reset only at batch start or after a wedged session.
+
+---
+
+## Tool 5: Logcat telemetry
 
 Filter tags the stress harness already watches:
 
@@ -183,8 +220,70 @@ adb logcat -d | findstr /i "UI_CHANGED DISPLAYED MERGED Stress Test API"
 3. Wait for `Stress Test API running on port 8080` in logcat
 4. `GET /info` — confirm API
 5. For UI work: `POST /send` → poll `GET /ui` until `revision` bumps
-6. For mesh work: deploy to ≥2 devices → `python stress_test.py --messages 10`
+6. For mesh work: deploy to ≥2 devices → `python probe_5s.py 30` (catch-up SLA) **then** `python stress_test.py --messages 500`
 7. If GATT stops connecting after long runs: `POST /reset_ble` (or re-run stress test, which kicks BLE on start)
+8. If one Pixel drops off ADB: `adb kill-server && adb start-server && adb devices -l`
+
+---
+
+## Agent handoff — urgent catch-up work (Aug 2026)
+
+**Goal:** **100%** single-message propagation on Clear↔Red **under 5s**, then run `stress_test.py --messages 500`.
+
+**Git:** `e51db23` on `main` pushed (*"Fix urgent mesh catch-up by tracking fresh RPA dial MACs."*). **All urgent-path improvements below are uncommitted** (5 Dart/Kotlin files + `probe_5s.py`).
+
+### Best probe results so far (not 100%)
+
+| Run | OK / 30 | Avg when OK | Notes |
+|-----|---------|-------------|-------|
+| Best | **22/30** | ~2.0s | Warmup + NOTIFY-ready inbound fix |
+| Typical | 15–20/30 | ~2–3.5s | Mesh wedges after ~15 probes |
+| Post-reboot | 15/30 | ~2.3s | Clear 6/15, Red 9/15 |
+
+Clear→Red and Red→Clear both still fail intermittently; failures cluster when GATT slots wedge.
+
+### Uncommitted changes (summary)
+
+| File | What changed |
+|------|----------------|
+| `lib/services/ble_discovery_service.dart` | Urgent sync pipeline: inbound-first, parallel race, MAC validation, GATT-hold scoped to active urgent, scan defer on fresh hash divergence, GATT recovery retry, fallback dial |
+| `lib/providers/ble_network_provider.dart` | `server_connect` / `server_ready` handlers, `_recoverGattForUrgent()` |
+| `lib/services/native_mesh_service.dart` | EventChannel events for server connect + NOTIFY-ready |
+| `android/.../MainActivity.kt` | `notifyReadyServerClients`, `server_ready` event, urgent connect timeout 1800ms |
+| `lib/services/api_service.dart` | `GET /has_message?text=` |
+| `probe_5s.py` | 5s propagation probe script |
+
+### Root causes identified (still partially open)
+
+1. **Stale RPA dial MACs** — urgent dialed dead MACs; mitigated via `rememberScanMac(seenAt:)` + `candidateDialMacs()`
+2. **False-positive inbound push** — NOTIFY to wrong/stale inbound MAC reported success; mitigated via `_resolveInboundMacForPeer()` + NOTIFY-only-after-CCCD (`server_ready`)
+3. **Mutual-dial collision** — both peers outbound simultaneously; mitigated via hash-divergence defer + inbound-first race
+4. **GATT slot exhaustion** — server collision warnings after ~15 probes; partial fix via `onUrgentGattRecovery` → `resetServer` + re-advertise
+5. **8s urgent radio hold** — was blocking scan recovery; now cleared in `_runUrgentSync` `finally`
+6. **`probe_5s.py` indentation bug** — fixed (lines 64–72 were outside the loop briefly; caused bogus 1/30 summaries)
+
+### TODO for next agent
+
+1. **[ ] Hit 30/30 on `probe_5s.py 30`** — both directions, every probe ≤5000ms (no `/reset_ble` mid-batch)
+2. **[ ] Stabilize Red→Clear** — was 3/15 then 12/15 after inbound MAC fix; still regresses when wedged
+3. **[ ] Stabilize Clear→Red** — intermittent `ms=None` (>8s) and 6–8s SLOW runs
+4. **[ ] Reduce GATT wedge** — consider periodic `resetServer` when `activeInboundServers >= 2`, or reject second inbound during urgent hold
+5. **[ ] Verify `server_ready` fires before inbound push on both SDK 28 (Clear) and SDK 35 (Red)**
+6. **[ ] Run `python stress_test.py --messages 500`** only after probe_5s is 30/30
+7. **[ ] Commit** when user asks — do **not** commit `*.txt` stress logs or `.cursor/`
+
+### Debug commands
+
+```bash
+adb -s 88LX01L45 logcat -d -t 100 | findstr /i "DISCOVERY URGENT NOTIFY recovery"
+adb -s 8AKX0UCPK logcat -d -t 100 | findstr /i "DISCOVERY URGENT NOTIFY recovery"
+curl -s http://127.0.0.1:18081/peers
+curl -s http://127.0.0.1:18082/peers
+# BT power-cycle if wedged:
+adb -s 88LX01L45 shell svc bluetooth disable; adb -s 8AKX0UCPK shell svc bluetooth disable
+sleep 3
+adb -s 88LX01L45 shell svc bluetooth enable; adb -s 8AKX0UCPK shell svc bluetooth enable
+```
 
 ---
 
@@ -194,9 +293,10 @@ adb logcat -d | findstr /i "UI_CHANGED DISPLAYED MERGED Stress Test API"
 - **`/ui` stuck at revision 0** — chat UI never painted (still loading / crash); check Flutter logcat
 - **DB has message, UI doesn’t** — compare `/messages` vs `/ui`; that’s intentional for catch UI lag
 - **Blackout on one path in stress report** — BLE permissions, radio stall, or GATT slot exhaustion → `/reset_ble`
-- **Wrong port** — device order changed; re-run `deploy.py` or re-forward explicitly
-
----
+- **Wrong port** — device order changed; re-run `deploy.py` or check `adb forward --list`
+- **Probe script bogus 1/30** — ensure result/recording lines are **inside** the `for i in range(n)` loop in `probe_5s.py`
+- **Mid-batch `/reset_ble`** — causes cascade failures; reset only at batch start
+- **`/has_message` 404** — deploy latest APK (endpoint added in uncommitted work)
 
 ## Related source
 

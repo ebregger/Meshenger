@@ -69,6 +69,8 @@ class MainActivity : FlutterActivity() {
   // device triggers another onConnectionStateChange(DISCONNECTED) callback,
   // creating an infinite cascade that floods the log and bricks the BLE stack.
   private val connectedServerClients = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+  /// Inbound clients that enabled NOTIFY on our CCCD (safe to push deltas).
+  private val notifyReadyServerClients = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
   // Set to true during resetNativeServer() to suppress re-entrant disconnect callbacks.
   @Volatile private var isResettingServer = false
   // Connection collision mutex: only one outbound GATT attempt may run at a time.
@@ -130,6 +132,9 @@ class MainActivity : FlutterActivity() {
         }
         "reply_payload" -> {
           replyPayloadToPeer(call, result)
+        }
+        "connected_server_macs" -> {
+          result.success(ArrayList(notifyReadyServerClients.keys.filter { notifyReadyServerClients[it] == true }))
         }
         else -> result.notImplemented()
       }
@@ -269,6 +274,13 @@ class MainActivity : FlutterActivity() {
         ) {
           super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value)
           Log.d(TAG, "[SERVER] CCCD write from ${device.address} value=${value?.toList()}")
+          if (descriptor.uuid == CCCD_UUID && value != null && value.isNotEmpty() &&
+              (value[0].toInt() and 0x01) != 0) {
+            notifyReadyServerClients[device.address] = true
+            Handler(Looper.getMainLooper()).post {
+              eventSink?.success(hashMapOf("event" to "server_ready", "mac" to device.address))
+            }
+          }
           if (responseNeeded) {
             bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value ?: ByteArray(0))
           }
@@ -301,10 +313,14 @@ class MainActivity : FlutterActivity() {
                 Log.w(TAG, "[DIAGNOSTIC] SERVER COLLISION WARNING! Multiple concurrent clients connected ($activeConns). This may cause GATT 133 panics.")
               }
               updateServerBusyState()
+              Handler(Looper.getMainLooper()).post {
+                eventSink?.success(hashMapOf("event" to "server_connect", "mac" to device.address))
+              }
             }
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             val activeConnsBefore = activeInboundServers.get()
             val wasConnected = connectedServerClients.remove(device.address) != null
+            notifyReadyServerClients.remove(device.address)
             if (wasConnected) {
               val activeConnsAfter = activeInboundServers.decrementAndGet()
               Log.d(TAG, "[SERVER] Client disconnected: ${device.address} status=$status. Active inbound connections now: $activeConnsAfter")
@@ -417,6 +433,7 @@ class MainActivity : FlutterActivity() {
     } catch (_: Throwable) {}
     bluetoothGattServer = null
     connectedServerClients.clear()
+    notifyReadyServerClients.clear()
     deadMacs.clear()
     isOutboundClientBusy.set(false)
     activeInboundServers.set(0)
@@ -1053,7 +1070,7 @@ class MainActivity : FlutterActivity() {
           }
           // Urgent push-on-write uses bypassDeadCache; fail stale RPAs faster so a
           // scan-MAC retry still fits in the few-second catch-up budget.
-          val connectTimeoutMs = if (bypassDeadCache) 2200L else 3500L
+          val connectTimeoutMs = if (bypassDeadCache) 1800L else 3500L
           mainHandler.postDelayed(connectionWatchdog, connectTimeoutMs)
           gatt = device.connectGatt(this@MainActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
           if (gatt == null) {

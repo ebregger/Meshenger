@@ -30,6 +30,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       onConnectionPhaseChanged: _handleMeshConnectionPhaseChanged,
       onScannerError: _handleScannerError,
       onScannerStalled: _handleScannerStalled,
+      onUrgentGattRecovery: _recoverGattForUrgent,
     );
     Future<void>.microtask(_bootstrap);
   }
@@ -78,6 +79,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     if (_meshSessionActive && !_scannerRecovering) {
       _handleScannerStalled();
     }
+  }
+
+  /// Flush leaked GATT slots after urgent push failure, then re-advertise.
+  Future<void> _recoverGattForUrgent() async {
+    await _nativeMesh.resetServer();
+    await startAdvertising();
   }
 
   void _handleScannerStalled() {
@@ -544,6 +551,14 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   Future<void> _attachNativeIncomingSync() async {
     await _nativePayloadSub?.cancel();
     _nativePayloadSub = _nativeMesh.incomingPayloads.listen((incoming) {
+      if (incoming.isServerConnect) {
+        _discovery.onServerClientConnected(incoming.macAddress);
+        return;
+      }
+      if (incoming.isServerReady) {
+        _discovery.onServerClientReady(incoming.macAddress);
+        return;
+      }
       final eofMarker = utf8.encode('||EOF||');
       final senderMac = incoming.macAddress;
       final chunk = incoming.bytes;

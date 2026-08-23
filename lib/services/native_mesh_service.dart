@@ -7,10 +7,14 @@ class IncomingBleChunk {
   const IncomingBleChunk({
     required this.macAddress,
     required this.bytes,
+    this.isServerConnect = false,
+    this.isServerReady = false,
   });
 
   final String macAddress;
   final Uint8List bytes;
+  final bool isServerConnect;
+  final bool isServerReady;
 }
 
 class NativeMeshService {
@@ -50,6 +54,23 @@ class NativeMeshService {
       await _bleMethodChannel.invokeMethod<void>('reset_server');
     } on PlatformException catch (e) {
       debugPrint('🔥 Native reset_server failed: ${e.message}');
+    }
+  }
+
+  /// MACs with an active inbound GATT server connection (peer dialed us).
+  Future<List<String>> getConnectedServerMacs() async {
+    try {
+      final raw = await _bleMethodChannel.invokeMethod<List<Object?>>(
+        'connected_server_macs',
+      );
+      if (raw == null) return const [];
+      return [
+        for (final m in raw)
+          if (m != null) m.toString(),
+      ];
+    } on PlatformException catch (e) {
+      debugPrint('🔥 Native connected_server_macs failed: ${e.message}');
+      return const [];
     }
   }
 
@@ -97,10 +118,24 @@ class NativeMeshService {
   }
 
   static IncomingBleChunk _coerceToIncomingChunk(Object? event) {
-    // Preferred format (new): { mac: "...", bytes: Uint8List/List<int> }
     if (event is Map) {
       final map = Map<Object?, Object?>.from(event);
+      final eventType = map['event']?.toString();
       final mac = map['mac']?.toString();
+      if (eventType == 'server_connect' && mac != null) {
+        return IncomingBleChunk(
+          macAddress: mac,
+          bytes: Uint8List(0),
+          isServerConnect: true,
+        );
+      }
+      if (eventType == 'server_ready' && mac != null) {
+        return IncomingBleChunk(
+          macAddress: mac,
+          bytes: Uint8List(0),
+          isServerReady: true,
+        );
+      }
       final rawBytes = map['bytes'];
       if (mac != null) {
         if (rawBytes is Uint8List) {

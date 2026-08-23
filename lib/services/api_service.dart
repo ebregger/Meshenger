@@ -44,6 +44,14 @@ class ApiService {
             }).toList();
             _respond(request, 200, {'messages': jsonList});
 
+          } else if (path == '/has_message' && request.method == 'GET') {
+            final needle = request.uri.queryParameters['text'] ?? '';
+            final db = await container.read(databaseProvider.future);
+            final msgs = await db.fetchTextMessages();
+            final found = needle.isNotEmpty &&
+                msgs.any((m) => m.textContent.contains(needle));
+            _respond(request, 200, {'found': found, 'text': needle});
+
           } else if (path == '/ui' && request.method == 'GET') {
             // What the chat list has painted — revision bumps only when UI content changes.
             _respond(request, 200, UiDebugSnapshot.toJson());
