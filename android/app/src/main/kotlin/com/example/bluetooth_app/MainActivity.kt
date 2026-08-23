@@ -656,6 +656,7 @@ class MainActivity : FlutterActivity() {
   private fun sendPayloadToPeer(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
     val macAddress = call.argument<String>("macAddress")
     val isRandom = call.argument<Boolean>("isRandom") ?: false
+    val bypassDeadCache = call.argument<Boolean>("bypassDeadCache") ?: false
     if (macAddress.isNullOrBlank()) {
       result.error("bad_args", "macAddress is required", null)
       return
@@ -669,9 +670,13 @@ class MainActivity : FlutterActivity() {
 
     gattExecutor.submit {
       val deadUntil = deadMacs[macAddress]
-      if (deadUntil != null && System.currentTimeMillis() < deadUntil) {
+      if (!bypassDeadCache && deadUntil != null && System.currentTimeMillis() < deadUntil) {
         Handler(Looper.getMainLooper()).post { result.error("timeout", "MAC $macAddress is in dead-cache", null) }
         return@submit
+      }
+      if (bypassDeadCache) {
+        deadMacs.remove(macAddress)
+        failureCounts.remove(macAddress)
       }
 
       val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -722,7 +727,7 @@ class MainActivity : FlutterActivity() {
           isOutboundClientBusy.set(false)
           val count = failureCounts.getOrDefault(macAddress, 0) + 1
           failureCounts[macAddress] = count
-          val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 8000L)
+          val timeoutMs = Math.min(500 * Math.pow(2.0, count.toDouble()).toLong(), 2000L)
           deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
           Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
           Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:timeout")
@@ -778,7 +783,7 @@ class MainActivity : FlutterActivity() {
               if (!isCompleted.get()) {
                 val count = failureCounts.getOrDefault(macAddress, 0) + 1
                 failureCounts[macAddress] = count
-                val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 8000L)
+                val timeoutMs = Math.min(500 * Math.pow(2.0, count.toDouble()).toLong(), 2000L)
                 deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
                 Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
                 Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:$status")
@@ -816,7 +821,7 @@ class MainActivity : FlutterActivity() {
             } else {
               val count = failureCounts.getOrDefault(macAddress, 0) + 1
               failureCounts[macAddress] = count
-              val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 8000L)
+              val timeoutMs = Math.min(500 * Math.pow(2.0, count.toDouble()).toLong(), 2000L)
               deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:mtu_failure_$status")
@@ -952,7 +957,7 @@ class MainActivity : FlutterActivity() {
             } else {
               val count = failureCounts.getOrDefault(macAddress, 0) + 1
               failureCounts[macAddress] = count
-              val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 8000L)
+              val timeoutMs = Math.min(500 * Math.pow(2.0, count.toDouble()).toLong(), 2000L)
               deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:discovery_failed_$status")
@@ -1046,7 +1051,10 @@ class MainActivity : FlutterActivity() {
             completeErrorOnMain("already_connected", "Already connected as Server to this MAC")
             return@postDelayed
           }
-          mainHandler.postDelayed(connectionWatchdog, 5000)
+          // Urgent push-on-write uses bypassDeadCache; fail stale RPAs faster so a
+          // scan-MAC retry still fits in the few-second catch-up budget.
+          val connectTimeoutMs = if (bypassDeadCache) 2200L else 3500L
+          mainHandler.postDelayed(connectionWatchdog, connectTimeoutMs)
           gatt = device.connectGatt(this@MainActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
           if (gatt == null) {
             mainHandler.removeCallbacks(connectionWatchdog)

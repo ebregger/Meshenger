@@ -60,7 +60,7 @@ class NativeMeshService {
     return result ?? false;
   }
 
-  Future<void> sendPayload(String macAddress, Uint8List payload, {bool isRandom = false}) async {
+  Future<void> sendPayload(String macAddress, Uint8List payload, {bool isRandom = false, bool bypassDeadCache = false}) async {
     try {
       await _bleMethodChannel.invokeMethod<void>(
         'send_payload',
@@ -68,6 +68,7 @@ class NativeMeshService {
           'macAddress': macAddress,
           'payload': payload,
           'isRandom': isRandom,
+          'bypassDeadCache': bypassDeadCache,
         },
       );
     } on PlatformException catch (e) {

@@ -120,7 +120,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     unawaited(() async {
       try {
         final delayMs =
-            (8000 * (1 << _scannerRecoverAttempt.clamp(0, 2))).clamp(8000, 45000);
+            (2000 * (1 << _scannerRecoverAttempt.clamp(0, 2))).clamp(2000, 16000);
         debugPrint(
           '♻️ [MESH] Soft-restart stalled scanner (attempt $_scannerRecoverAttempt, wait ${delayMs}ms)...',
         );
@@ -836,6 +836,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   mac: senderMac,
                   hash: senderHash,
                 );
+                // We dialed this MAC as initiator — bind it as the reconnect target.
+                BleDiscoveryService.claimOrphanDialSuccess(senderId, senderMac);
                 final boundMac = BleDiscoveryService.nodeIdToMac[senderId];
                 if (boundMac != null) {
                   final ids = Set<String>.from(state.discoveredNodeIds);
