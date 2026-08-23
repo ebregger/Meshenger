@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/generated/mesh_data.pb.dart';
 import '../models/text_message_with_author.dart';
+import '../services/local_write_hook.dart';
 import 'database_provider.dart';
 import 'identity_provider.dart';
 
@@ -42,6 +43,10 @@ class ChatActions extends StateNotifier<int> {
     debugPrint('📤 SAVING LOCAL MESSAGE: ${message.msgId}');
     debugPrint('[BENCHMARK] MSG_ID:${message.msgId} | EVENT:CREATED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
     await db.upsertTextMessage(message);
+    // Push to known BLE neighbors immediately — don't wait for scan/ADV.
+    debugPrint('🚀 [CHAT] local write done — invoking sync hook '
+        '(hook=${onLocalCrdtWrite != null})');
+    onLocalCrdtWrite?.call();
   }
 }
 

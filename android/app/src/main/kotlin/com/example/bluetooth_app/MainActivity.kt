@@ -281,9 +281,9 @@ class MainActivity : FlutterActivity() {
           // cancelConnection() in response, it fires DISCONNECTED again, ad infinitum.
           if (isResettingServer) return
           if (newState == BluetoothProfile.STATE_CONNECTED) {
-            // Soft cap: Android GATT server slots get flaky under many concurrent clients.
+            // Soft cap: at most 2 concurrent GATT server clients.
             val currentInbound = activeInboundServers.get()
-            if (currentInbound >= 3) {
+            if (currentInbound >= 2) {
               Log.w(
                 TAG,
                 "[DIAGNOSTIC] TARGET_MAC:${device.address} | EVENT:CONNECTION_REJECTED | REASON:inbound_cap_$currentInbound"
@@ -527,7 +527,8 @@ class MainActivity : FlutterActivity() {
 
       val isLegacy = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
       val isIOS = false
-      // Near inbound capacity only — a single active sync must not freeze the mesh.
+      // Only advertise busy when at inbound capacity — flagging busy on the first
+      // connection made every peer back off and multi-second catch-up stalls.
       val isBusy = activeInboundServers.get() >= 2
       val hopDistance = 0 
 
@@ -721,7 +722,7 @@ class MainActivity : FlutterActivity() {
           isOutboundClientBusy.set(false)
           val count = failureCounts.getOrDefault(macAddress, 0) + 1
           failureCounts[macAddress] = count
-          val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 16000L)
+          val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 8000L)
           deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
           Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
           Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:timeout")
@@ -742,8 +743,8 @@ class MainActivity : FlutterActivity() {
         }
       }
       val mainHandler = Handler(Looper.getMainLooper())
-      // Start the 12 second watchdog for connection attempt
-      mainHandler.postDelayed(connectionWatchdog, 12000)
+      // Watchdog starts when connectGatt is issued (not before jitter), otherwise a
+      // 0–1.8s delay silently eats most of a 4s budget and Pixel 3 peers time out.
 
       try {
         val gattCallback = object : BluetoothGattCallback() {
@@ -756,9 +757,9 @@ class MainActivity : FlutterActivity() {
               Log.d(TAG, "[GATT] STATE_CONNECTED mac=$macAddress")
               Log.d(TAG, "[BENCHMARK] TARGET_MAC:$macAddress | EVENT:GATT_CONNECTED | TIMESTAMP:${System.currentTimeMillis()}")
               mainHandler.removeCallbacks(connectionWatchdog)
-              // 60s: large delta replies (after offer) can take time to write back.
-              // The offer packet itself is tiny but the peer's response may be thousands of rows.
-              mainHandler.postDelayed(transferWatchdog, 60000)
+              // Offer round-trips should finish in a few seconds. A 60s transfer
+              // watchdog left urgent push-on-write blocked behind a dead peer.
+              mainHandler.postDelayed(transferWatchdog, 15000)
               phase = "request_mtu"
               Handler(Looper.getMainLooper()).postDelayed({
                 if (!isCompleted.get()) {
@@ -777,7 +778,7 @@ class MainActivity : FlutterActivity() {
               if (!isCompleted.get()) {
                 val count = failureCounts.getOrDefault(macAddress, 0) + 1
                 failureCounts[macAddress] = count
-                val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 16000L)
+                val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 8000L)
                 deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
                 Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
                 Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:$status")
@@ -815,7 +816,7 @@ class MainActivity : FlutterActivity() {
             } else {
               val count = failureCounts.getOrDefault(macAddress, 0) + 1
               failureCounts[macAddress] = count
-              val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 16000L)
+              val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 8000L)
               deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:mtu_failure_$status")
@@ -920,12 +921,12 @@ class MainActivity : FlutterActivity() {
                     }
 
                     // DO NOT disconnect here. Keep the connection alive so the Server can
-                    // push the Delta reply back via NOTIFY. The connection will be cleanly
-                    // closed by onCharacteristicChanged when we receive the "||EOF||" notify.
-                    // transferWatchdog (60s) guards against a silent server that never replies.
+                    // push the Delta reply back via NOTIFY. Do NOT completeSuccess yet —
+                    // releasing the Flutter future early lets Dart start another dial while
+                    // isOutboundClientBusy is still held → gatt_busy storms (Red3 lag).
+                    // Success is signaled when we receive the server's "||EOF||" notify.
                     Log.d(TAG, "[GATT] Offer sent. Waiting for notify Delta reply mac=$macAddress")
                     failureCounts.remove(macAddress)
-                    completeSuccessOnMain()
                   } catch (t: Throwable) {
                     try { g.disconnect() } catch (_: Throwable) {}
                     try { g.close() } catch (_: Throwable) {}
@@ -951,7 +952,7 @@ class MainActivity : FlutterActivity() {
             } else {
               val count = failureCounts.getOrDefault(macAddress, 0) + 1
               failureCounts[macAddress] = count
-              val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 16000L)
+              val timeoutMs = Math.min(1000 * Math.pow(2.0, count.toDouble()).toLong(), 8000L)
               deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:discovery_failed_$status")
@@ -1018,6 +1019,8 @@ class MainActivity : FlutterActivity() {
             if (value.contentEquals("||EOF||".toByteArray())) {
               Log.d(TAG, "[GATT-NOTIFY] EOF received — closing connection mac=$macAddress")
               mainHandler.removeCallbacks(transferWatchdog)
+              isOutboundClientBusy.set(false)
+              completeSuccessOnMain()
               try { g.disconnect() } catch (_: Throwable) {}
             }
           }
@@ -1030,16 +1033,23 @@ class MainActivity : FlutterActivity() {
           return@submit
         }
 
-        val jitterMs = (200..1800).random().toLong()
+        // Prefer a short settle delay; long jitter was stacking with the connect
+        // watchdog and making live catch-up miss the few-second budget.
+        val jitterMs = (50..250).random().toLong()
         Handler(Looper.getMainLooper()).postDelayed({
+          if (isCompleted.get()) {
+            isOutboundClientBusy.set(false)
+            return@postDelayed
+          }
           if (connectedServerClients[macAddress] == true) {
             isOutboundClientBusy.set(false)
             completeErrorOnMain("already_connected", "Already connected as Server to this MAC")
-            taskLatch.countDown()
             return@postDelayed
           }
+          mainHandler.postDelayed(connectionWatchdog, 5000)
           gatt = device.connectGatt(this@MainActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
           if (gatt == null) {
+            mainHandler.removeCallbacks(connectionWatchdog)
             isOutboundClientBusy.set(false)
             completeErrorOnMain("connect_failed", "connectGatt returned null")
           }

@@ -151,30 +151,175 @@ class DatabaseService {
     return delta;
   }
 
-  /// When FNV hashes differ but the version-vector delta is empty, older rows were
-  /// skipped (later HLCs from the same node already merged). Send a rotating
-  /// oldest-first slice so stranded rows eventually converge.
-  Future<Map<String, dynamic>> getHashRepairChangeset({int maxRows = 80}) async {
+  static int rowFingerprint(String id) {
+    // FNV-1a 32-bit — used for bucketed gap fill that version vectors miss.
+    var hash = 0x811c9dc5;
+    for (final b in utf8.encode(id)) {
+      hash ^= b & 0xff;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash;
+  }
+
+  /// Number of XOR buckets in [getBucketFingerprintBlob] (128 bytes on wire).
+  static const int fingerprintBucketCount = 32;
+
+  /// Compact anti-entropy digest: XOR of row fingerprints per bucket.
+  /// Locates small gaps without shipping every id (full lists balloon GATT).
+  Future<Uint8List> getBucketFingerprintBlob() async {
+    await init();
+    final xors = List<int>.filled(fingerprintBucketCount, 0);
+    final msgRows = await _crdt.query(
+      'SELECT msg_id FROM messages WHERE is_deleted = 0',
+    );
+    for (final row in msgRows) {
+      final id = row['msg_id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      final fp = rowFingerprint(id);
+      xors[fp % fingerprintBucketCount] ^= fp;
+    }
+    final userRows = await _crdt.query(
+      'SELECT node_id FROM users WHERE is_deleted = 0',
+    );
+    for (final row in userRows) {
+      final id = row['node_id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      final fp = rowFingerprint(id);
+      xors[fp % fingerprintBucketCount] ^= fp;
+    }
+    final packed = Uint8List(fingerprintBucketCount * 4);
+    final bd = ByteData.view(packed.buffer);
+    for (var i = 0; i < fingerprintBucketCount; i++) {
+      bd.setUint32(i * 4, xors[i], Endian.little);
+    }
+    return packed;
+  }
+
+  static List<int> decodeBucketFingerprints(List<int> raw) {
+    final bd = ByteData.sublistView(Uint8List.fromList(raw));
+    final out = List<int>.filled(fingerprintBucketCount, 0);
+    final n = raw.length ~/ 4;
+    for (var i = 0; i < n && i < fingerprintBucketCount; i++) {
+      out[i] = bd.getUint32(i * 4, Endian.little);
+    }
+    return out;
+  }
+
+  /// Rows in buckets whose XOR digest differs from [remoteBuckets].
+  Future<Map<String, dynamic>> getRowsForMismatchedBuckets(
+    List<int> remoteBuckets, {
+    int maxRows = 150,
+  }) async {
+    await init();
+    final localBlob = await getBucketFingerprintBlob();
+    final local = decodeBucketFingerprints(localBlob);
+    final bad = <int>{};
+    for (var i = 0; i < fingerprintBucketCount; i++) {
+      final remote = i < remoteBuckets.length ? remoteBuckets[i] : 0;
+      if (local[i] != remote) bad.add(i);
+    }
+    if (bad.isEmpty) return {};
+
+    final fullChangeset = await _crdt.getChangeset();
+    final out = <String, dynamic>{};
+    var budget = maxRows;
+    // Rotate through mismatched-bucket rows — newest-first starved stranded IDs
+    // once newer traffic filled the same buckets (Red stuck ~30 behind).
+    final epoch = DateTime.now().millisecondsSinceEpoch ~/ 3000;
+    for (final entry in fullChangeset.entries) {
+      if (budget <= 0) break;
+      final candidates = <dynamic>[];
+      for (final r in entry.value as List) {
+        final id = _rowStableId(r);
+        if (id.isEmpty) continue;
+        final fp = rowFingerprint(id);
+        if (bad.contains(fp % fingerprintBucketCount)) {
+          candidates.add(r);
+        }
+      }
+      if (candidates.isEmpty) continue;
+      candidates.sort((a, b) => _rowStableId(a).compareTo(_rowStableId(b)));
+      final start = (epoch * maxRows) % candidates.length;
+      final slice = <dynamic>[];
+      final take =
+          candidates.length < budget ? candidates.length : budget;
+      for (var i = 0; i < take; i++) {
+        slice.add(candidates[(start + i) % candidates.length]);
+      }
+      out[entry.key] = slice;
+      budget -= take;
+    }
+    return out;
+  }
+
+  /// Newest live rows across tables — safe bootstrap when peer frontier is unknown.
+  /// Prefers `messages` so urgent push-on-write spends the row budget on chat, not profiles.
+  Future<Map<String, dynamic>> getNewestRowsChangeset({int maxRows = 40}) async {
     await init();
     final fullChangeset = await _crdt.getChangeset();
     final out = <String, dynamic>{};
-    final epoch = DateTime.now().millisecondsSinceEpoch ~/ 12000;
-    fullChangeset.forEach((table, records) {
-      final rows = List<dynamic>.from(records as List);
-      if (rows.isEmpty) return;
+    var budget = maxRows;
+    final keys = fullChangeset.keys.toList()
+      ..sort((a, b) {
+        int rank(String k) => k == 'messages' ? 0 : (k == 'users' ? 2 : 1);
+        return rank(a).compareTo(rank(b));
+      });
+    for (final key in keys) {
+      if (budget <= 0) break;
+      final rows = List<dynamic>.from(fullChangeset[key] as List);
       rows.sort((a, b) {
         final ha = a is Map ? (a['hlc']?.toString() ?? '') : '';
         final hb = b is Map ? (b['hlc']?.toString() ?? '') : '';
-        return ha.compareTo(hb); // oldest first
+        return hb.compareTo(ha);
       });
-      final start = rows.isEmpty ? 0 : (epoch * maxRows) % rows.length;
+      final take = rows.length < budget ? rows.length : budget;
+      if (take > 0) {
+        out[key] = rows.sublist(0, take);
+        budget -= take;
+      }
+    }
+    return out;
+  }
+
+  /// When FNV hashes differ but the version-vector delta is empty, older rows were
+  /// skipped (later HLCs from the same node already merged). Prefer
+  /// [getRowsForMismatchedBuckets]; this is a slow rotating fallback.
+  Future<Map<String, dynamic>> getHashRepairChangeset({
+    int maxRows = 120,
+    String? peerKey,
+  }) async {
+    await init();
+    final fullChangeset = await _crdt.getChangeset();
+    final out = <String, dynamic>{};
+    const bucketCount = 8;
+    final epoch = DateTime.now().millisecondsSinceEpoch ~/ 2000;
+    final salt = peerKey?.hashCode.abs() ?? 0;
+    final bucket = (epoch + salt) % bucketCount;
+    fullChangeset.forEach((table, records) {
+      final rows = List<dynamic>.from(records as List);
+      if (rows.isEmpty) return;
+      final inBucket = rows.where((r) {
+        final id = _rowStableId(r);
+        if (id.isEmpty) return true;
+        return id.hashCode.abs() % bucketCount == bucket;
+      }).toList();
+      inBucket.sort((a, b) => _rowStableId(a).compareTo(_rowStableId(b)));
+      if (inBucket.isEmpty) return;
+      final start = ((epoch ~/ bucketCount) * maxRows) % inBucket.length;
       final slice = <dynamic>[];
-      for (var i = 0; i < maxRows && i < rows.length; i++) {
-        slice.add(rows[(start + i) % rows.length]);
+      final take = maxRows < inBucket.length ? maxRows : inBucket.length;
+      for (var i = 0; i < take; i++) {
+        slice.add(inBucket[(start + i) % inBucket.length]);
       }
       out[table] = slice;
     });
     return out;
+  }
+
+  static String _rowStableId(dynamic row) {
+    if (row is! Map) return '';
+    final id = row['msg_id'] ?? row['msgId'] ?? row['id'] ?? row['node_id'];
+    return id?.toString() ?? '';
   }
 
   Future<void> dispose() async {

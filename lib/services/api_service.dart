@@ -76,6 +76,8 @@ class ApiService {
             
             final chatActions = container.read(chatActionsProvider.notifier);
             await chatActions.sendMessage(text);
+            // Belt-and-suspenders: chat hook can be drowned by scan log throttle.
+            container.read(bleNetworkProvider.notifier).onLocalDatabaseWrite();
             
             _respond(request, 200, {'status': 'sent', 'text': text});
             

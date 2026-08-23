@@ -12,6 +12,8 @@ import 'package:flutter_riverpod/legacy.dart';
 import '../models/generated/mesh_data.pb.dart';
 import '../services/api_service.dart';
 import '../services/ble_discovery_service.dart';
+import '../services/database_service.dart';
+import '../services/local_write_hook.dart';
 import '../services/native_mesh_service.dart';
 import '../utils/ble_permission_result.dart';
 import '../utils/permissions_helper.dart';
@@ -42,13 +44,15 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   StreamSubscription<IncomingBleChunk>? _nativePayloadSub;
   final Map<String, List<int>> _incomingBuffersByMac = <String, List<int>>{};
   bool _meshSessionActive = false;
+  bool _scannerRecovering = false;
   String? _localNodeId;
+  String? _ownBleMac;
   bool _primeMessageListLength = true;
   String? _lastAdvertisedHashB64;
   Timer? _advertHashDebounce;
   DateTime? _lastAdvertHashPushedAt;
   /// Cap how often we rewrite ADV during a write burst (radio-facing rate limit).
-  static const Duration _advertHashMinInterval = Duration(milliseconds: 400);
+  static const Duration _advertHashMinInterval = Duration(milliseconds: 150);
 
   int? _lastLocalProfileTimestampMs;
   final Map<String, String> _nameById = <String, String>{};
@@ -65,17 +69,86 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   final StreamController<void> _presenceBump =
       StreamController<void>.broadcast();
 
+  int _scannerRecoverAttempt = 0;
+  bool _scannerPowerCycled = false;
+
   void _handleScannerError(String error) {
     debugPrint('🚨 [MESH] Scanner hardware error: $error');
     state = state.copyWith(scannerHealthy: false);
+    if (_meshSessionActive && !_scannerRecovering) {
+      _handleScannerStalled();
+    }
   }
 
   void _handleScannerStalled() {
-    // Only flag if we haven't already flagged a hardware error (Code 2).
     if (state.scannerHealthy && !state.scannerStalled) {
       debugPrint('🚨 [MESH] Scanner heuristic stalled!');
       state = state.copyWith(scannerStalled: true);
     }
+    if (!_meshSessionActive || _scannerRecovering) return;
+    if (_discovery.isConnecting) {
+      debugPrint('♻️ [MESH] Defer scanner recover — GATT dial in flight');
+      return;
+    }
+
+    // APPLICATION_REGISTRATION_FAILED soft-loops forever on Clear; after two
+    // soft attempts, power-cycle the adapter once to free scanner slots.
+    if (_scannerRecoverAttempt >= 2 && !_scannerPowerCycled) {
+      _scannerRecovering = true;
+      unawaited(() async {
+        try {
+          debugPrint(
+            '🔥 [MESH] Scanner registration wedged — power-cycling Bluetooth',
+          );
+          _scannerPowerCycled = true;
+          await powerCycleBluetooth();
+          _scannerRecoverAttempt = 0;
+        } catch (e) {
+          debugPrint('⚠️ [MESH] Scanner power-cycle failed: $e');
+        } finally {
+          _scannerRecovering = false;
+        }
+      }());
+      return;
+    }
+    if (_scannerRecoverAttempt >= 2 && _scannerPowerCycled) {
+      // Already power-cycled this session — don't spam soft restarts.
+      return;
+    }
+
+    _scannerRecovering = true;
+    unawaited(() async {
+      try {
+        final delayMs =
+            (8000 * (1 << _scannerRecoverAttempt.clamp(0, 2))).clamp(8000, 45000);
+        debugPrint(
+          '♻️ [MESH] Soft-restart stalled scanner (attempt $_scannerRecoverAttempt, wait ${delayMs}ms)...',
+        );
+        final myId = _localNodeId;
+        if (myId == null) return;
+        await Future<void>.delayed(Duration(milliseconds: delayMs));
+        if (_discovery.isConnecting) {
+          debugPrint('♻️ [MESH] Abort soft-restart — dial started during wait');
+          return;
+        }
+        await _discovery.stopScanning();
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        await _discovery.startScanning(
+          myNodeId: myId,
+          ownMac: _ownBleMac,
+          onDiscovered: _onPeerDiscovered,
+          wipeMaps: false,
+        );
+        // Stay stalled until a real scan result arrives (_onPeerDiscovered).
+        _scannerRecoverAttempt = (_scannerRecoverAttempt + 1).clamp(0, 6);
+        debugPrint('✅ [MESH] Soft scanner restart issued');
+      } catch (e) {
+        debugPrint('⚠️ [MESH] Scanner restart failed: $e');
+        _scannerRecoverAttempt = (_scannerRecoverAttempt + 1).clamp(0, 6);
+      } finally {
+        _scannerRecovering = false;
+      }
+    }());
   }
 
   /// Hard reset of the mesh radio stack (useful when Android's GATT/Scan slots are jammed).
@@ -110,6 +183,39 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     final myIdBytes = utf8.encode(myIdSubstring);
     payloadBytes.setRange(8, 12, myIdBytes);
     return payloadBytes;
+  }
+
+  Map<String, dynamic> _mergeChangesets(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b,
+  ) {
+    if (a.isEmpty) return Map<String, dynamic>.from(b);
+    if (b.isEmpty) return Map<String, dynamic>.from(a);
+    final out = Map<String, dynamic>.from(a);
+    for (final entry in b.entries) {
+      final existing = out[entry.key];
+      if (existing is List && entry.value is List) {
+        final byId = <String, dynamic>{};
+        for (final row in existing) {
+          final id = row is Map
+              ? (row['msg_id'] ?? row['msgId'] ?? row['id'] ?? row['node_id'])
+                    ?.toString()
+              : null;
+          byId[id ?? existing.indexOf(row).toString()] = row;
+        }
+        for (final row in entry.value as List) {
+          final id = row is Map
+              ? (row['msg_id'] ?? row['msgId'] ?? row['id'] ?? row['node_id'])
+                    ?.toString()
+              : null;
+          byId[id ?? 'b${byId.length}'] = row;
+        }
+        out[entry.key] = byId.values.toList();
+      } else {
+        out[entry.key] = entry.value;
+      }
+    }
+    return out;
   }
 
   void _handleMeshConnectionPhaseChanged() {
@@ -393,8 +499,20 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         return;
       }
 
+      // ADV only here — urgent GATT push is triggered from ChatActions on local send
+      // so inbound merges don't stampede neighbors.
       _scheduleAdvertiserHashUpdate(myId);
     });
+  }
+
+  /// Local chat write: publish hash for pulls, and push a tiny newest slice so
+  /// catch-up doesn't wait on scan/ADV alone.
+  void onLocalDatabaseWrite() {
+    final myId = _localNodeId;
+    if (!_meshSessionActive || myId == null) return;
+    _lastAdvertHashPushedAt = null;
+    _scheduleAdvertiserHashUpdate(myId);
+    _discovery.requestUrgentSyncWithKnownPeers(myId);
   }
 
   Future<void> _attachLocalUserProfileHashUpdateTrigger(String myId) async {
@@ -551,10 +669,50 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               var delta = await db.getDeltaChangeset(remoteVector);
               final ourSenderHash = await db.getDatabaseHash();
               var usedRepair = false;
-              if (delta.isEmpty && senderHash != ourSenderHash) {
-                // Version vectors ignore older gaps once a newer HLC from the same node exists.
-                delta = await db.getHashRepairChangeset();
+              var fpsComplete = true;
+
+              // Remember peer digests always; only scan for absent rows when the
+              // version-vector delta is empty (avoids loading the full CRDT on
+              // every live write — that stalled Pixel 3 replies for seconds).
+              final fpsB64 = root['fps_b'] ?? root['row_fps'];
+              if (fpsB64 is String && fpsB64.isNotEmpty) {
+                try {
+                  final raw = base64Decode(fpsB64);
+                  if (raw.length == DatabaseService.fingerprintBucketCount * 4) {
+                    final remoteBuckets =
+                        DatabaseService.decodeBucketFingerprints(raw);
+                    if (senderId != null) {
+                      BleDiscoveryService.rememberPeerBuckets(
+                        senderId,
+                        remoteBuckets,
+                      );
+                    }
+                    if (delta.isEmpty && senderHash != ourSenderHash) {
+                      final absent = await db.getRowsForMismatchedBuckets(
+                        remoteBuckets,
+                        maxRows: 150,
+                      );
+                      if (absent.isNotEmpty) {
+                        delta = absent;
+                        usedRepair = true;
+                        final absentCount = absent.values
+                            .whereType<List>()
+                            .fold<int>(0, (a, b) => a + b.length);
+                        fpsComplete = absentCount < 150;
+                        debugPrint(
+                          '📥 [SYNC] Bucket gap-fill for $senderId — '
+                          '$absentCount row(s) in mismatched buckets',
+                        );
+                      }
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('⚠️ [SYNC] fps_b decode failed: $e');
+                }
+              } else if (delta.isEmpty && senderHash != ourSenderHash) {
+                delta = await db.getHashRepairChangeset(peerKey: senderId);
                 usedRepair = delta.isNotEmpty;
+                fpsComplete = false;
                 debugPrint(
                   '⚠️ [SYNC] Hash-mismatch repair for $senderId — '
                   'slice tables=${delta.keys.toList()}',
@@ -562,25 +720,46 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               }
               debugPrint('📤 [SYNC] Delta has ${delta.length} entries — replying to $targetMac');
 
+              // Keep reply GATT short so the initiator can turn around to peer #2.
+              delta = usedRepair
+                  ? BleDiscoveryService.truncateChangesetForBle(
+                      delta,
+                      maxRowsPerTable: 60,
+                    )
+                  : BleDiscoveryService.truncateChangesetForBle(
+                      delta,
+                      maxRowsPerTable: 25,
+                    );
+
               final localId = _localNodeId ?? db.localNodeId;
 
               // Always send back a delta envelope so the initiator receives our
               // neighbor gossip even when no changes are needed.
+              final ourFpsBlob = await db.getBucketFingerprintBlob();
               final deltaEnvelope = <String, dynamic>{
                 'type': 'delta',
                 'sender_id': localId,
                 'sender_hash': ourSenderHash,
                 'neighbors': _discovery.currentNeighborIds,
+                'fps_b': base64Encode(ourFpsBlob),
                 'data': delta,
               };
               var outBytes = zlib.encode(
                 utf8.encode(jsonEncode(deltaEnvelope)),
               );
-              // Oversized replies hit the same 60s GATT watchdog as full pushes.
-              // Send newest rows first; remainder syncs on the next dial.
+              // Prefer keeping gap-fill rows over fingerprints when over budget.
               var replyComplete = true;
               if (outBytes.length > BleDiscoveryService.maxOfferPushBytes) {
-                delta = BleDiscoveryService.shrinkChangesetForBle(delta);
+                deltaEnvelope.remove('fps_b');
+                outBytes = zlib.encode(
+                  utf8.encode(jsonEncode(deltaEnvelope)),
+                );
+                fpsComplete = false;
+              }
+              if (outBytes.length > BleDiscoveryService.maxOfferPushBytes) {
+                delta = usedRepair
+                    ? BleDiscoveryService.truncateChangesetForBle(delta)
+                    : BleDiscoveryService.shrinkChangesetForBle(delta);
                 deltaEnvelope['data'] = delta;
                 outBytes = zlib.encode(
                   utf8.encode(jsonEncode(deltaEnvelope)),
@@ -592,8 +771,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   outBytes = zlib.encode(
                     utf8.encode(jsonEncode(deltaEnvelope)),
                   );
-                  replyComplete = false;
                 }
+                fpsComplete = false;
                 debugPrint(
                   '⚠️ [SYNC] Delta reply capped for $targetMac '
                   '(${outBytes.length} bytes, complete=$replyComplete)',
@@ -611,14 +790,16 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   for (final e in remoteVector.entries)
                     if (e.value != null) e.key.toString(): e.value.toString(),
                 };
-                // Store what the peer *claimed*, not our full DB — otherwise the next
-                // push looks empty while older stranded rows still differ.
                 BleDiscoveryService.rememberPeerVector(
                   senderId,
                   normalizedRemote,
                 );
-                if (replyComplete && !usedRepair) {
+                if (replyComplete &&
+                    fpsComplete &&
+                    senderHash == ourSenderHash) {
                   BleDiscoveryService.markSyncComplete(senderId);
+                } else if (senderHash != ourSenderHash) {
+                  BleDiscoveryService.lastFullSync.remove(senderId);
                 }
               }
               return;
@@ -697,7 +878,29 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
               // Client handshake finished once the server's delta reply arrives.
               if (senderId != null) {
-                BleDiscoveryService.markSyncComplete(senderId);
+                final fpsB64 = root['fps_b'] ?? root['row_fps'];
+                if (fpsB64 is String && fpsB64.isNotEmpty) {
+                  try {
+                    final raw = base64Decode(fpsB64);
+                    if (raw.length ==
+                        DatabaseService.fingerprintBucketCount * 4) {
+                      BleDiscoveryService.rememberPeerBuckets(
+                        senderId,
+                        DatabaseService.decodeBucketFingerprints(raw),
+                      );
+                    }
+                  } catch (_) {}
+                }
+                final localHash = await db.getDatabaseHash();
+                if (senderHash != null && senderHash != localHash) {
+                  BleDiscoveryService.lastFullSync.remove(senderId);
+                  debugPrint(
+                    '⚠️ [SYNC] Hash still diverges after delta from $senderId — '
+                    'clearing sync cooldown for fast retry',
+                  );
+                } else {
+                  BleDiscoveryService.markSyncComplete(senderId);
+                }
               }
 
               try {
@@ -734,6 +937,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       return;
     }
     _meshSessionActive = true;
+    _scannerRecoverAttempt = 0;
+    _scannerPowerCycled = false;
     _meshTopology.clear();
     state = state.copyWith(
       discoveredNodeIds: const <String>{},
@@ -749,6 +954,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       final payload = _buildAdvertiserPayload(hashBytes);
       _discovery.setLocalHash(payload);
       final ownMac = await _nativeMesh.startNativeServer(payload, myId);
+      _ownBleMac = ownMac;
       if (ownMac != null && ownMac.isNotEmpty) {
         debugPrint('[MESH] Own BLE MAC: $ownMac (will filter from scan results)');
       }
@@ -760,6 +966,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       );
       await _attachLocalMessageQuickScanTrigger(myId);
       await _attachLocalUserProfileHashUpdateTrigger(myId);
+      onLocalCrdtWrite = onLocalDatabaseWrite;
       _publishRadioFlags();
       _refreshNeighborClassification();
       _neighborRefreshTimer?.cancel();
@@ -784,6 +991,13 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   }
 
   void _onPeerDiscovered(String shortNodeId) {
+    if (state.scannerStalled ||
+        _scannerRecoverAttempt != 0 ||
+        _scannerPowerCycled) {
+      _scannerRecoverAttempt = 0;
+      _scannerPowerCycled = false;
+      state = state.copyWith(scannerStalled: false, scannerHealthy: true);
+    }
     if (_discovery.isConnecting) return;
 
     final self = _localNodeId;
@@ -799,6 +1013,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   Future<void> _stopMeshSession() async {
     _meshSessionActive = false;
+    onLocalCrdtWrite = null;
     _localNodeId = null;
     _neighborRefreshTimer?.cancel();
     _neighborRefreshTimer = null;
