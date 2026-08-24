@@ -23,8 +23,7 @@ import 'identity_provider.dart';
 
 /// BLE adapter, permissions, and Phase 3 mesh discovery (scan + advertise).
 class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
-  BleNetworkNotifier(this._ref)
-      : super(BleNetworkState.initial) {
+  BleNetworkNotifier(this._ref) : super(BleNetworkState.initial) {
     _discovery = BleDiscoveryService(
       _ref,
       onConnectionPhaseChanged: _handleMeshConnectionPhaseChanged,
@@ -52,6 +51,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   String? _lastAdvertisedHashB64;
   Timer? _advertHashDebounce;
   DateTime? _lastAdvertHashPushedAt;
+
   /// Cap how often we rewrite ADV during a write burst (radio-facing rate limit).
   static const Duration _advertHashMinInterval = Duration(milliseconds: 150);
 
@@ -126,8 +126,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     _scannerRecovering = true;
     unawaited(() async {
       try {
-        final delayMs =
-            (2000 * (1 << _scannerRecoverAttempt.clamp(0, 2))).clamp(2000, 16000);
+        final delayMs = (2000 * (1 << _scannerRecoverAttempt.clamp(0, 2)))
+            .clamp(2000, 16000);
         debugPrint(
           '♻️ [MESH] Soft-restart stalled scanner (attempt $_scannerRecoverAttempt, wait ${delayMs}ms)...',
         );
@@ -172,7 +172,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     await _stopMeshSession();
     final attempted = await _nativeMesh.forceToggleBluetooth();
     if (!attempted) {
-      debugPrint('⚠️ [MESH] Power cycle restricted by OS version. Please toggle manually.');
+      debugPrint(
+        '⚠️ [MESH] Power cycle restricted by OS version. Please toggle manually.',
+      );
     }
     // Cool down to let the OS adapter state stabilize.
     await Future.delayed(const Duration(seconds: 4));
@@ -186,7 +188,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     final payloadBytes = Uint8List(12);
     payloadBytes.setRange(0, 8, hashBytes);
     final myId = _localNodeId ?? '';
-    final myIdSubstring = myId.length >= 4 ? myId.substring(0, 4) : myId.padRight(4, '0');
+    final myIdSubstring = myId.length >= 4
+        ? myId.substring(0, 4)
+        : myId.padRight(4, '0');
     final myIdBytes = utf8.encode(myIdSubstring);
     payloadBytes.setRange(8, 12, myIdBytes);
     return payloadBytes;
@@ -231,7 +235,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   void _publishRadioFlags() {
     final connecting = _discovery.isConnecting;
-    final advertising = _meshSessionActive &&
+    final advertising =
+        _meshSessionActive &&
         state.adapterStatus == BleAdapterStatus.on &&
         !connecting;
     if (connecting == state.radioMeshConnecting &&
@@ -327,10 +332,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       final allUsers = <String>{
         ...BleDiscoveryService.localSeenNodes.keys,
         ...networkLastSeen.keys,
+        ...BleDiscoveryService.nodeIdToMac.keys,
       };
 
-      final remotePeerIds =
-          allUsers.where((id) => self == null || id != self).toList();
+      final remotePeerIds = allUsers
+          .where((id) => self == null || id != self)
+          .toList();
       final singleRemotePeerTopology = remotePeerIds.length == 1;
 
       for (final id in allUsers) {
@@ -339,10 +346,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         final localTime = BleDiscoveryService.localSeenNodes[id];
         final networkTime = networkLastSeen[id];
 
-        final secondsSinceLocal =
-            localTime != null ? now.difference(localTime).inSeconds : 9999;
-        final secondsSinceNetwork =
-            networkTime != null ? now.difference(networkTime).inSeconds : 9999;
+        final secondsSinceLocal = localTime != null
+            ? now.difference(localTime).inSeconds
+            : 9999;
+        final secondsSinceNetwork = networkTime != null
+            ? now.difference(networkTime).inSeconds
+            : 9999;
 
         PeerStatus? status;
 
@@ -369,19 +378,29 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           status = PeerStatus.disconnected;
         }
 
+        // Keep known identities visible as disconnected tombstones. Their scan
+        // MAC can refresh after RPA rotation and rejoin without looking deleted.
+        if (status == null && BleDiscoveryService.nodeIdToMac.containsKey(id)) {
+          status = PeerStatus.disconnected;
+        }
         if (status == null) continue;
 
-        var latestTime = localTime ?? DateTime.fromMillisecondsSinceEpoch(0);
+        var latestTime =
+            localTime ??
+            BleDiscoveryService.nodeIdMacSeenAt[id] ??
+            DateTime.fromMillisecondsSinceEpoch(0);
         if (networkTime != null && networkTime.isAfter(latestTime)) {
           latestTime = networkTime;
         }
 
         final name = nameById[id] ?? (id.length <= 8 ? id : id.substring(0, 8));
         final mac = BleDiscoveryService.nodeIdToMac[id];
-        final routeViaId =
-            status == PeerStatus.indirect ? _findRoute(id, activeDirectNodes) : null;
-        final routeViaName =
-            routeViaId == null ? null : (nameById[routeViaId] ?? routeViaId);
+        final routeViaId = status == PeerStatus.indirect
+            ? _findRoute(id, activeDirectNodes)
+            : null;
+        final routeViaName = routeViaId == null
+            ? null
+            : (nameById[routeViaId] ?? routeViaId);
 
         out.add(
           MeshNodeState(
@@ -566,24 +585,35 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       if (ApiService.ignoreMac != null && senderMac == ApiService.ignoreMac) {
         return; // Simulating out of range
       }
-      if (ApiService.dropRate > 0 && Random().nextDouble() < ApiService.dropRate) {
+      if (ApiService.dropRate > 0 &&
+          Random().nextDouble() < ApiService.dropRate) {
         return; // Simulating packet drop
       }
 
-      final buffer =
-          _incomingBuffersByMac.putIfAbsent(senderMac, () => <int>[]);
+      final buffer = _incomingBuffersByMac.putIfAbsent(
+        senderMac,
+        () => <int>[],
+      );
 
       if (chunk.length == eofMarker.length && listEquals(chunk, eofMarker)) {
-        debugPrint('📥 [SYNC] EOF received from $senderMac — buffer=${buffer.length} bytes');
-        debugPrint('[BENCHMARK] TARGET_MAC:$senderMac | EVENT:DELTA_RECEIVED | BYTES:${buffer.length} | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
+        debugPrint(
+          '📥 [SYNC] EOF received from $senderMac — buffer=${buffer.length} bytes',
+        );
+        debugPrint(
+          '[BENCHMARK] TARGET_MAC:$senderMac | EVENT:DELTA_RECEIVED | BYTES:${buffer.length} | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}',
+        );
         if (buffer.isEmpty) {
-          debugPrint('⚠️ [SYNC] Empty buffer at EOF from $senderMac — ignoring');
+          debugPrint(
+            '⚠️ [SYNC] Empty buffer at EOF from $senderMac — ignoring',
+          );
           return;
         }
 
         Future<void>.microtask(() async {
           try {
-            debugPrint('🔄 [SYNC] Decompressing payload from $senderMac (${buffer.length} bytes)...');
+            debugPrint(
+              '🔄 [SYNC] Decompressing payload from $senderMac (${buffer.length} bytes)...',
+            );
             final decompressed = zlib.decode(buffer);
             final String jsonStr = utf8.decode(decompressed);
             final decodedJson = jsonDecode(jsonStr);
@@ -642,13 +672,16 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
               // 2) Respond with an offer delta (surgical changeset).
               if (senderHash == null || vectorRaw is! Map) {
-                debugPrint('⚠️ [SYNC] Offer missing senderHash or vector from $senderMac — skipping reply');
+                debugPrint(
+                  '⚠️ [SYNC] Offer missing senderHash or vector from $senderMac — skipping reply',
+                );
                 return;
               }
               final remoteVector = Map<String, dynamic>.from(vectorRaw);
               // Prefer direct MAC from native GATT callback (more reliable than scan routing).
-              final targetMac =
-                  senderMac != '<unknown>' ? senderMac : BleDiscoveryService.hashToMac[senderHash];
+              final targetMac = senderMac != '<unknown>'
+                  ? senderMac
+                  : BleDiscoveryService.hashToMac[senderHash];
               if (targetMac == null) {
                 debugPrint(
                   '⚠️ Offer: no hash route for sender_hash=$senderHash',
@@ -662,10 +695,16 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               // own messages. Now D3 includes its changeset in the offer, and we merge it here.
               final initiatorDataRaw = root['initiator_data'];
               if (initiatorDataRaw is Map && initiatorDataRaw.isNotEmpty) {
-                final initiatorChangeset = Map<String, dynamic>.from(initiatorDataRaw);
-                final rowCounts = initiatorChangeset.map((t, rows) => MapEntry(t, (rows as List).length));
+                final initiatorChangeset = Map<String, dynamic>.from(
+                  initiatorDataRaw,
+                );
+                final rowCounts = initiatorChangeset.map(
+                  (t, rows) => MapEntry(t, (rows as List).length),
+                );
                 final totalRows = rowCounts.values.fold(0, (a, b) => a + b);
-                debugPrint('📥 [SYNC] Merging initiator_data from $senderMac — $totalRows rows: $rowCounts');
+                debugPrint(
+                  '📥 [SYNC] Merging initiator_data from $senderMac — $totalRows rows: $rowCounts',
+                );
                 await db.mergeSyncChangeset(initiatorChangeset);
                 final messagesRaw = initiatorChangeset['messages'];
                 if (messagesRaw is List) {
@@ -673,14 +712,18 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                     if (row is Map) {
                       final msgId = row['msg_id'] ?? row['msgId'];
                       if (msgId != null) {
-                        debugPrint('[BENCHMARK] MSG_ID:$msgId | EVENT:MERGED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
+                        debugPrint(
+                          '[BENCHMARK] MSG_ID:$msgId | EVENT:MERGED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}',
+                        );
                       }
                     }
                   }
                 }
               }
 
-              debugPrint('📤 [SYNC] Computing delta for offer from senderId=$senderId...');
+              debugPrint(
+                '📤 [SYNC] Computing delta for offer from senderId=$senderId...',
+              );
               var delta = await db.getDeltaChangeset(remoteVector);
               final ourSenderHash = await db.getDatabaseHash();
               var usedRepair = false;
@@ -693,7 +736,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               if (fpsB64 is String && fpsB64.isNotEmpty) {
                 try {
                   final raw = base64Decode(fpsB64);
-                  if (raw.length == DatabaseService.fingerprintBucketCount * 4) {
+                  if (raw.length ==
+                      DatabaseService.fingerprintBucketCount * 4) {
                     final remoteBuckets =
                         DatabaseService.decodeBucketFingerprints(raw);
                     if (senderId != null) {
@@ -733,7 +777,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   'slice tables=${delta.keys.toList()}',
                 );
               }
-              debugPrint('📤 [SYNC] Delta has ${delta.length} entries — replying to $targetMac');
+              debugPrint(
+                '📤 [SYNC] Delta has ${delta.length} entries — replying to $targetMac',
+              );
 
               // Keep reply GATT short so the initiator can turn around to peer #2.
               delta = usedRepair
@@ -766,9 +812,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               var replyComplete = true;
               if (outBytes.length > BleDiscoveryService.maxOfferPushBytes) {
                 deltaEnvelope.remove('fps_b');
-                outBytes = zlib.encode(
-                  utf8.encode(jsonEncode(deltaEnvelope)),
-                );
+                outBytes = zlib.encode(utf8.encode(jsonEncode(deltaEnvelope)));
                 fpsComplete = false;
               }
               if (outBytes.length > BleDiscoveryService.maxOfferPushBytes) {
@@ -776,9 +820,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                     ? BleDiscoveryService.truncateChangesetForBle(delta)
                     : BleDiscoveryService.shrinkChangesetForBle(delta);
                 deltaEnvelope['data'] = delta;
-                outBytes = zlib.encode(
-                  utf8.encode(jsonEncode(deltaEnvelope)),
-                );
+                outBytes = zlib.encode(utf8.encode(jsonEncode(deltaEnvelope)));
                 replyComplete =
                     outBytes.length <= BleDiscoveryService.maxOfferPushBytes;
                 if (!replyComplete) {
@@ -798,7 +840,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 targetMac,
                 Uint8List.fromList(outBytes),
               );
-              debugPrint('✅ [SYNC] Delta reply sent to $targetMac via NOTIFY (${outBytes.length} bytes)');
+              debugPrint(
+                '✅ [SYNC] Delta reply sent to $targetMac via NOTIFY (${outBytes.length} bytes)',
+              );
 
               if (senderId != null) {
                 final normalizedRemote = <String, String>{
@@ -818,7 +862,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 }
               }
               return;
-
             }
 
             if (type == 'delta' || type == null) {
@@ -868,13 +911,19 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
               final dataRaw = root['data'] ?? root['changes'];
               if (dataRaw is! Map) {
-                debugPrint('⚠️ [SYNC] Delta from $senderMac has no data/changes field');
+                debugPrint(
+                  '⚠️ [SYNC] Delta from $senderMac has no data/changes field',
+                );
                 return;
               }
               final changeset = Map<String, dynamic>.from(dataRaw);
-              final rowCounts = changeset.map((t, rows) => MapEntry(t, (rows as List).length));
+              final rowCounts = changeset.map(
+                (t, rows) => MapEntry(t, (rows as List).length),
+              );
               final totalRows = rowCounts.values.fold(0, (a, b) => a + b);
-              debugPrint('📥 [SYNC] Merging delta from $senderMac — $totalRows rows across ${changeset.length} tables: $rowCounts');
+              debugPrint(
+                '📥 [SYNC] Merging delta from $senderMac — $totalRows rows across ${changeset.length} tables: $rowCounts',
+              );
               if (changeset.isNotEmpty) {
                 await db.mergeSyncChangeset(changeset);
                 debugPrint('✅ [SYNC] Merged $totalRows rows from $senderMac');
@@ -884,13 +933,17 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                     if (row is Map) {
                       final msgId = row['msg_id'] ?? row['msgId'];
                       if (msgId != null) {
-                        debugPrint('[BENCHMARK] MSG_ID:$msgId | EVENT:MERGED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
+                        debugPrint(
+                          '[BENCHMARK] MSG_ID:$msgId | EVENT:MERGED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}',
+                        );
                       }
                     }
                   }
                 }
               } else {
-                debugPrint('ℹ️ [SYNC] Empty changeset from $senderMac — nothing to merge');
+                debugPrint(
+                  'ℹ️ [SYNC] Empty changeset from $senderMac — nothing to merge',
+                );
               }
 
               // Client handshake finished once the server's delta reply arrives.
@@ -931,7 +984,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 if (b64 != _lastAdvertisedHashB64) {
                   _lastAdvertisedHashB64 = b64;
                   final payload = _buildAdvertiserPayload(hashBytes);
-                  await _nativeMesh.updateAdvertiserHash(payload, _localNodeId ?? db.localNodeId);
+                  await _nativeMesh.updateAdvertiserHash(
+                    payload,
+                    _localNodeId ?? db.localNodeId,
+                  );
                   _discovery.setLocalHash(payload);
                 }
               } catch (e, st) {
@@ -939,7 +995,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               }
             }
           } catch (e, st) {
-            debugPrint('❌ [SYNC] Mesh processing error from $senderMac: $e\n$st');
+            debugPrint(
+              '❌ [SYNC] Mesh processing error from $senderMac: $e\n$st',
+            );
           } finally {
             buffer.clear();
             if (buffer.isEmpty) {
@@ -949,7 +1007,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         });
       } else {
         buffer.addAll(chunk);
-        debugPrint('📡 [SYNC] Chunk from $senderMac: ${chunk.length} bytes (total buffer: ${buffer.length})');
+        debugPrint(
+          '📡 [SYNC] Chunk from $senderMac: ${chunk.length} bytes (total buffer: ${buffer.length})',
+        );
       }
     });
   }
@@ -978,7 +1038,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       final ownMac = await _nativeMesh.startNativeServer(payload, myId);
       _ownBleMac = ownMac;
       if (ownMac != null && ownMac.isNotEmpty) {
-        debugPrint('[MESH] Own BLE MAC: $ownMac (will filter from scan results)');
+        debugPrint(
+          '[MESH] Own BLE MAC: $ownMac (will filter from scan results)',
+        );
       }
       await _attachNativeIncomingSync();
       await _discovery.startScanning(
@@ -1059,7 +1121,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   /// Pulls the latest hardware and permission statuses into the state.
   Future<void> refreshMeshHealth() async {
     final report = await PermissionsHelper.checkMeshHealth();
-    
+
     final Map<String, String> statusMap = {};
     report.permissions.forEach((perm, status) {
       // Permission types: location, bluetoothScan, bluetoothConnect, bluetoothAdvertise, bluetooth
@@ -1071,7 +1133,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
     state = state.copyWith(
       locationServicesEnabled: report.locationServicesEnabled,
-      bluetoothHardwareEnabled: FlutterBluePlus.adapterStateNow == BluetoothAdapterState.on,
+      bluetoothHardwareEnabled:
+          FlutterBluePlus.adapterStateNow == BluetoothAdapterState.on,
       permissionStatuses: statusMap,
     );
   }
@@ -1172,8 +1235,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 /// Global BLE network / adapter state.
 final bleNetworkProvider =
     StateNotifierProvider<BleNetworkNotifier, BleNetworkState>(
-  (ref) => BleNetworkNotifier(ref),
-);
+      (ref) => BleNetworkNotifier(ref),
+    );
 
 class MeshNodeState {
   const MeshNodeState({

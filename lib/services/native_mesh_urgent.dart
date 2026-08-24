@@ -23,6 +23,20 @@ extension NativeMeshUrgent on NativeMeshService {
     }
   }
 
+  Future<void> setHeldLinkLease({
+    required Duration idle,
+    required Duration maximum,
+  }) async {
+    try {
+      await _ch.invokeMethod<void>('set_link_lease', {
+        'idleMs': idle.inMilliseconds,
+        'maxMs': maximum.inMilliseconds,
+      });
+    } on PlatformException catch (e) {
+      debugPrint('🔥 Native set_link_lease failed: ${e.message}');
+    }
+  }
+
   Future<void> cancelOutbound() async {
     try {
       await _ch.invokeMethod<void>('cancel_outbound');

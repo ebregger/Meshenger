@@ -64,3 +64,34 @@ class MeshCatchup {
     return next;
   }
 }
+
+/// Sizes a reusable GATT-link turn from live mesh width and pending CRDT rows.
+class MeshLeasePolicy {
+  static ({Duration idle, Duration maximum}) calculate({
+    required int meshNodeCount,
+    required int backlogRows,
+    double messagesPerSecond = 0,
+  }) {
+    final nodes = meshNodeCount.clamp(2, 12);
+    final pages = ((backlogRows < 1 ? 1 : backlogRows) / MeshCatchup.pageRows)
+        .ceil();
+
+    // A wider mesh needs shorter turns. A deeper delta earns more pages, but
+    // never beyond its fair share of a 45-second mesh rotation. Recent write
+    // pressure extends the useful turn before that backlog has accumulated.
+    final fairnessCapMs = (45000 / nodes).round().clamp(6000, 30000).toInt();
+    final loadBonusMs = (messagesPerSecond.clamp(0, 20) * 2500).round().clamp(
+      0,
+      6000,
+    );
+    final desiredMs = (6000 + (pages * 3000) + loadBonusMs)
+        .clamp(6000, fairnessCapMs)
+        .toInt();
+    final idleMs = (desiredMs ~/ 3).clamp(3200, 4500).toInt();
+
+    return (
+      idle: Duration(milliseconds: idleMs),
+      maximum: Duration(milliseconds: desiredMs),
+    );
+  }
+}

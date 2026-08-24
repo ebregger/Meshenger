@@ -82,6 +82,7 @@ class MainActivity : FlutterActivity() {
   @Volatile private var heldClientGatt: BluetoothGatt? = null
   @Volatile private var heldWriteChar: BluetoothGattCharacteristic? = null
   @Volatile private var heldChunkSize: Int = 20
+  @Volatile private var heldClientLeaseStartedAtMs: Long = 0L
   private val clientIoLock = Object()
   @Volatile private var clientIoOk: Boolean? = null
   @Volatile private var heldNotifyLatch: CountDownLatch? = null
@@ -90,8 +91,11 @@ class MainActivity : FlutterActivity() {
     val g = heldClientGatt
     heldClientGatt = null
     heldWriteChar = null
+    heldClientLeaseStartedAtMs = 0L
     try { g?.disconnect() } catch (_: Throwable) {}
   }
+  @Volatile private var heldClientIdleMs = 4000L
+  @Volatile private var heldClientMaxLeaseMs = 15000L
 
   private val SERVICE_UUID = UUID.fromString("c7e4f1a2-9b3d-4a8e-a1f6-2d5e8b9c0a4f")
   private val CHARACTERISTIC_UUID =
@@ -158,6 +162,18 @@ class MainActivity : FlutterActivity() {
         "set_urgent_hold" -> {
           urgentHold = call.argument<Boolean>("active") ?: false
           Log.d(TAG, "[SERVER] urgentHold=$urgentHold inbound=${activeInboundServers.get()}")
+          result.success(null)
+        }
+        "set_link_lease" -> {
+          val requestedIdle = call.argument<Number>("idleMs")?.toLong() ?: 4000L
+          val requestedMax = call.argument<Number>("maxMs")?.toLong() ?: 15000L
+          heldClientIdleMs = requestedIdle.coerceIn(1000L, 10000L)
+          heldClientMaxLeaseMs =
+            requestedMax.coerceIn(heldClientIdleMs, 60000L)
+          Log.d(
+            TAG,
+            "[GATT] Adaptive lease idle=${heldClientIdleMs}ms max=${heldClientMaxLeaseMs}ms"
+          )
           result.success(null)
         }
         "cancel_outbound" -> {
@@ -497,6 +513,7 @@ class MainActivity : FlutterActivity() {
     } catch (_: Throwable) {}
     val held = heldClientGatt
     heldClientGatt = null
+    heldClientLeaseStartedAtMs = 0L
     try { held?.close() } catch (_: Throwable) {}
     isResettingServer = false
     Log.d(TAG, "[SERVER] GATT server reset complete.")
@@ -509,12 +526,34 @@ class MainActivity : FlutterActivity() {
     val g = heldClientGatt
     heldClientGatt = null
     heldWriteChar = null
+    heldClientLeaseStartedAtMs = 0L
     try { g?.disconnect() } catch (_: Throwable) {}
     try { g?.close() } catch (_: Throwable) {}
   }
 
+  private fun scheduleHeldClientRelease(g: BluetoothGatt) {
+    if (heldClientGatt !== g) return
+    val now = System.currentTimeMillis()
+    if (heldClientLeaseStartedAtMs == 0L) {
+      heldClientLeaseStartedAtMs = now
+    }
+    val hardRemaining =
+      (heldClientLeaseStartedAtMs + heldClientMaxLeaseMs - now).coerceAtLeast(0L)
+    val delayMs = minOf(heldClientIdleMs, hardRemaining)
+    val handler = Handler(Looper.getMainLooper())
+    handler.removeCallbacks(heldClientRelease)
+    handler.postDelayed(heldClientRelease, delayMs)
+    Log.d(
+      TAG,
+      "[GATT] Held-link lease refresh idle=${delayMs}ms hardRemaining=${hardRemaining}ms"
+    )
+  }
+
   @SuppressLint("MissingPermission")
-  private fun writeOnHeldClient(payload: ByteArray, result: MethodChannel.Result): Boolean {
+  private fun writeOnHeldClient(
+    payload: ByteArray,
+    result: MethodChannel.Result,
+  ): Boolean {
     val g = heldClientGatt ?: return false
     val characteristic = heldWriteChar ?: return false
     if (!isOutboundClientBusy.compareAndSet(false, true)) {
@@ -1226,10 +1265,10 @@ class MainActivity : FlutterActivity() {
               completeSuccessOnMain()
               heldNotifyLatch?.countDown()
               heldNotifyLatch = null
-              // Keep the client GATT for the rest of the session so alternating
-              // probes reuse one link instead of reconnecting every few seconds.
+              // Reuse this link for immediate newest + old-page catch-up, but cap
+              // the lease so another mesh peer gets the single inbound slot.
               heldClientGatt = g
-              mainHandler.removeCallbacks(heldClientRelease)
+              scheduleHeldClientRelease(g)
             }
           }
         }
