@@ -10,7 +10,9 @@ import 'package:flutter/services.dart';
 
 import '../constants/ble_constants.dart';
 import '../providers/database_provider.dart';
+import 'mesh_catchup.dart';
 import 'native_mesh_service.dart';
+import 'native_mesh_urgent.dart';
 
 /// Byte budget in the ADV payload: we only send a fixed 8-char "Short Node ID".
 const int meshShortNodeIdLength = 8;
@@ -750,9 +752,14 @@ class BleDiscoveryService {
           }
         }
 
-        // Yield the outbound slot to urgent push-on-write for a few seconds.
+        // Yield the outbound slot to urgent push-on-write, but still NOTIFY
+        // over an existing inbound link (server-side catch-up during a burst).
         final hold = _urgentRadioHoldUntil;
         if (hold != null && DateTime.now().isBefore(hold)) {
+          final nid = stableNodeId;
+          if (nid != null) {
+            unawaited(_tryInboundCatchupPush(myNodeId, nid));
+          }
           continue;
         }
         final circuit = _outboundCircuitUntil;
@@ -828,6 +835,9 @@ class BleDiscoveryService {
         _connectingHashes.contains(remoteHashInt) ||
         (peerNodeId != null && _connectingNodeIds.contains(peerNodeId));
     if (busy) {
+      if (forceNewestPush && peerNodeId != null) {
+        if (await _tryInboundUrgentPush(myNodeId, peerNodeId)) return;
+      }
       if (forceNewestPush) {
         return enqueue(front: true).future;
       }
@@ -860,6 +870,13 @@ class BleDiscoveryService {
     bool remoteHashTrusted = true,
     bool forceNewestPush = false,
   }) async {
+    // If the peer is already our GATT client, NOTIFY catch-up instead of a
+    // second outbound (dual-role is what wedges Red→Clear after a burst).
+    final inboundPeer = peerNodeId ?? macToNodeId[device.remoteId.str];
+    if (inboundPeer != null &&
+        await _tryInboundCatchupPush(myNodeId, inboundPeer)) {
+      return;
+    }
     // Scan-path dials must yield while urgent push-on-write holds the radio.
     if (!forceNewestPush) {
       final hold = _urgentRadioHoldUntil;
@@ -907,8 +924,9 @@ class BleDiscoveryService {
           : null;
       Map<String, dynamic> ourChangeset;
       if (forceNewestPush) {
-        // Local write: single newest row keeps NOTIFY under ~300B.
-        ourChangeset = await db.getNewestRowsChangeset(maxRows: 1);
+        // Burst writes (stress 500 @ 0.3s) outrun a 1-row push; newest-40
+        // still fits NOTIFY and covers ~12s of chat at that rate.
+        ourChangeset = await db.getNewestRowsChangeset(maxRows: 8);
       } else if (priorBuckets != null && priorBuckets.isNotEmpty) {
         // Prefer bucket gap-fill — newest-N cannot heal stranded rows once they
         // fall outside the sliding window (seen: Red stuck ~30 behind forever).
@@ -936,10 +954,11 @@ class BleDiscoveryService {
       if (ourChangeset.isEmpty) {
         ourChangeset = await db.getNewestRowsChangeset(maxRows: 8);
       }
-      // Live scan-path offers must stay tiny so urgent push keeps the radio.
+      // Include a complete typical fingerprint bucket. An 8-row slice can
+      // repeatedly miss the one stranded row in a 500-message run.
       if (!forceNewestPush) {
         ourChangeset =
-            truncateChangesetForBle(ourChangeset, maxRowsPerTable: 8);
+            truncateChangesetForBle(ourChangeset, maxRowsPerTable: 25);
       }
       final fpsBlob = await db.getBucketFingerprintBlob();
       final offerEnvelope = <String, dynamic>{
@@ -1126,10 +1145,39 @@ class BleDiscoveryService {
     return;
   }
 
+  /// Reconcile persistent hash drift with bucket repair over the held link.
+  void requestHashRepair(String myNodeId, String peerId, int remoteHash) {
+    final now = DateTime.now();
+    final last = _lastHashRepairAttempt[peerId];
+    if (last != null && now.difference(last) < const Duration(seconds: 2)) {
+      return;
+    }
+    final mac = preferredDialMac(peerId);
+    if (mac == null || mac.isEmpty) return;
+    _lastHashRepairAttempt[peerId] = now;
+    unawaited(
+      _runMeshInitiatorHandshake(
+        myNodeId,
+        remoteHash,
+        BluetoothDevice.fromId(mac),
+        peerNodeId: peerId,
+        peerKeyHint: peerId,
+        remoteHashTrusted: true,
+        forceNewestPush: false,
+      ),
+    );
+  }
+
   Timer? _urgentSyncDebounce;
   DateTime? _urgentRadioHoldUntil;
   DateTime? _outboundCircuitUntil;
   DateTime? _lastLocalWriteAt;
+  final Map<String, DateTime> _lastInboundCatchupAt = {};
+  final Set<String> _inboundPushBusy = {};
+  final Set<String> _inboundCatchupPending = {};
+  final Map<String, DateTime> _lastHashRepairAttempt = {};
+  bool _urgentSyncRunning = false;
+  bool _urgentSyncDirty = false;
   final Map<String, DateTime> _peerHashDivergedAt = {};
   String? _urgentMyNodeId;
   String? _urgentTargetPeer;
@@ -1167,6 +1215,7 @@ class BleDiscoveryService {
 
     unawaited(() async {
       if (await _tryInboundUrgentPush(myNodeId, peer!)) {
+        await _nativeMesh.cancelOutbound();
         final c = _urgentInboundCompleter;
         if (c != null && !c.isCompleted) c.complete(true);
       }
@@ -1176,16 +1225,23 @@ class BleDiscoveryService {
   /// Dial known neighbors immediately after a local write (don't wait for ADV/scan).
   void requestUrgentSyncWithKnownPeers(String myNodeId) {
     _lastLocalWriteAt = DateTime.now();
+    if (_urgentSyncRunning) {
+      _urgentSyncDirty = true;
+      return;
+    }
     _urgentSyncDebounce?.cancel();
     _urgentSyncDebounce = Timer(const Duration(milliseconds: 50), () {
       unawaited(_runUrgentSync(myNodeId));
     });
   }
 
-  /// Peer is already connected to our GATT server — NOTIFY a tiny newest delta.
-  Future<void> _pushNewestOverInbound(String myNodeId, String mac) async {
+  /// Peer is already connected to our GATT server — NOTIFY [changeset].
+  Future<void> _pushChangesetOverInbound(
+    String myNodeId,
+    String mac,
+    Map<String, dynamic> changeset,
+  ) async {
     final db = await _ref.read(databaseProvider.future);
-    final changeset = await db.getNewestRowsChangeset(maxRows: 1);
     final myHashInt = await db.getDatabaseHash();
     final fpsBlob = await db.getBucketFingerprintBlob();
     final envelope = <String, dynamic>{
@@ -1202,9 +1258,19 @@ class BleDiscoveryService {
       (t, rows) => MapEntry(t, (rows as List).length),
     );
     debugPrint(
-      '🚀 [DISCOVERY] Urgent inbound-push to $mac '
+      '🚀 [DISCOVERY] Inbound-push to $mac '
       '(${payload.length}B rows=$rowCounts)',
     );
+  }
+
+  Future<void> _pushNewestOverInbound(
+    String myNodeId,
+    String mac, {
+    int maxRows = 8,
+  }) async {
+    final db = await _ref.read(databaseProvider.future);
+    final changeset = await db.getNewestRowsChangeset(maxRows: maxRows);
+    await _pushChangesetOverInbound(myNodeId, mac, changeset);
   }
 
   /// Pick an inbound GATT client MAC that plausibly belongs to [peerId].
@@ -1232,16 +1298,103 @@ class BleDiscoveryService {
     final connected = await _nativeMesh.getConnectedServerMacs();
     final mac = _resolveInboundMacForPeer(peerId, connected);
     if (mac == null || mac.isEmpty) return false;
+    if (!_inboundPushBusy.add(peerId)) {
+      // A real transfer is in flight. Coalesce this write into the ordered
+      // vector catch-up that runs as soon as that transfer completes.
+      _inboundCatchupPending.add(peerId);
+      return true;
+    }
+
+    final last = _lastInboundCatchupAt[peerId];
+    if (last != null) {
+      final waitMs = 400 - DateTime.now().difference(last).inMilliseconds;
+      if (waitMs > 0) {
+        await Future<void>.delayed(Duration(milliseconds: waitMs));
+      }
+    }
+    _lastInboundCatchupAt[peerId] = DateTime.now();
 
     try {
       await _pushNewestOverInbound(myNodeId, mac);
       rememberSuccessfulDial(peerId, mac);
       rememberScanMac(peerId, mac, seenAt: DateTime.now());
-      lastFullSync[peerId] = DateTime.now();
+      // Newest-N is latency-only — do not credit the vector (that skips holes).
       return true;
     } catch (e) {
       debugPrint('⚠️ [DISCOVERY] Inbound urgent push $peerId@$mac: $e');
       return false;
+    } finally {
+      _inboundPushBusy.remove(peerId);
+      if (_inboundCatchupPending.remove(peerId)) {
+        unawaited(Future<void>.delayed(const Duration(milliseconds: 120), () {
+          unawaited(_tryInboundCatchupPush(myNodeId, peerId));
+        }));
+      }
+    }
+  }
+
+  /// Catch-up over an existing inbound client using vector/bucket delta
+  /// (newest-N cannot heal rows that have fallen out of the sliding window).
+  Future<bool> _tryInboundCatchupPush(String myNodeId, String peerId) async {
+    final connected = await _nativeMesh.getConnectedServerMacs();
+    final mac = _resolveInboundMacForPeer(peerId, connected);
+    if (mac == null || mac.isEmpty) return false;
+    if (!_inboundPushBusy.add(peerId)) {
+      _inboundCatchupPending.add(peerId);
+      return true;
+    }
+
+    final last = _lastInboundCatchupAt[peerId];
+    if (last != null) {
+      final waitMs = 400 - DateTime.now().difference(last).inMilliseconds;
+      if (waitMs > 0) {
+        await Future<void>.delayed(Duration(milliseconds: waitMs));
+      }
+    }
+
+    var hasMore = false;
+    try {
+      final db = await _ref.read(databaseProvider.future);
+      final prior = Map<String, String>.from(lastKnownPeerVector[peerId] ?? {});
+      var fromVector = true;
+      var changeset = await db.getDeltaChangeset(prior);
+      if (changeset.isEmpty) {
+        final buckets = lastKnownPeerBuckets[peerId];
+        if (buckets != null && buckets.isNotEmpty) {
+          changeset = await db.getRowsForMismatchedBuckets(buckets);
+          fromVector = false;
+        }
+      }
+      if (changeset.isEmpty) {
+        _lastInboundCatchupAt[peerId] = DateTime.now();
+        return true;
+      }
+      final page = MeshCatchup.takeOldest(
+        changeset,
+        maxRows: MeshCatchup.pageRows,
+      );
+      _lastInboundCatchupAt[peerId] = DateTime.now();
+      await _pushChangesetOverInbound(myNodeId, mac, page);
+      if (fromVector) {
+        rememberPeerVector(
+          peerId,
+          MeshCatchup.mergeVectorFromChangeset(prior, page),
+        );
+      }
+      rememberSuccessfulDial(peerId, mac);
+      hasMore = MeshCatchup.rowCount(changeset) > MeshCatchup.pageRows;
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ [DISCOVERY] Inbound catch-up $peerId: $e');
+      return false;
+    } finally {
+      _inboundPushBusy.remove(peerId);
+      final pending = _inboundCatchupPending.remove(peerId);
+      if (hasMore || pending) {
+        unawaited(Future<void>.delayed(const Duration(milliseconds: 120), () {
+          unawaited(_tryInboundCatchupPush(myNodeId, peerId));
+        }));
+      }
     }
   }
 
@@ -1280,9 +1433,9 @@ class BleDiscoveryService {
         await _waitForInboundUrgentPush(
           myNodeId,
           peerId,
-          timeout: wait1 < const Duration(milliseconds: 650)
+          timeout: wait1 < const Duration(milliseconds: 700)
               ? wait1
-              : const Duration(milliseconds: 650),
+              : const Duration(milliseconds: 700),
         )) {
       return true;
     }
@@ -1374,6 +1527,7 @@ class BleDiscoveryService {
       final end = DateTime.now().add(budget);
       while (DateTime.now().isBefore(end) && !winner.isCompleted) {
         if (await _tryInboundUrgentPush(myNodeId, peerId)) {
+          await _nativeMesh.cancelOutbound();
           if (!winner.isCompleted) winner.complete(true);
           return;
         }
@@ -1388,7 +1542,9 @@ class BleDiscoveryService {
     });
 
     try {
-      return await winner.future;
+      final ok = await winner.future;
+      if (!ok) await _nativeMesh.cancelOutbound();
+      return ok;
     } finally {
       deadline.cancel();
       _urgentInboundCompleter = null;
@@ -1397,11 +1553,19 @@ class BleDiscoveryService {
   }
 
   Future<void> _runUrgentSync(String myNodeId) async {
+    if (_urgentSyncRunning) {
+      _urgentSyncDirty = true;
+      return;
+    }
+    _urgentSyncRunning = true;
     _urgentMyNodeId = myNodeId;
     _urgentRadioHoldUntil = DateTime.now().add(const Duration(seconds: 5));
+    await _nativeMesh.setUrgentHold(true);
     final urgentSw = Stopwatch()..start();
     const urgentBudget = Duration(milliseconds: 4800);
     try {
+      do {
+        _urgentSyncDirty = false;
     // Only dial scan-fresh RPAs. Stale GATT/bind MACs routinely 4s-timeout and
     // burn the only outbound slot (seen: P9→Clear miss while Red also times out).
     final now = DateTime.now();
@@ -1486,16 +1650,20 @@ class BleDiscoveryService {
         maxBudget: urgentBudget - urgentSw.elapsed,
       );
       if (!dialed && onUrgentGattRecovery != null) {
-        debugPrint('🔄 [DISCOVERY] Urgent failed on $pick — GATT recovery');
-        try {
-          await onUrgentGattRecovery!();
-          await Future<void>.delayed(const Duration(milliseconds: 300));
-          final left = urgentBudget - urgentSw.elapsed;
-          if (left > const Duration(milliseconds: 900)) {
-            dialed = await _urgentDeliverPeer(myNodeId, pick, maxBudget: left);
+        final left = urgentBudget - urgentSw.elapsed;
+        // resetServer mid-probe drops the inbound that was about to save us.
+        if (left > const Duration(milliseconds: 2500)) {
+          debugPrint('🔄 [DISCOVERY] Urgent failed on $pick — GATT recovery');
+          try {
+            await onUrgentGattRecovery!();
+            await Future<void>.delayed(const Duration(milliseconds: 300));
+            final retry = urgentBudget - urgentSw.elapsed;
+            if (retry > const Duration(milliseconds: 900)) {
+              dialed = await _urgentDeliverPeer(myNodeId, pick, maxBudget: retry);
+            }
+          } catch (e) {
+            debugPrint('⚠️ [DISCOVERY] GATT recovery failed: $e');
           }
-        } catch (e) {
-          debugPrint('⚠️ [DISCOVERY] GATT recovery failed: $e');
         }
       }
       if (!dialed) {
@@ -1508,12 +1676,23 @@ class BleDiscoveryService {
         debugPrint('⚠️ [DISCOVERY] Urgent sync gave up on $pick');
       }
     }
+      } while (_urgentSyncDirty && urgentSw.elapsed < urgentBudget);
     } finally {
+      _urgentSyncRunning = false;
       _urgentMyNodeId = null;
       _urgentTargetPeer = null;
       _urgentInboundCompleter = null;
       _urgentRadioHoldUntil = null;
+      await _nativeMesh.setUrgentHold(false);
       _drainPendingQueue(myNodeId);
+      if (_urgentSyncDirty) {
+        // Brief yield so scan-path can use the held link between burst pushes.
+        unawaited(Future<void>.delayed(const Duration(milliseconds: 200), () {
+          if (!_urgentSyncRunning) {
+            unawaited(_runUrgentSync(myNodeId));
+          }
+        }));
+      }
     }
   }
 

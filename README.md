@@ -230,17 +230,17 @@ adb logcat -d | findstr /i "UI_CHANGED DISPLAYED MERGED Stress Test API"
 
 **Goal:** **100%** single-message propagation on Clear↔Red **under 5s**, then run `stress_test.py --messages 500`.
 
-**Git:** `e51db23` on `main` pushed (*"Fix urgent mesh catch-up by tracking fresh RPA dial MACs."*). **All urgent-path improvements below are uncommitted** (5 Dart/Kotlin files + `probe_5s.py`).
+**Git:** `88fc45b` on `main` (NOTIFY-ready inbound + 5s probe). **Held-link reuse below is uncommitted.**
 
-### Best probe results so far (not 100%)
+### Probe results
 
 | Run | OK / 30 | Avg when OK | Notes |
 |-----|---------|-------------|-------|
-| Best | **22/30** | ~2.0s | Warmup + NOTIFY-ready inbound fix |
-| Typical | 15–20/30 | ~2–3.5s | Mesh wedges after ~15 probes |
-| Post-reboot | 15/30 | ~2.3s | Clear 6/15, Red 9/15 |
+| **Held-link reuse** | **30/30** | **1.66s** (max 2.54s) | Clear 15/15, Red 15/15 |
+| Prior best | 22/30 | ~2.0s | Warmup + NOTIFY-ready inbound |
+| Typical before hold | 15–20/30 | ~2–3.5s | Wedged after ~15 probes |
 
-Clear→Red and Red→Clear both still fail intermittently; failures cluster when GATT slots wedge.
+Fix: do not disconnect the GATT client on notify EOF. Reuse that link — server inbound-NOTIFYs, client writes the next offer on the held GATT. Avoids RPA reconnect / mutual-dial / slot exhaustion.
 
 ### Uncommitted changes (summary)
 
@@ -249,7 +249,8 @@ Clear→Red and Red→Clear both still fail intermittently; failures cluster whe
 | `lib/services/ble_discovery_service.dart` | Urgent sync pipeline: inbound-first, parallel race, MAC validation, GATT-hold scoped to active urgent, scan defer on fresh hash divergence, GATT recovery retry, fallback dial |
 | `lib/providers/ble_network_provider.dart` | `server_connect` / `server_ready` handlers, `_recoverGattForUrgent()` |
 | `lib/services/native_mesh_service.dart` | EventChannel events for server connect + NOTIFY-ready |
-| `android/.../MainActivity.kt` | `notifyReadyServerClients`, `server_ready` event, urgent connect timeout 1800ms |
+| `android/.../MainActivity.kt` | Held client GATT after EOF, `writeOnHeldClient`, CCCD-before-`server_ready`, 400ms notify ACK |
+| `lib/services/native_mesh_urgent.dart` | `setUrgentHold` / `cancelOutbound` / `hasInboundClients` |
 | `lib/services/api_service.dart` | `GET /has_message?text=` |
 | `probe_5s.py` | 5s propagation probe script |
 
@@ -258,18 +259,18 @@ Clear→Red and Red→Clear both still fail intermittently; failures cluster whe
 1. **Stale RPA dial MACs** — urgent dialed dead MACs; mitigated via `rememberScanMac(seenAt:)` + `candidateDialMacs()`
 2. **False-positive inbound push** — NOTIFY to wrong/stale inbound MAC reported success; mitigated via `_resolveInboundMacForPeer()` + NOTIFY-only-after-CCCD (`server_ready`)
 3. **Mutual-dial collision** — both peers outbound simultaneously; mitigated via hash-divergence defer + inbound-first race
-4. **GATT slot exhaustion** — server collision warnings after ~15 probes; partial fix via `onUrgentGattRecovery` → `resetServer` + re-advertise
+4. **GATT slot exhaustion** — leftover dual-role reconnects; mitigated by holding one client link and skipping scan-path while held
 5. **8s urgent radio hold** — was blocking scan recovery; now cleared in `_runUrgentSync` `finally`
 6. **`probe_5s.py` indentation bug** — fixed (lines 64–72 were outside the loop briefly; caused bogus 1/30 summaries)
 
 ### TODO for next agent
 
-1. **[ ] Hit 30/30 on `probe_5s.py 30`** — both directions, every probe ≤5000ms (no `/reset_ble` mid-batch)
-2. **[ ] Stabilize Red→Clear** — was 3/15 then 12/15 after inbound MAC fix; still regresses when wedged
-3. **[ ] Stabilize Clear→Red** — intermittent `ms=None` (>8s) and 6–8s SLOW runs
-4. **[ ] Reduce GATT wedge** — consider periodic `resetServer` when `activeInboundServers >= 2`, or reject second inbound during urgent hold
-5. **[ ] Verify `server_ready` fires before inbound push on both SDK 28 (Clear) and SDK 35 (Red)**
-6. **[ ] Run `python stress_test.py --messages 500`** only after probe_5s is 30/30
+1. **[x] Hit 30/30 on `probe_5s.py 30`** — Clear 15/15, Red 15/15, avg 1655ms, max 2539ms
+2. **[x] Stabilize Red→Clear** — held client reuse + inbound NOTIFY
+3. **[x] Stabilize Clear→Red** — same persistent link
+4. **[x] Reduce GATT wedge** — one held link; skip scan-path while held; no mid-probe `resetServer`
+5. **[x] `server_ready` after CCCD response** — both SDK 28 and 35; notify ACK timeout 400ms (SDK 28 never fires `onNotificationSent`)
+6. **[ ] `python stress_test.py --messages 500`** — send finished; UI poll stalled at 11/500 (`/ui` windowing + urgent newest-1 during 0.3s burst). Coalesce + held-link scan-path are in the tree, not re-run.
 7. **[ ] Commit** when user asks — do **not** commit `*.txt` stress logs or `.cursor/`
 
 ### Debug commands

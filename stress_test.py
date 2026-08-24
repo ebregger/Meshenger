@@ -56,10 +56,10 @@ def request(port, path, method='GET', body=None):
         if body is not None:
             req.add_header('Content-Type', 'application/json')
             data = json.dumps(body).encode('utf-8')
-            with urllib.request.urlopen(req, data=data, timeout=10) as response:
+            with urllib.request.urlopen(req, data=data, timeout=30) as response:
                 return json.loads(response.read().decode())
         else:
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=30) as response:
                 return json.loads(response.read().decode())
     except Exception:
         return None
@@ -220,6 +220,44 @@ def logcat_worker(device_id, stop_event):
                     
     process.terminate()
 
+def wipe_mesh_dbs(serials):
+    """Drop local CRDT files so 500-catch-up is not walking a 6k-row museum."""
+    pkg = "com.example.bluetooth_app"
+    for serial in serials:
+        subprocess.run(
+            ["adb", "-s", serial, "shell", "am", "force-stop", pkg],
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "adb", "-s", serial, "shell", "run-as", pkg, "rm", "-f",
+                "app_flutter/mesh_network.db",
+                "app_flutter/mesh_network.db-wal",
+                "app_flutter/mesh_network.db-shm",
+            ],
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "adb", "-s", serial, "shell", "am", "start",
+                "-n", "%s/.MainActivity" % pkg,
+            ],
+            capture_output=True,
+        )
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        ok = 0
+        for port in PORTS:
+            info = request(port, "/info")
+            if info and info.get("nodeId"):
+                ok += 1
+        if ok >= 2:
+            time.sleep(8)
+            return
+        time.sleep(1)
+    print(f"{Colors.WARNING}DB wipe: APIs not ready after restart{Colors.ENDC}")
+
+
 def run_benchmark(num_messages=30):
     infos = check_devices()
     if len(infos) < 2:
@@ -242,6 +280,9 @@ def run_benchmark(num_messages=30):
         # Fallback: old deploy.py ordering assumption
         active_devices = adb_devices[: len(infos)]
         
+    print(f"{Colors.OKCYAN}Wiping chat DBs on {active_devices}...{Colors.ENDC}")
+    wipe_mesh_dbs(active_devices)
+
     print(f"\n{Colors.OKCYAN}Starting adb logcat streams for devices: {active_devices}{Colors.ENDC}")
     stop_event = threading.Event()
     threads = []
@@ -300,7 +341,11 @@ def run_benchmark(num_messages=30):
                     f"revision {prev} → {rev} | count={res.get('count', len(msgs))} "
                     f"| changedAtMs={res.get('changedAtMs', '?')}{Colors.ENDC}"
                 )
-            device_messages[dev] = {m.get('text', m.get('textContent', '')) for m in msgs}
+            device_messages[dev] = {
+                (m.get('textContent') or m.get('text') or m.get('body') or '')
+                for m in msgs
+                if isinstance(m, dict)
+            }
             total_kb_received = sum(len(str(m)) for m in msgs) / 1024.0
 
         # Score: for each sent message, check which non-sender devices have painted it

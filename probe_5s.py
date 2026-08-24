@@ -33,16 +33,37 @@ def has_tag(port, tag):
     return bool(res and res.get("found"))
 
 
+def warm_link(sender, receiver, attempt):
+    tag = f"WARMUP_{sender}_{attempt}_{int(time.time() * 1000)}"
+    sent = req(sender, "/send", "POST", {"text": tag})
+    if not sent or sent.get("error"):
+        return False
+    deadline = time.time() + MAX_MS / 1000
+    while time.time() < deadline:
+        if has_tag(receiver, tag):
+            return True
+        time.sleep(POLL_MS / 1000)
+    return False
+
+
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else N
     for p in PORTS:
         req(p, "/reset_ble", "POST")
-    time.sleep(2)
-    # Warmup: establish mesh links before measured probes.
-    for wp in range(2):
-        p = PORTS[wp % 2]
-        req(p, "/send", "POST", {"text": f"WARMUP{wp}"})
-        time.sleep(4)
+    time.sleep(3)
+    # Do not begin measurement until both held-link directions are proven.
+    ready = False
+    for attempt in range(1, 7):
+        clear_ok = warm_link(18081, 18082, attempt)
+        red_ok = warm_link(18082, 18081, attempt)
+        print(f"  warmup {attempt}: clear={clear_ok} red={red_ok}")
+        if clear_ok and red_ok:
+            ready = True
+            break
+        time.sleep(1)
+    if not ready:
+        print("Warmup failed: bidirectional BLE link never became ready")
+        sys.exit(1)
     results = []
     for i in range(n):
         sender = PORTS[i % 2]

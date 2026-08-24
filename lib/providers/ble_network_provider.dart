@@ -739,7 +739,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               delta = usedRepair
                   ? BleDiscoveryService.truncateChangesetForBle(
                       delta,
-                      maxRowsPerTable: 60,
+                      maxRowsPerTable: 40,
                     )
                   : BleDiscoveryService.truncateChangesetForBle(
                       delta,
@@ -914,6 +914,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   debugPrint(
                     '⚠️ [SYNC] Hash still diverges after delta from $senderId — '
                     'clearing sync cooldown for fast retry',
+                  );
+                  _discovery.requestHashRepair(
+                    _localNodeId ?? db.localNodeId,
+                    senderId,
+                    senderHash,
                   );
                 } else {
                   BleDiscoveryService.markSyncComplete(senderId);
