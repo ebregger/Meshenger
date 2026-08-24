@@ -12,6 +12,9 @@ import re
 import argparse
 from collections import defaultdict
 
+from stress_console import DetailLog, ProgressDisplay, poll_ui_status
+from stress_summary import print_run_summary
+
 PORTS = [18081, 18082, 18083]
 
 
@@ -47,6 +50,14 @@ class Telemetry:
 
 
 telemetry = Telemetry()
+
+
+def add_transfer_metrics(status):
+    with telemetry.lock:
+        status["transferred_bytes"] = sum(
+            event["bytes"] for event in telemetry.delta_received
+        )
+    return status
 
 
 def request(port, path, method='GET', body=None):
@@ -258,16 +269,18 @@ def wipe_mesh_dbs(serials):
     print(f"{Colors.WARNING}DB wipe: APIs not ready after restart{Colors.ENDC}")
 
 
-def run_benchmark(num_messages=30):
+def run_benchmark(num_messages=30, console=None):
+    console = console or ProgressDisplay()
+    console.message("Preparing devices…")
     infos = check_devices()
     if len(infos) < 2:
         print(f"{Colors.FAIL}Need at least 2 responsive devices to test mesh sync.{Colors.ENDC}")
-        return
+        return False
 
     adb_devices = get_adb_devices()
     if len(adb_devices) < 2:
         print(f"{Colors.FAIL}Ensure at least 2 devices are connected via adb.{Colors.ENDC}")
-        return
+        return False
 
     forward_map = get_port_to_device()
     # Only stream logcat for devices whose stress API is reachable.
@@ -300,6 +313,9 @@ def run_benchmark(num_messages=30):
 
     # Ground-truth tracking: store (tag, sender_port) for each sent message
     sent_messages = []  # list of {'tag': str, 'sender_port': int, 'sender_device': str}
+    receipt_matrix = defaultdict(lambda: defaultdict(set))
+    completed_at = {}
+    started_at = time.time()
 
     print(f"\n{Colors.HEADER}--- BENCHMARK: Sending {num_messages} messages across All Devices ---{Colors.ENDC}")
     for i in range(num_messages):
@@ -307,67 +323,51 @@ def run_benchmark(num_messages=30):
         tag = f"BenchMsg#{i:03d}@{int(time.time()*1000)}"
         res = request(sender_port, '/send', 'POST', {'text': tag})
         sender_device = port_to_device.get(sender_port, '')
-        sent_messages.append({'tag': tag, 'sender_port': sender_port, 'sender_device': sender_device})
+        sent_messages.append({
+            'tag': tag,
+            'sender_port': sender_port,
+            'sender_device': sender_device,
+            'sent_at': time.time(),
+        })
         time.sleep(0.3)
-        sys.stdout.write(f"\rSending: {i+1}/{num_messages} (from port {sender_port})")
-        sys.stdout.flush()
+        if i % 5 == 0 or i + 1 == num_messages:
+            status = add_transfer_metrics(poll_ui_status(
+                request,
+                all_ports,
+                port_to_device,
+                sent_messages,
+                receipt_matrix,
+                completed_at,
+                started_at,
+            ))
+            console.render("Sending", i + 1, num_messages, status)
+            print(f"Sending {i + 1}/{num_messages}: {status}")
     print()
+    sending_finished_at = time.time()
 
     print(f"\n{Colors.OKBLUE}Waiting for propagation (polling /ui — painted chat list)...{Colors.ENDC}")
     poll_start = time.time()
     max_wait = max(90, num_messages * 4)
 
-    # receipt_matrix[sender_device][receiver_device] = set of received tags
-    receipt_matrix = defaultdict(lambda: defaultdict(set))
     # Track per-device UI revisions so we can print when the painted list changes
     last_ui_revision = {port: 0 for port in all_ports}
     total_kb_received = 0.0
+    fully_propagated = 0
 
     while time.time() - poll_start < max_wait:
-        # Poll each device for what the UI has actually rendered
-        device_messages = {}  # device -> set of text contents
-        for port in all_ports:
-            dev = port_to_device.get(port, str(port))
-            res = request(port, '/ui')
-            if not res or not isinstance(res, dict):
-                continue
-            rev = int(res.get('revision', 0) or 0)
-            msgs = res.get('messages') or []
-            if rev != last_ui_revision[port]:
-                prev = last_ui_revision[port]
-                last_ui_revision[port] = rev
-                print(
-                    f"\n{Colors.OKCYAN}[UI] port {port} ({dev[-6:]}): "
-                    f"revision {prev} → {rev} | count={res.get('count', len(msgs))} "
-                    f"| changedAtMs={res.get('changedAtMs', '?')}{Colors.ENDC}"
-                )
-            device_messages[dev] = {
-                (m.get('textContent') or m.get('text') or m.get('body') or '')
-                for m in msgs
-                if isinstance(m, dict)
-            }
-            total_kb_received = sum(len(str(m)) for m in msgs) / 1024.0
-
-        # Score: for each sent message, check which non-sender devices have painted it
-        fully_propagated = 0
-        for sent in sent_messages:
-            tag = sent['tag']
-            sender_dev = sent['sender_device']
-            receivers = 0
-            for dev, texts in device_messages.items():
-                if dev != sender_dev and tag in texts:
-                    receipt_matrix[sender_dev][dev].add(tag)
-                    receivers += 1
-            if receivers >= len(infos) - 1:
-                fully_propagated += 1
-
-        elapsed = time.time() - poll_start
-        rev_summary = ",".join(f"{p}:{last_ui_revision[p]}" for p in all_ports)
-        sys.stdout.write(
-            f"\rUI Propagated: {fully_propagated}/{num_messages} | Elapsed: {elapsed:.0f}s "
-            f"| revs=[{rev_summary}] | Data: {total_kb_received:.1f}KB"
-        )
-        sys.stdout.flush()
+        status = add_transfer_metrics(poll_ui_status(
+            request,
+            all_ports,
+            port_to_device,
+            sent_messages,
+            receipt_matrix,
+            completed_at,
+            started_at,
+        ))
+        fully_propagated = status["propagated"]
+        total_kb_received = status["total_kb"]
+        console.render("Syncing", fully_propagated, num_messages, status)
+        print(f"Propagation {fully_propagated}/{num_messages}: {status}")
 
         if fully_propagated >= num_messages:
             print(f"\n{Colors.OKGREEN}[SUCCESS] All {num_messages} messages painted on all device UIs!{Colors.ENDC}\n")
@@ -516,13 +516,38 @@ def run_benchmark(num_messages=30):
             print(f"  {Colors.FAIL}*** BLACKOUT DETECTED: One or more sender->receiver paths received 0 messages! ***{Colors.ENDC}")
         else:
             print(f"  {Colors.OKGREEN}All device paths propagated successfully.{Colors.ENDC}")
+    return {
+        "success": fully_propagated >= num_messages,
+        "sent_messages": sent_messages,
+        "completed_at": completed_at,
+        "status": status,
+        "sending_finished_at": sending_finished_at,
+        "all_devices": sorted(port_to_device.values()),
+        "connection_failures": len(telemetry.connection_failed),
+        "penalty_entries": len(telemetry.penalty_box),
+    }
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--messages", type=int, default=10, help="Messages to burst")
+    parser.add_argument(
+        "--details-file",
+        help="Detailed diagnostics path (default: timestamped .log file)",
+    )
     args = parser.parse_args()
+    details_path = args.details_file or time.strftime(
+        "stress_test_%Y%m%d_%H%M%S.log"
+    )
+    console = ProgressDisplay()
     try:
-        run_benchmark(args.messages)
+        with DetailLog(details_path):
+            result = run_benchmark(args.messages, console)
+        if isinstance(result, dict):
+            outcome = "PASS" if result["success"] else "FAIL"
+            console.finish(outcome)
+            print_run_summary(console.stream, result, details_path)
+        else:
+            console.finish(f"FAIL: details written to {details_path}")
     except KeyboardInterrupt:
-        print("\nAborted.")
+        console.finish(f"Aborted: partial details written to {details_path}")
 

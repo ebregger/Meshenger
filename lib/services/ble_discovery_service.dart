@@ -1353,6 +1353,7 @@ class BleDiscoveryService {
     }
 
     var hasMore = false;
+    var retryDelay = const Duration(milliseconds: 120);
     try {
       final db = await _ref.read(databaseProvider.future);
       final prior = Map<String, String>.from(lastKnownPeerVector[peerId] ?? {});
@@ -1369,10 +1370,20 @@ class BleDiscoveryService {
         _lastInboundCatchupAt[peerId] = DateTime.now();
         return true;
       }
-      final page = MeshCatchup.takeOldest(
-        changeset,
-        maxRows: MeshCatchup.pageRows,
-      );
+      final page = fromVector
+          ? MeshCatchup.takeOldest(
+              changeset,
+              maxRows: MeshCatchup.pageRows,
+            )
+          : truncateChangesetForBle(
+              changeset,
+              maxRowsPerTable: MeshCatchup.pageRows,
+            );
+      if (!fromVector) {
+        // Fingerprint repair rotates its starting row every three seconds.
+        // Preserve that order and wait for the next rotation before retrying.
+        retryDelay = const Duration(seconds: 3);
+      }
       _lastInboundCatchupAt[peerId] = DateTime.now();
       await _pushChangesetOverInbound(myNodeId, mac, page);
       if (fromVector) {
@@ -1391,7 +1402,7 @@ class BleDiscoveryService {
       _inboundPushBusy.remove(peerId);
       final pending = _inboundCatchupPending.remove(peerId);
       if (hasMore || pending) {
-        unawaited(Future<void>.delayed(const Duration(milliseconds: 120), () {
+        unawaited(Future<void>.delayed(retryDelay, () {
           unawaited(_tryInboundCatchupPush(myNodeId, peerId));
         }));
       }
