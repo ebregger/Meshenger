@@ -19,26 +19,31 @@ class IncomingBleChunk {
 
 class NativeMeshService {
   NativeMeshService()
-      : _incomingPayloads = _bleEventsChannel
-            .receiveBroadcastStream()
-            .map(_coerceToIncomingChunk)
-            .asBroadcastStream();
+    : _incomingPayloads = _bleEventsChannel
+          .receiveBroadcastStream()
+          .map(_coerceToIncomingChunk)
+          .asBroadcastStream();
 
-  static const MethodChannel _bleMethodChannel =
-      MethodChannel('com.featherfawks.mesh/ble');
+  static const MethodChannel _bleMethodChannel = MethodChannel(
+    'com.featherfawks.mesh/ble',
+  );
 
-  static const EventChannel _bleEventsChannel =
-      EventChannel('com.featherfawks.mesh/ble_events');
+  static const EventChannel _bleEventsChannel = EventChannel(
+    'com.featherfawks.mesh/ble_events',
+  );
 
   final Stream<IncomingBleChunk> _incomingPayloads;
 
   Stream<IncomingBleChunk> get incomingPayloads => _incomingPayloads;
 
-  Future<String?> startNativeServer(Uint8List currentHash, String nodeId) async {
-    final ownMac = await _bleMethodChannel.invokeMethod<String>('start_server', <String, Object?>{
-      'hash': currentHash,
-      'nodeId': nodeId,
-    });
+  Future<String?> startNativeServer(
+    Uint8List currentHash,
+    String nodeId,
+  ) async {
+    final ownMac = await _bleMethodChannel.invokeMethod<String>(
+      'start_server',
+      <String, Object?>{'hash': currentHash, 'nodeId': nodeId},
+    );
     return ownMac;
   }
 
@@ -77,21 +82,26 @@ class NativeMeshService {
   /// Power-cycles the Bluetooth adapter (Force OFF then ON) on Android 11 and below.
   /// Returns true if the toggle was attempted, false if restricted by OS version.
   Future<bool> forceToggleBluetooth() async {
-    final result = await _bleMethodChannel.invokeMethod<bool>('force_toggle_bluetooth');
+    final result = await _bleMethodChannel.invokeMethod<bool>(
+      'force_toggle_bluetooth',
+    );
     return result ?? false;
   }
 
-  Future<void> sendPayload(String macAddress, Uint8List payload, {bool isRandom = false, bool bypassDeadCache = false}) async {
+  Future<void> sendPayload(
+    String macAddress,
+    Uint8List payload, {
+    bool isRandom = false,
+    bool bypassDeadCache = false,
+  }) async {
     try {
-      await _bleMethodChannel.invokeMethod<void>(
-        'send_payload',
-        <String, Object?>{
-          'macAddress': macAddress,
-          'payload': payload,
-          'isRandom': isRandom,
-          'bypassDeadCache': bypassDeadCache,
-        },
-      );
+      await _bleMethodChannel
+          .invokeMethod<void>('send_payload', <String, Object?>{
+            'macAddress': macAddress,
+            'payload': payload,
+            'isRandom': isRandom,
+            'bypassDeadCache': bypassDeadCache,
+          });
     } on PlatformException catch (e) {
       debugPrint(
         '🔥 Native send_payload failed mac=$macAddress code=${e.code} message=${e.message} details=${e.details}',
@@ -104,10 +114,7 @@ class NativeMeshService {
     try {
       await _bleMethodChannel.invokeMethod<void>(
         'reply_payload',
-        <String, Object?>{
-          'macAddress': macAddress,
-          'payload': payload,
-        },
+        <String, Object?>{'macAddress': macAddress, 'payload': payload},
       );
     } on PlatformException catch (e) {
       debugPrint(
@@ -161,7 +168,8 @@ class NativeMeshService {
       );
     }
 
-    throw ArgumentError('Unsupported event type from native BLE channel: $event');
+    throw ArgumentError(
+      'Unsupported event type from native BLE channel: $event',
+    );
   }
 }
-
