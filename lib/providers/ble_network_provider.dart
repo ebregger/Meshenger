@@ -299,6 +299,18 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     return null;
   }
 
+  /// Provisional scan keys use raw BLE addresses; never render those as peers.
+  static bool _looksLikeBleMac(String id) {
+    final parts = id.split(':');
+    if (parts.length != 6) return false;
+    for (final part in parts) {
+      if (part.length != 2) return false;
+      final value = int.tryParse(part, radix: 16);
+      if (value == null) return false;
+    }
+    return true;
+  }
+
   Stream<List<MeshNodeState>> watchActivePeers() async* {
     while (true) {
       // Either periodic tick or an explicit bump (e.g. after payload receive).
@@ -314,13 +326,13 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       final nameById = Map<String, String>.from(_nameById);
 
       // Retain presence entries long enough for tombstones to render.
-      BleDiscoveryService.localSeenNodes.removeWhere((_, t) {
-        return now.difference(t).inSeconds > 85;
+      BleDiscoveryService.localSeenNodes.removeWhere((id, t) {
+        return _looksLikeBleMac(id) || now.difference(t).inSeconds > 85;
       });
 
       // Retain gossip entries long enough for tombstones to render.
-      networkLastSeen.removeWhere((_, t) {
-        return now.difference(t).inSeconds > 85;
+      networkLastSeen.removeWhere((id, t) {
+        return _looksLikeBleMac(id) || now.difference(t).inSeconds > 85;
       });
 
       // Active direct = recent physical contact (sync / GATT), not merely gossip.
@@ -333,7 +345,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         ...BleDiscoveryService.localSeenNodes.keys,
         ...networkLastSeen.keys,
         ...BleDiscoveryService.nodeIdToMac.keys,
-      };
+      }..removeWhere(_looksLikeBleMac);
 
       final remotePeerIds = allUsers
           .where((id) => self == null || id != self)
@@ -409,6 +421,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             macAddress: mac,
             status: status,
             lastSeen: latestTime,
+            isTalking: BleDiscoveryService.isNodeTalking(id, now: now),
             routeViaId: routeViaId,
             routeViaName: routeViaName,
           ),
@@ -635,6 +648,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
               // 1) Store topology for the sender (offer gossip).
               if (senderId != null) {
+                BleDiscoveryService.markBluetoothActivity(senderId);
                 final now = DateTime.now();
                 // The sender physically transmitted this payload: treat as Direct immediately.
                 BleDiscoveryService.localSeenNodes[senderId] = now;
@@ -873,6 +887,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               // Even legacy packets (type == null) can still teach identity/presence if they
               // include sender fields.
               if (senderId != null) {
+                BleDiscoveryService.markBluetoothActivity(senderId);
                 final now = DateTime.now();
                 // The sender physically transmitted this payload: treat as Direct immediately.
                 BleDiscoveryService.localSeenNodes[senderId] = now;
@@ -1245,6 +1260,7 @@ class MeshNodeState {
     this.macAddress,
     required this.status,
     required this.lastSeen,
+    this.isTalking = false,
     this.routeViaId,
     this.routeViaName,
   });
@@ -1254,6 +1270,7 @@ class MeshNodeState {
   final String? macAddress;
   final PeerStatus status;
   final DateTime lastSeen;
+  final bool isTalking;
   final String? routeViaId;
   final String? routeViaName;
 }

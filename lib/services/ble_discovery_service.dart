@@ -52,6 +52,24 @@ class BleDiscoveryService {
   /// Stable nodeId -> last known XOR bucket digests (for targeted initiator push).
   static final Map<String, List<int>> lastKnownPeerBuckets = {};
 
+  /// Brief UI pulse for the single peer using the serialized GATT link.
+  static String? _activeBluetoothNodeId;
+  static DateTime? _lastBluetoothActivityAt;
+
+  static void markBluetoothActivity(String nodeId) {
+    if (nodeId.isEmpty) return;
+    _activeBluetoothNodeId = nodeId;
+    _lastBluetoothActivityAt = DateTime.now();
+  }
+
+  static bool isNodeTalking(String nodeId, {DateTime? now}) {
+    final last = _lastBluetoothActivityAt;
+    return _activeBluetoothNodeId == nodeId &&
+        last != null &&
+        (now ?? DateTime.now()).difference(last) <
+            const Duration(milliseconds: 2500);
+  }
+
   /// Soft cap for compressed offer+push payloads. Larger pushes routinely hit the
   /// 60s GATT transfer watchdog and leave lagging nodes stuck mid-transfer.
   static const int maxOfferPushBytes = 48 * 1024;
@@ -198,6 +216,8 @@ class BleDiscoveryService {
       if (!nodeIdToMac.containsKey(nodeId)) {
         nodeIdToMac[nodeId] = resolvedMac;
       }
+      // Drop any leftover MAC-keyed presence once identity is known.
+      localSeenNodes.remove(resolvedMac);
     } else if (hash != null) {
       final scanned = hashToMac[hash];
       if (scanned != null) {
@@ -205,6 +225,7 @@ class BleDiscoveryService {
         if (!nodeIdToMac.containsKey(nodeId)) {
           nodeIdToMac[nodeId] = scanned;
         }
+        localSeenNodes.remove(scanned);
       }
     }
   }
@@ -468,6 +489,8 @@ class BleDiscoveryService {
       lastFullSync.clear();
       lastKnownPeerVector.clear();
       lastKnownPeerBuckets.clear();
+      _activeBluetoothNodeId = null;
+      _lastBluetoothActivityAt = null;
       _lastUrgentAttemptAt.clear();
       _lastLocalWriteAt = null;
       _localWriteRateEwma = 0;
@@ -586,14 +609,6 @@ class BleDiscoveryService {
           // Service UUID / telemetry often arrive before the 0xFFE0 scan-response hash.
           // Still dial those peers — skipping them left the mesh with zero peers after restart.
           if (!hasRealHash && advertisesMeshService(r)) {
-            final local = _localHash;
-            final localHash16 = local != null && local.length >= 4
-                ? (local[2] << 8) | local[3]
-                : null;
-            if (telemetryHash16 != null && telemetryHash16 == localHash16) {
-              continue;
-            }
-
             String? known = macToNodeId[mac];
             if (known == null && telemetryHash16 != null) {
               for (final entry in hashToNodeId.entries) {
@@ -608,17 +623,23 @@ class BleDiscoveryService {
               localSeenNodes[known] = DateTime.now();
               rememberScanMac(known, mac, seenAt: r.timeStamp);
             }
+            // Unknown advertisers stay off the UI until the identity handshake
+            // returns a stable nodeId — raw MACs would look like extra devices.
             // Stable per-MAC cooldown key (not a DB hash — never compare for hashesMatch).
             final coolKey = mac.hashCode | 0x100000000;
             final last = _hashCooldowns[coolKey];
             final coolSecs = known == null
-                ? 12 + (coolKey.abs() % 4)
+                ? 4 + (coolKey.abs() % 3)
                 : (targetBusy ? 8 : 5) + (coolKey.abs() % 4);
             if (last == null ||
                 DateTime.now().difference(last).inSeconds >= coolSecs) {
               final syncKey = known ?? mac;
               final lastSync = lastFullSync[syncKey];
+              // Unknown mesh advertisers always get an identity handshake, even when
+              // neither side has a new message and CRDT hashes currently match.
+              final needsIdentity = known == null;
               final needsAntiEntropy =
+                  needsIdentity ||
                   lastSync == null ||
                   DateTime.now().difference(lastSync).inSeconds > 8;
               if (needsAntiEntropy) {
@@ -752,9 +773,13 @@ class BleDiscoveryService {
 
           // When hashes diverge, always dial (cooldown is the only rate limit).
           // A recent successful sync must not delay catch-up of new writes.
+          // Unknown advertisers also always dial — identity handshake must not wait
+          // for a new chat message just because DBs currently hash-match.
           final syncKey = stableNodeId ?? mac;
           final lastSync = lastFullSync[syncKey];
+          final needsIdentity = stableNodeId == null;
           final needsAntiEntropy =
+              needsIdentity ||
               !hashesMatch ||
               lastSync == null ||
               DateTime.now().difference(lastSync).inSeconds > 90;
@@ -777,10 +802,10 @@ class BleDiscoveryService {
             _peerHashDivergedAt.remove(stableNodeId);
           }
 
-          // Initiator election ONLY for matched-hash anti-entropy. When hashes differ,
-          // either side may dial — otherwise the lowest node-id becomes a single
-          // point of failure (seen: Pixel 9 stuck behind while peers never pull).
-          if (hashesMatch) {
+          // Initiator election ONLY for matched-hash anti-entropy among known peers.
+          // Unknown mesh advertisements must be dialed by whoever hears them so the
+          // UI learns node identity without waiting for a new message.
+          if (hashesMatch && !needsIdentity) {
             String? remotePrefix = prefix;
             final localPrefix = myNodeId.length >= 4
                 ? myNodeId.substring(0, 4)
@@ -1072,12 +1097,14 @@ class BleDiscoveryService {
       final macAddress = device.remoteId.str;
       // Android mesh advertisers use Random Resolvable Addresses.
       // We pass isRandom: true to ensure the native layer uses the correct addressing mode.
+      if (resolvedPeer != null) markBluetoothActivity(resolvedPeer);
       await _nativeMesh.sendPayload(
         macAddress,
         Uint8List.fromList(payload),
         isRandom: true,
         bypassDeadCache: forceNewestPush,
       );
+      if (resolvedPeer != null) markBluetoothActivity(resolvedPeer);
       debugPrint(
         '✅ [DISCOVERY] Offer sent to $targetMac (${payload.length} bytes) — awaiting delta reply',
       );
@@ -1336,7 +1363,10 @@ class BleDiscoveryService {
       'data': changeset,
     };
     final payload = zlib.encode(utf8.encode(jsonEncode(envelope)));
+    final peerId = macToNodeId[mac];
+    if (peerId != null) markBluetoothActivity(peerId);
     await _nativeMesh.replyPayload(mac, Uint8List.fromList(payload));
+    if (peerId != null) markBluetoothActivity(peerId);
     final rowCounts = changeset.map(
       (t, rows) => MapEntry(t, (rows as List).length),
     );

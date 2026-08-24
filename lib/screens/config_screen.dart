@@ -7,7 +7,6 @@ import '../providers/database_provider.dart';
 import '../providers/identity_provider.dart';
 import '../providers/ble_network_provider.dart';
 
-
 final localDisplayNameProvider = FutureProvider<String?>((ref) async {
   final myId = await ref.watch(myNodeIdProvider.future);
   final db = await ref.watch(databaseProvider.future);
@@ -19,7 +18,8 @@ class ConfigurationScreen extends ConsumerStatefulWidget {
   const ConfigurationScreen({super.key});
 
   @override
-  ConsumerState<ConfigurationScreen> createState() => _ConfigurationScreenState();
+  ConsumerState<ConfigurationScreen> createState() =>
+      _ConfigurationScreenState();
 }
 
 class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
@@ -53,31 +53,25 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
       child: ListView(
         children: [
           const SizedBox(height: 8),
-          Text(
-            'Mesh Identity',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text('Mesh Identity', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 10),
           myIdAsync.when(
             data: (myId) => SelectableText(
               myId,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontFamily: 'monospace',
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
             ),
             loading: () => const LinearProgressIndicator(),
             error: (e, _) => Text(
               'Failed to load node id: $e',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
+                color: Theme.of(context).colorScheme.error,
+              ),
             ),
           ),
           const SizedBox(height: 22),
-          Text(
-            'Display Name',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text('Display Name', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 10),
           TextField(
             controller: _controller,
@@ -93,6 +87,7 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
                 try {
                   final db = await ref.read(databaseProvider.future);
                   await db.setLocalDisplayName(value);
+                  ref.invalidate(localDisplayNameProvider);
                 } catch (e) {
                   // Keep UI responsive; errors will show in logs.
                   debugPrint('SET DISPLAY NAME FAILED: $e');
@@ -139,8 +134,8 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
             subtitle: !bleState.scannerHealthy
                 ? 'CRITICAL ERROR: Scanner failed to start'
                 : (bleState.scannerStalled
-                    ? 'WARNING: No activity detected (Potential Jam)'
-                    : 'Healthy - Scanning for peers'),
+                      ? 'WARNING: No activity detected (Potential Jam)'
+                      : 'Healthy - Scanning for peers'),
             isOk: bleState.scannerHealthy && !bleState.scannerStalled,
             onFix: () => notifier.resetRadio(),
             fixLabel: 'Try Reset',
@@ -201,7 +196,10 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
                 icon: const Icon(Icons.power_settings_new, color: Colors.red),
                 label: const Text(
                   'SYSTEM HARD RESET (Power Cycle)',
-                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
@@ -235,16 +233,15 @@ class _DiagnosticTile extends StatelessWidget {
 
     return ListTile(
       leading: Icon(
-        isOk ? (warningColor != null ? Icons.warning_amber : Icons.check_circle) : Icons.error,
+        isOk
+            ? (warningColor != null ? Icons.warning_amber : Icons.check_circle)
+            : Icons.error,
         color: statusColor,
       ),
       title: Text(title),
       subtitle: subtitle != null ? Text(subtitle!) : null,
       trailing: !isOk
-          ? OutlinedButton(
-              onPressed: onFix,
-              child: Text(fixLabel),
-            )
+          ? OutlinedButton(onPressed: onFix, child: Text(fixLabel))
           : null,
     );
   }

@@ -130,6 +130,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               label: label,
                               accentColor: chipColor,
                               faded: s.status != PeerStatus.direct,
+                              talking: s.isTalking,
                             ),
                           ),
                         );

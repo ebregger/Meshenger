@@ -103,8 +103,9 @@ class DatabaseService {
 
   static String? _nodeIdForDeltaRow(Map<String, Object?> row, String rHlc) {
     var actualNodeId = row['node_id'];
-    String? id =
-        actualNodeId is String ? actualNodeId : actualNodeId?.toString();
+    String? id = actualNodeId is String
+        ? actualNodeId
+        : actualNodeId?.toString();
     if (id != null && id.isEmpty) id = null;
     if (id == null) {
       try {
@@ -241,8 +242,7 @@ class DatabaseService {
       candidates.sort((a, b) => _rowStableId(a).compareTo(_rowStableId(b)));
       final start = (epoch * maxRows) % candidates.length;
       final slice = <dynamic>[];
-      final take =
-          candidates.length < budget ? candidates.length : budget;
+      final take = candidates.length < budget ? candidates.length : budget;
       for (var i = 0; i < take; i++) {
         slice.add(candidates[(start + i) % candidates.length]);
       }
@@ -254,7 +254,9 @@ class DatabaseService {
 
   /// Newest live rows across tables — safe bootstrap when peer frontier is unknown.
   /// Prefers `messages` so urgent push-on-write spends the row budget on chat, not profiles.
-  Future<Map<String, dynamic>> getNewestRowsChangeset({int maxRows = 40}) async {
+  Future<Map<String, dynamic>> getNewestRowsChangeset({
+    int maxRows = 40,
+  }) async {
     await init();
     final fullChangeset = await _crdt.getChangeset();
     final out = <String, dynamic>{};
@@ -404,12 +406,13 @@ class DatabaseService {
       // Force a complete, deterministic swap for first-contact.
       // NOTE: do not filter by `modified` for this path — send everything live.
       final customQueries = <String, (String, List<Object?>)>{
-        'messages': ('SELECT * FROM messages WHERE is_deleted = 0', <Object?>[]),
+        'messages': (
+          'SELECT * FROM messages WHERE is_deleted = 0',
+          <Object?>[],
+        ),
         'users': ('SELECT * FROM users WHERE is_deleted = 0', <Object?>[]),
       };
-      final changeset = await _crdt.getChangeset(
-        customQueries: customQueries,
-      );
+      final changeset = await _crdt.getChangeset(customQueries: customQueries);
       return Map<String, dynamic>.from(changeset);
     }
 
@@ -486,11 +489,7 @@ class DatabaseService {
       'SELECT mesh_node_id, display_name, timestamp FROM users WHERE is_deleted = 0 ORDER BY timestamp DESC',
     );
 
-    return rows
-        .map(
-          (row) => nodeProfileFromRow(row),
-        )
-        .toList(growable: false);
+    return rows.map((row) => nodeProfileFromRow(row)).toList(growable: false);
   }
 
   Stream<List<NodeProfile>> watchNodeProfiles() async* {
@@ -529,11 +528,13 @@ class DatabaseService {
 
   /// Updates the local display name in the CRDT-synced `users` table.
   ///
+  /// An empty [name] clears the custom label so peers fall back to the default
+  /// mesh identity (truncated node id).
+  ///
   /// This uses [IdentityService] so the user key matches `messages.origin_node_id`.
   Future<void> setLocalDisplayName(String name) async {
     await init();
     final trimmed = name.trim();
-    if (trimmed.isEmpty) return;
 
     final nodeId = await IdentityService().getOrCreateMyNodeId();
     _dbHashDirty = true;
@@ -577,11 +578,7 @@ class DatabaseService {
       'SELECT msg_id, origin_node_id, text_content, timestamp FROM messages WHERE is_deleted = 0 ORDER BY timestamp ASC',
     );
 
-    return rows
-        .map(
-          (row) => textMessageFromRow(row),
-        )
-        .toList(growable: false);
+    return rows.map((row) => textMessageFromRow(row)).toList(growable: false);
   }
 
   /// Emits when the `messages` table changes (watch scope is that table only).
@@ -607,33 +604,35 @@ class DatabaseService {
         m.origin_node_id,
         m.text_content,
         m.timestamp,
-        COALESCE(u.display_name, SUBSTR(m.origin_node_id, 1, 8)) AS author_name
+        COALESCE(NULLIF(TRIM(u.display_name), ''), SUBSTR(m.origin_node_id, 1, 8)) AS author_name
       FROM messages m
       LEFT JOIN users u ON m.origin_node_id = u.mesh_node_id
       WHERE m.is_deleted = 0
       ORDER BY m.timestamp ASC
     ''';
     yield* _crdt.watch(sql).map((rows) {
-      return rows.map((r) {
-        final msgId = r['msg_id']?.toString() ?? '';
-        final originNodeId = r['origin_node_id']?.toString() ?? '';
-        final textContent = r['text_content']?.toString() ?? '';
-        final timestampRaw = r['timestamp'];
-        final timestampMs = timestampRaw is Int64
-            ? timestampRaw.toInt()
-            : int.tryParse(timestampRaw?.toString() ?? '') ?? 0;
-        final authorName = r['author_name']?.toString() ?? '';
-        final shortId = originNodeId.length <= 8
-            ? originNodeId
-            : originNodeId.substring(0, 8);
-        return TextMessageWithAuthor(
-          msgId: msgId,
-          originNodeId: originNodeId,
-          textContent: textContent,
-          timestamp: Int64(timestampMs),
-          authorName: authorName.isNotEmpty ? authorName : shortId,
-        );
-      }).toList(growable: false);
+      return rows
+          .map((r) {
+            final msgId = r['msg_id']?.toString() ?? '';
+            final originNodeId = r['origin_node_id']?.toString() ?? '';
+            final textContent = r['text_content']?.toString() ?? '';
+            final timestampRaw = r['timestamp'];
+            final timestampMs = timestampRaw is Int64
+                ? timestampRaw.toInt()
+                : int.tryParse(timestampRaw?.toString() ?? '') ?? 0;
+            final authorName = r['author_name']?.toString() ?? '';
+            final shortId = originNodeId.length <= 8
+                ? originNodeId
+                : originNodeId.substring(0, 8);
+            return TextMessageWithAuthor(
+              msgId: msgId,
+              originNodeId: originNodeId,
+              textContent: textContent,
+              timestamp: Int64(timestampMs),
+              authorName: authorName.isNotEmpty ? authorName : shortId,
+            );
+          })
+          .toList(growable: false);
     });
   }
 
@@ -664,11 +663,7 @@ class DatabaseService {
       [fileId],
     );
 
-    return rows
-        .map(
-          (row) => bitmapChunkFromRow(row),
-        )
-        .toList(growable: false);
+    return rows.map((row) => bitmapChunkFromRow(row)).toList(growable: false);
   }
 
   static Map<String, List<Map<String, Object?>>> _castChangeset(
