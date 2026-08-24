@@ -131,6 +131,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               accentColor: chipColor,
                               faded: s.status != PeerStatus.direct,
                               talking: s.isTalking,
+                              meshCaughtUp: s.meshCaughtUp,
                             ),
                           ),
                         );
@@ -294,10 +295,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _showNodeDetailsDialog(BuildContext context, MeshNodeState state) {
-    showDialog(
+    // Only restore the composer keyboard after dismiss if it was already open.
+    final keyboardWasOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    if (!keyboardWasOpen) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+
+    showDialog<void>(
       context: context,
       builder: (context) => NodeDetailsDialog(initialState: state),
-    );
+    ).then((_) {
+      if (keyboardWasOpen) return;
+      // Clear focus now and again after the barrier tap settles, so a click-out
+      // can't leave the message field focused and pop the keyboard.
+      FocusManager.instance.primaryFocus?.unfocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        FocusManager.instance.primaryFocus?.unfocus();
+      });
+    });
   }
 }
 
@@ -458,6 +473,28 @@ class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
                       Icon(Icons.circle, size: 10, color: statusColor),
                       const SizedBox(width: 8),
                       Text(statusText),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Icon(
+                        liveNode?.meshCaughtUp == true
+                            ? Icons.check_circle_rounded
+                            : liveNode?.meshCaughtUp == false
+                            ? Icons.sync_problem_rounded
+                            : Icons.help_outline_rounded,
+                        size: 18,
+                        color: statusColor,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        liveNode?.meshCaughtUp == true
+                            ? 'Mesh caught up'
+                            : liveNode?.meshCaughtUp == false
+                            ? 'Mesh behind'
+                            : 'Mesh sync unknown',
+                      ),
                     ],
                   ),
                   if (statusText == 'Indirectly Connected' &&

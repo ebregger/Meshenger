@@ -572,6 +572,19 @@ class DatabaseService {
     );
   }
 
+  /// Stress-test reset: drop chat rows only; keep [users] display names.
+  Future<int> clearTextMessages() async {
+    await init();
+    _dbHashDirty = true;
+    final before = await _crdt.query(
+      'SELECT COUNT(*) AS c FROM messages WHERE is_deleted = 0',
+    );
+    final count = (before.isEmpty ? 0 : before.first['c'] as int?) ?? 0;
+    await _crdt.execute('DELETE FROM messages');
+    await _crdt.execute('DELETE FROM bitmap_chunks');
+    return count;
+  }
+
   Future<List<TextMessage>> fetchTextMessages() async {
     await init();
     final rows = await _crdt.query(

@@ -113,6 +113,16 @@ class ApiService {
               'ignoreMac': ignoreMac
             });
 
+          } else if (path == '/clear_messages' && request.method == 'POST') {
+            // Stress reset: wipe chat only — keep display names in `users`.
+            final db = await container.read(databaseProvider.future);
+            final cleared = await db.clearTextMessages();
+            container.read(bleNetworkProvider.notifier).onLocalDatabaseWrite();
+            _respond(request, 200, {
+              'status': 'cleared',
+              'messagesRemoved': cleared,
+            });
+
           } else if (path == '/reset_ble' && request.method == 'POST') {
             // Closes and reopens the GATT server to flush leaked connection slots.
             // Android allows ~7 concurrent GATT server connections; after extended

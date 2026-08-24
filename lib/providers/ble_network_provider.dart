@@ -422,6 +422,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             status: status,
             lastSeen: latestTime,
             isTalking: BleDiscoveryService.isNodeTalking(id, now: now),
+            meshCaughtUp: BleDiscoveryService.isPeerCaughtUp(id),
             routeViaId: routeViaId,
             routeViaName: routeViaName,
           ),
@@ -549,9 +550,26 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   void onLocalDatabaseWrite() {
     final myId = _localNodeId;
     if (!_meshSessionActive || myId == null) return;
+    // Our DB moved; every peer is behind until they hash-match again.
+    BleDiscoveryService.markMeshStaleAfterLocalWrite(
+      extraPeerIds: [...networkLastSeen.keys, ..._nameById.keys],
+    );
+    _presenceBump.add(null);
     _lastAdvertHashPushedAt = null;
+    // Refresh comparison hash immediately so scan doesn't see a stale match.
+    unawaited(_refreshLocalHashForComparison());
     _scheduleAdvertiserHashUpdate(myId);
     _discovery.requestUrgentSyncWithKnownPeers(myId);
+  }
+
+  Future<void> _refreshLocalHashForComparison() async {
+    try {
+      final db = await _ref.read(databaseProvider.future);
+      final hashBytes = await db.getDatabaseHashBytes();
+      _discovery.setLocalHash(_buildAdvertiserPayload(hashBytes));
+    } catch (e, st) {
+      debugPrint('LOCAL HASH REFRESH FAILED: $e\n$st');
+    }
   }
 
   Future<void> _attachLocalUserProfileHashUpdateTrigger(String myId) async {
@@ -682,6 +700,21 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 }
                 _refreshNeighborClassification();
                 _presenceBump.add(null);
+              }
+
+              // Hash gossip is useful even when we cannot build a delta reply.
+              final gossipHash = await db.getDatabaseHash();
+              BleDiscoveryService.applyGossipPeerHashes(
+                root['peer_hashes'],
+                localHash: gossipHash,
+                excludeNodeId: _localNodeId ?? db.localNodeId,
+              );
+              if (senderId != null && senderHash != null) {
+                BleDiscoveryService.notePeerHashObservation(
+                  senderId,
+                  senderHash,
+                  localHash: gossipHash,
+                );
               }
 
               // 2) Respond with an offer delta (surgical changeset).
@@ -816,6 +849,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 'sender_id': localId,
                 'sender_hash': ourSenderHash,
                 'neighbors': _discovery.currentNeighborIds,
+                'peer_hashes': _discovery.peerHashesForGossip(),
                 'fps_b': base64Encode(ourFpsBlob),
                 'data': delta,
               };
@@ -872,7 +906,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                     senderHash == ourSenderHash) {
                   BleDiscoveryService.markSyncComplete(senderId);
                 } else if (senderHash != ourSenderHash) {
-                  BleDiscoveryService.lastFullSync.remove(senderId);
+                  BleDiscoveryService.markSyncDiverged(senderId);
                 }
               }
               return;
@@ -926,6 +960,19 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
               final dataRaw = root['data'] ?? root['changes'];
               if (dataRaw is! Map) {
+                final gossipHash = await db.getDatabaseHash();
+                BleDiscoveryService.applyGossipPeerHashes(
+                  root['peer_hashes'],
+                  localHash: gossipHash,
+                  excludeNodeId: _localNodeId ?? db.localNodeId,
+                );
+                if (senderId != null && senderHash != null) {
+                  BleDiscoveryService.notePeerHashObservation(
+                    senderId,
+                    senderHash,
+                    localHash: gossipHash,
+                  );
+                }
                 debugPrint(
                   '⚠️ [SYNC] Delta from $senderMac has no data/changes field',
                 );
@@ -962,6 +1009,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               }
 
               // Client handshake finished once the server's delta reply arrives.
+              final localHash = await db.getDatabaseHash();
+              BleDiscoveryService.applyGossipPeerHashes(
+                root['peer_hashes'],
+                localHash: localHash,
+                excludeNodeId: _localNodeId ?? db.localNodeId,
+              );
               if (senderId != null) {
                 final fpsB64 = root['fps_b'] ?? root['row_fps'];
                 if (fpsB64 is String && fpsB64.isNotEmpty) {
@@ -976,9 +1029,15 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                     }
                   } catch (_) {}
                 }
-                final localHash = await db.getDatabaseHash();
+                if (senderHash != null) {
+                  BleDiscoveryService.notePeerHashObservation(
+                    senderId,
+                    senderHash,
+                    localHash: localHash,
+                  );
+                }
                 if (senderHash != null && senderHash != localHash) {
-                  BleDiscoveryService.lastFullSync.remove(senderId);
+                  BleDiscoveryService.markSyncDiverged(senderId);
                   debugPrint(
                     '⚠️ [SYNC] Hash still diverges after delta from $senderId — '
                     'clearing sync cooldown for fast retry',
@@ -992,6 +1051,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   BleDiscoveryService.markSyncComplete(senderId);
                 }
               }
+              _presenceBump.add(null);
 
               try {
                 final hashBytes = await db.getDatabaseHashBytes();
@@ -1261,6 +1321,7 @@ class MeshNodeState {
     required this.status,
     required this.lastSeen,
     this.isTalking = false,
+    this.meshCaughtUp,
     this.routeViaId,
     this.routeViaName,
   });
@@ -1271,6 +1332,10 @@ class MeshNodeState {
   final PeerStatus status;
   final DateTime lastSeen;
   final bool isTalking;
+
+  /// `true` when advertised/synced CRDT hash last matched ours, `false` when
+  /// known behind, `null` before the first trustworthy observation.
+  final bool? meshCaughtUp;
   final String? routeViaId;
   final String? routeViaName;
 }

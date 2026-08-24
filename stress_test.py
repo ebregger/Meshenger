@@ -231,8 +231,23 @@ def logcat_worker(device_id, stop_event):
                     
     process.terminate()
 
+def clear_chat_messages(ports):
+    """Clear chat rows on each live API; keep display names / users table."""
+    print(f"{Colors.OKCYAN}Clearing messages on ports {ports} (keeping display names)...{Colors.ENDC}")
+    for p in ports:
+        res = request(p, "/clear_messages", "POST")
+        if res and res.get("status") == "cleared":
+            print(
+                f"  port {p}: cleared {res.get('messagesRemoved', '?')} message(s)"
+            )
+        else:
+            print(f"{Colors.WARNING}  port {p}: clear_messages failed{Colors.ENDC}")
+    # Brief settle so hash/ADV updates land before the burst.
+    time.sleep(1)
+
+
 def wipe_mesh_dbs(serials):
-    """Drop local CRDT files so 500-catch-up is not walking a 6k-row museum."""
+    """Full DB delete (messages + profiles). Prefer [clear_chat_messages] for stress."""
     pkg = "com.example.bluetooth_app"
     for serial in serials:
         subprocess.run(
@@ -269,7 +284,7 @@ def wipe_mesh_dbs(serials):
     print(f"{Colors.WARNING}DB wipe: APIs not ready after restart{Colors.ENDC}")
 
 
-def run_benchmark(num_messages=30, console=None):
+def run_benchmark(num_messages=30, console=None, sender_port=None, single_sender=False):
     console = console or ProgressDisplay()
     console.message("Preparing devices…")
     infos = check_devices()
@@ -292,9 +307,8 @@ def run_benchmark(num_messages=30, console=None):
     if len(active_devices) < 2:
         # Fallback: old deploy.py ordering assumption
         active_devices = adb_devices[: len(infos)]
-        
-    print(f"{Colors.OKCYAN}Wiping chat DBs on {active_devices}...{Colors.ENDC}")
-    wipe_mesh_dbs(active_devices)
+
+    clear_chat_messages(sorted(infos.keys()))
 
     print(f"\n{Colors.OKCYAN}Starting adb logcat streams for devices: {active_devices}{Colors.ENDC}")
     stop_event = threading.Event()
@@ -311,21 +325,39 @@ def run_benchmark(num_messages=30, console=None):
     port_to_device = {port: forward_map.get(port, f'port:{port}') for port in all_ports}
     device_to_port = {v: k for k, v in port_to_device.items()}
 
+    if single_sender and sender_port is None:
+        sender_port = sorted(infos.keys())[0]
+    if sender_port is not None:
+        if sender_port not in infos:
+            print(
+                f"{Colors.FAIL}Sender port {sender_port} is not among live devices "
+                f"{sorted(infos.keys())}.{Colors.ENDC}"
+            )
+            stop_event.set()
+            return False
+        send_ports = [sender_port]
+        print(
+            f"{Colors.OKCYAN}Single-sender mode: all messages from port "
+            f"{sender_port} ({port_to_device.get(sender_port, '?')}){Colors.ENDC}"
+        )
+    else:
+        send_ports = all_ports
+
     # Ground-truth tracking: store (tag, sender_port) for each sent message
     sent_messages = []  # list of {'tag': str, 'sender_port': int, 'sender_device': str}
     receipt_matrix = defaultdict(lambda: defaultdict(set))
     completed_at = {}
     started_at = time.time()
 
-    print(f"\n{Colors.HEADER}--- BENCHMARK: Sending {num_messages} messages across All Devices ---{Colors.ENDC}")
+    print(f"\n{Colors.HEADER}--- BENCHMARK: Sending {num_messages} messages ---{Colors.ENDC}")
     for i in range(num_messages):
-        sender_port = all_ports[i % len(all_ports)]
+        sender_port_i = send_ports[i % len(send_ports)]
         tag = f"BenchMsg#{i:03d}@{int(time.time()*1000)}"
-        res = request(sender_port, '/send', 'POST', {'text': tag})
-        sender_device = port_to_device.get(sender_port, '')
+        res = request(sender_port_i, '/send', 'POST', {'text': tag})
+        sender_device = port_to_device.get(sender_port_i, '')
         sent_messages.append({
             'tag': tag,
-            'sender_port': sender_port,
+            'sender_port': sender_port_i,
             'sender_device': sender_device,
             'sent_at': time.time(),
         })
@@ -531,6 +563,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--messages", type=int, default=10, help="Messages to burst")
     parser.add_argument(
+        "--sender-port",
+        type=int,
+        help="Only this API port sends (others only receive). Default: rotate across all.",
+    )
+    parser.add_argument(
+        "--single-sender",
+        action="store_true",
+        help="Send all messages from the first live device only.",
+    )
+    parser.add_argument(
         "--details-file",
         help="Detailed diagnostics path (default: timestamped .log file)",
     )
@@ -541,7 +583,12 @@ if __name__ == '__main__':
     console = ProgressDisplay()
     try:
         with DetailLog(details_path):
-            result = run_benchmark(args.messages, console)
+            result = run_benchmark(
+                args.messages,
+                console,
+                sender_port=args.sender_port,
+                single_sender=args.single_sender,
+            )
         if isinstance(result, dict):
             outcome = "PASS" if result["success"] else "FAIL"
             console.finish(outcome)

@@ -8,12 +8,16 @@ class DeviceChip extends StatelessWidget {
     this.accentColor,
     this.faded = false,
     this.talking = false,
+    this.meshCaughtUp,
   });
 
   final String label;
   final Color? accentColor;
   final bool faded;
   final bool talking;
+
+  /// `true` = in sync, `false` = behind, `null` = unknown.
+  final bool? meshCaughtUp;
 
   @override
   Widget build(BuildContext context) {
@@ -24,11 +28,20 @@ class DeviceChip extends StatelessWidget {
     final backgroundColor = useMaterialYouHighlight
         ? scheme.secondaryContainer.withValues(alpha: 0.72)
         : scheme.surfaceContainerHigh.withValues(alpha: 0.95);
+    // Connection status color (green / yellow / grey) — same as the old BT icon.
     final iconColor = accentColor ?? scheme.primary;
     final textColor = useMaterialYouHighlight
         ? scheme.onSecondaryContainer
         : scheme.onSurface;
     final opacity = faded ? 0.55 : 1.0;
+    final IconData statusIcon;
+    if (meshCaughtUp == true) {
+      statusIcon = Icons.check_circle_rounded;
+    } else if (meshCaughtUp == false) {
+      statusIcon = Icons.sync_problem_rounded;
+    } else {
+      statusIcon = Icons.help_outline_rounded;
+    }
 
     return Opacity(
       opacity: opacity,
@@ -49,11 +62,7 @@ class DeviceChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.bluetooth_connected_rounded,
-                size: 18,
-                color: iconColor,
-              ),
+              Icon(statusIcon, size: 18, color: iconColor),
               const SizedBox(width: 8),
               Text(
                 label,

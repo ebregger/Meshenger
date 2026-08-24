@@ -13,6 +13,7 @@ import '../providers/database_provider.dart';
 import 'mesh_catchup.dart';
 import 'native_mesh_service.dart';
 import 'native_mesh_urgent.dart';
+import 'peer_hash_observation.dart';
 
 /// Byte budget in the ADV payload: we only send a fixed 8-char "Short Node ID".
 const int meshShortNodeIdLength = 8;
@@ -44,6 +45,16 @@ class BleDiscoveryService {
   /// Stable nodeId -> last time a sync handshake *completed* (anti-entropy heartbeat).
   /// Keyed by nodeId (not MAC) because Android RPAs rotate every connection.
   static final Map<String, DateTime> lastFullSync = {};
+
+  /// Whether we last observed this peer's CRDT hash matching ours.
+  /// Cleared only on divergence — not when urgent scheduling bumps [lastFullSync].
+  static final Map<String, bool> peerCaughtUp = {};
+
+  /// Last observed CRDT hash per peer (ADV or gossip) — relayed for multi-hop catch-up UI.
+  static final Map<String, PeerHashObservation> peerObservedHash = {};
+
+  /// Drop gossip older than this so stale fingerprints cannot recirculate.
+  static const Duration peerHashMaxAge = Duration(minutes: 3);
 
   /// Stable nodeId -> last version vector we believe that peer held.
   /// Used so initiator pushes are true deltas instead of the entire DB every dial.
@@ -170,6 +181,178 @@ class BleDiscoveryService {
   static void markSyncComplete(String peerNodeId) {
     if (peerNodeId.isEmpty) return;
     lastFullSync[peerNodeId] = DateTime.now();
+    peerCaughtUp[peerNodeId] = true;
+  }
+
+  /// Advertised or post-transfer hash no longer matches ours.
+  static void markSyncDiverged(String peerNodeId) {
+    if (peerNodeId.isEmpty) return;
+    lastFullSync.remove(peerNodeId);
+    peerCaughtUp[peerNodeId] = false;
+  }
+
+  /// Local CRDT write: every known peer is behind until hash-matched sync.
+  static void markMeshStaleAfterLocalWrite({Iterable<String>? extraPeerIds}) {
+    final ids = <String>{
+      ...peerCaughtUp.keys,
+      ...lastFullSync.keys,
+      ...nodeIdToMac.keys,
+      ...localSeenNodes.keys,
+      ...?extraPeerIds,
+    };
+    for (final id in ids) {
+      if (id.isEmpty) continue;
+      // Skip provisional MAC-shaped scan keys.
+      if (RegExp(r'^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$').hasMatch(id)) {
+        continue;
+      }
+      lastFullSync.remove(id);
+      peerCaughtUp[id] = false;
+    }
+  }
+
+  static bool? isPeerCaughtUp(String peerNodeId) => peerCaughtUp[peerNodeId];
+
+  static bool isPeerKnownBehind(String peerNodeId) =>
+      peerCaughtUp[peerNodeId] == false;
+
+  static bool isPeerKnownCaughtUp(String peerNodeId) =>
+      peerCaughtUp[peerNodeId] == true;
+
+  /// True when some other dialable peer still needs catch-up.
+  static bool hasDialableBehindPeer({String? excluding}) {
+    final candidates = <String>{...localSeenNodes.keys, ...nodeIdToMac.keys};
+    for (final id in candidates) {
+      if (id.isEmpty || id == excluding) continue;
+      if (peerCaughtUp[id] != false) continue;
+      if (preferredDialMac(id) != null || localSeenNodes.containsKey(id)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static bool _peerHashIsFresh(int observedAtMs, {DateTime? now}) {
+    final ageMs = (now ?? DateTime.now()).millisecondsSinceEpoch - observedAtMs;
+    return ageMs >= 0 && ageMs <= peerHashMaxAge.inMilliseconds;
+  }
+
+  /// First-hand observation (ADV / direct sync): always stamps [DateTime.now].
+  static void rememberPeerHash(String peerNodeId, int hash, {int? observedAtMs}) {
+    if (peerNodeId.isEmpty) return;
+    final at = observedAtMs ?? DateTime.now().millisecondsSinceEpoch;
+    final existing = peerObservedHash[peerNodeId];
+    if (existing != null && at < existing.observedAtMs) return;
+    peerObservedHash[peerNodeId] = PeerHashObservation(
+      hash: hash,
+      observedAtMs: at,
+    );
+  }
+
+  /// Compare an observed remote hash to [localHash] and update catch-up UI state.
+  ///
+  /// Older observations never overwrite newer ones (stops stale gossip loops).
+  static void notePeerHashObservation(
+    String peerNodeId,
+    int remoteHash, {
+    required int localHash,
+    int? observedAtMs,
+  }) {
+    if (peerNodeId.isEmpty) return;
+    final at = observedAtMs ?? DateTime.now().millisecondsSinceEpoch;
+    final existing = peerObservedHash[peerNodeId];
+    if (existing != null && at < existing.observedAtMs) return;
+    if (!_peerHashIsFresh(at) &&
+        existing != null &&
+        _peerHashIsFresh(existing.observedAtMs)) {
+      return;
+    }
+    peerObservedHash[peerNodeId] = PeerHashObservation(
+      hash: remoteHash,
+      observedAtMs: at,
+    );
+    if (remoteHash == localHash) {
+      peerCaughtUp[peerNodeId] = true;
+    } else {
+      lastFullSync.remove(peerNodeId);
+      peerCaughtUp[peerNodeId] = false;
+    }
+  }
+
+  /// Apply `peer_hashes` gossip from an offer/delta envelope.
+  /// Wire shape: `{ nodeId: { "h": hash, "t": epochMs } }` (legacy bare int ignored).
+  static void applyGossipPeerHashes(
+    Object? raw, {
+    required int localHash,
+    String? excludeNodeId,
+  }) {
+    if (raw is! Map) return;
+    for (final entry in raw.entries) {
+      final id = entry.key?.toString() ?? '';
+      if (id.isEmpty || id == excludeNodeId) continue;
+      final parsed = _parseGossipHashEntry(entry.value);
+      if (parsed == null) continue;
+      notePeerHashObservation(
+        id,
+        parsed.hash,
+        localHash: localHash,
+        observedAtMs: parsed.observedAtMs,
+      );
+    }
+  }
+
+  static PeerHashObservation? _parseGossipHashEntry(Object? value) {
+    if (value is Map) {
+      final hashRaw = value['h'] ?? value['hash'];
+      final timeRaw = value['t'] ?? value['at'] ?? value['observedAtMs'];
+      final hash = hashRaw is int
+          ? hashRaw
+          : hashRaw is num
+          ? hashRaw.toInt()
+          : int.tryParse('$hashRaw');
+      final at = timeRaw is int
+          ? timeRaw
+          : timeRaw is num
+          ? timeRaw.toInt()
+          : int.tryParse('$timeRaw');
+      if (hash == null || at == null) return null;
+      return PeerHashObservation(hash: hash, observedAtMs: at);
+    }
+    // Legacy bare int has no time — treat as ancient so stamped peers win.
+    if (value is int) {
+      return PeerHashObservation(hash: value, observedAtMs: 0);
+    }
+    if (value is num) {
+      return PeerHashObservation(hash: value.toInt(), observedAtMs: 0);
+    }
+    return null;
+  }
+
+  /// Compact timed hash map for offer/delta gossip (neighbors first).
+  Map<String, Map<String, int>> peerHashesForGossip({int maxEntries = 12}) {
+    final now = DateTime.now();
+    final out = <String, Map<String, int>>{};
+    void consider(String id) {
+      if (out.length >= maxEntries || id.isEmpty || out.containsKey(id)) {
+        return;
+      }
+      final obs = peerObservedHash[id];
+      if (obs == null || !_peerHashIsFresh(obs.observedAtMs, now: now)) {
+        return;
+      }
+      out[id] = {'h': obs.hash, 't': obs.observedAtMs};
+    }
+
+    for (final id in currentNeighborIds) {
+      consider(id);
+    }
+    for (final id in peerCaughtUp.keys) {
+      consider(id);
+    }
+    for (final id in peerObservedHash.keys) {
+      consider(id);
+    }
+    return out;
   }
 
   /// Cache [vector] as what we last knew about [peerNodeId]'s CRDT frontier.
@@ -487,6 +670,8 @@ class BleDiscoveryService {
       lastGoodDialMac.clear();
       _orphanDialSuccessAt.clear();
       lastFullSync.clear();
+      peerCaughtUp.clear();
+      peerObservedHash.clear();
       lastKnownPeerVector.clear();
       lastKnownPeerBuckets.clear();
       _activeBluetoothNodeId = null;
@@ -758,6 +943,14 @@ class BleDiscoveryService {
 
           final hashesMatch =
               localHashInt != null && remoteHashInt == localHashInt;
+          if (stableNodeId != null && localHashInt != null) {
+            rememberPeerHash(stableNodeId, remoteHashInt);
+            if (hashesMatch) {
+              peerCaughtUp[stableNodeId] = true;
+            } else {
+              markSyncDiverged(stableNodeId);
+            }
+          }
 
           final last = _hashCooldowns[remoteHashInt];
           // Diverged peers: dial as soon as the prior attempt's short cool ends.
@@ -785,6 +978,15 @@ class BleDiscoveryService {
               DateTime.now().difference(lastSync).inSeconds > 90;
 
           if (hashesMatch && !needsAntiEntropy) {
+            _hashCooldowns[remoteHashInt] = DateTime.now();
+            continue;
+          }
+
+          // While any dialable peer is known behind, don't spend the outbound
+          // slot on someone we already know is caught up.
+          if (stableNodeId != null &&
+              isPeerKnownCaughtUp(stableNodeId) &&
+              hasDialableBehindPeer(excluding: stableNodeId)) {
             _hashCooldowns[remoteHashInt] = DateTime.now();
             continue;
           }
@@ -1055,6 +1257,7 @@ class BleDiscoveryService {
         'sender_id': myNodeId2,
         'sender_hash': myHashInt,
         'neighbors': currentNeighborIds,
+        'peer_hashes': peerHashesForGossip(),
         'vector': myVector,
         'fps_b': base64Encode(fpsBlob),
         'initiator_data': ourChangeset,
@@ -1213,6 +1416,15 @@ class BleDiscoveryService {
       if (!next.forceNewest) {
         final hold = _urgentRadioHoldUntil;
         if (hold != null && DateTime.now().isBefore(hold)) return;
+        final nid = next.peerNodeId;
+        // Defer caught-up dials while a behind peer still needs the radio.
+        if (nid != null &&
+            isPeerKnownCaughtUp(nid) &&
+            hasDialableBehindPeer(excluding: nid)) {
+          _pendingQueue.removeAt(0);
+          if (!next.done.isCompleted) next.done.complete();
+          continue;
+        }
       }
       _pendingQueue.removeAt(0);
       unawaited(() async {
@@ -1359,6 +1571,7 @@ class BleDiscoveryService {
       'sender_id': myNodeId,
       'sender_hash': myHashInt,
       'neighbors': currentNeighborIds,
+      'peer_hashes': peerHashesForGossip(),
       'fps_b': base64Encode(fpsBlob),
       'data': changeset,
     };
@@ -1731,7 +1944,12 @@ class BleDiscoveryService {
           }
           return;
         }
-        freshPeers.sort((a, b) {
+        // Prefer peers we know are behind; ignore caught-up ones while any remain.
+        final behindPeers =
+            freshPeers.where(isPeerKnownBehind).toList(growable: false);
+        final focusPeers =
+            behindPeers.isNotEmpty ? behindPeers : freshPeers;
+        focusPeers.sort((a, b) {
           final ua = _lastUrgentAttemptAt[a];
           final ub = _lastUrgentAttemptAt[b];
           if (ua == null && ub != null) return -1;
@@ -1747,14 +1965,15 @@ class BleDiscoveryService {
           if (tb == null) return 1;
           return ta.compareTo(tb);
         });
-        final live = freshPeers.where(currentNeighborIds.contains).toList();
-        final pool = (live.isNotEmpty ? live : freshPeers).take(1).toList();
+        final live = focusPeers.where(currentNeighborIds.contains).toList();
+        final pool = (live.isNotEmpty ? live : focusPeers).take(1).toList();
         debugPrint(
           '🚀 [DISCOVERY] Urgent sync → ${pool.length} peer(s) '
-          '(fresh=${freshPeers.length}/${peerIds.length})',
+          '(behind=${behindPeers.length} fresh=${freshPeers.length}/${peerIds.length})',
         );
         print(
-          'URGENT_SYNC peers=${pool.join(",")} fresh=${freshPeers.length}/${peerIds.length}',
+          'URGENT_SYNC peers=${pool.join(",")} behind=${behindPeers.length} '
+          'fresh=${freshPeers.length}/${peerIds.length}',
         );
 
         // Drop non-urgent queued dials so push-on-write isn't stuck behind fat offers.
