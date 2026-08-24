@@ -38,7 +38,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void _scrollListener() {
     if (!_chatScroll.hasClients) return;
     final currentScroll = _chatScroll.position.pixels;
-    
+
     final shouldShow = currentScroll > 150;
     if (shouldShow != _showScrollToBottom) {
       setState(() {
@@ -99,8 +99,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     Text(
                       'No mesh nodes nearby',
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     )
                   else
                     ...() {
@@ -145,7 +145,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: Stack(
               children: [
                 Positioned.fill(
-                  child: ref.watch(chatProvider).when(
+                  child: ref
+                      .watch(chatProvider)
+                      .when(
                         data: (messages) {
                           // After paint: expose rendered chat list to stress-test /ui API.
                           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -164,13 +166,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             return Center(
                               child: Text(
                                 'No messages yet',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyLarge
+                                style: Theme.of(context).textTheme.bodyLarge
                                     ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
                                     ),
                               ),
                             );
@@ -187,7 +187,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             itemBuilder: (context, index) {
                               final messageIndex = messages.length - 1 - index;
                               final tm = messages[messageIndex];
-                              final isSent = myId != null && tm.originNodeId == myId;
+                              final isSent =
+                                  myId != null && tm.originNodeId == myId;
 
                               final bubble = ChatMessage(
                                 id: tm.msgId,
@@ -202,9 +203,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             },
                           );
                         },
-                        loading: () => const Center(
-                          child: CircularProgressIndicator(),
-                        ),
+                        loading: () =>
+                            const Center(child: CircularProgressIndicator()),
                         error: (error, stack) => Center(
                           child: SingleChildScrollView(
                             padding: const EdgeInsets.all(16),
@@ -260,42 +260,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     final appBar = _tabIndex == 0
         ? (useLiquidBar
-            ? LiquidGlassAppBar(
-                title: 'Messages',
-                statusBarHeight: topInset,
-              )
-            : AppBar(
-                title: const Text('Messages'),
-                centerTitle: true,
-              ))
-        : AppBar(
-            title: const Text('Configuration'),
-            centerTitle: true,
-          );
+              ? LiquidGlassAppBar(title: 'Messages', statusBarHeight: topInset)
+              : AppBar(title: const Text('Messages'), centerTitle: true))
+        : AppBar(title: const Text('Configuration'), centerTitle: true);
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: appBar,
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _tabIndex,
-        onTap: (idx) => setState(() => _tabIndex = idx),
-        items: const [
-          BottomNavigationBarItem(
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tabIndex,
+        onDestinationSelected: (idx) => setState(() => _tabIndex = idx),
+        // BottomNavigationBar used one shared Material, so InkSparkle swept the
+        // whole bar from any press. Keep the indicator/label motion only.
+        overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+        destinations: const [
+          NavigationDestination(
             icon: Icon(Icons.chat_bubble_outline_rounded),
+            selectedIcon: Icon(Icons.chat_bubble_rounded),
             label: 'Messages',
           ),
-          BottomNavigationBarItem(
+          NavigationDestination(
             icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
             label: 'Configuration',
           ),
         ],
       ),
       body: IndexedStack(
         index: _tabIndex,
-        children: [
-          _messagesTab(context),
-          const ConfigurationScreen(),
-        ],
+        children: [_messagesTab(context), const ConfigurationScreen()],
       ),
     );
   }
@@ -337,7 +330,9 @@ class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
         setState(() {
-          localSecondsAgo = DateTime.now().difference(trackedLastSeen).inSeconds;
+          localSecondsAgo = DateTime.now()
+              .difference(trackedLastSeen)
+              .inSeconds;
         });
       }
     });
@@ -391,8 +386,9 @@ class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
               // Update our local stopwatch baseline if a newer ping arrived
               if (liveNode.lastSeen.isAfter(trackedLastSeen)) {
                 trackedLastSeen = liveNode.lastSeen;
-                localSecondsAgo =
-                    DateTime.now().difference(trackedLastSeen).inSeconds;
+                localSecondsAgo = DateTime.now()
+                    .difference(trackedLastSeen)
+                    .inSeconds;
               }
             }
 
@@ -449,8 +445,8 @@ class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
                         (currentStatus == PeerStatus.indirect
                             ? 'Unknown (Out of Range)'
                             : currentStatus == PeerStatus.direct
-                                ? 'Unknown (awaiting bind)'
-                                : 'Unknown'),
+                            ? 'Unknown (awaiting bind)'
+                            : 'Unknown'),
                     style: const TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 12,
