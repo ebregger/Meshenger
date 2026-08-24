@@ -12,8 +12,8 @@ import re
 import argparse
 from collections import defaultdict
 
-from stress_console import DetailLog, ProgressDisplay, poll_ui_status
-from stress_summary import print_run_summary
+from tools.stress_console import DetailLog, ProgressDisplay, poll_ui_status
+from tools.stress_summary import print_run_summary
 
 PORTS = [18081, 18082, 18083]
 

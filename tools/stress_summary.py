@@ -1,6 +1,6 @@
 import statistics
 
-from stress_console import format_data_rate
+from tools.stress_console import format_data_rate
 
 
 def print_run_summary(stream, result, details_path):

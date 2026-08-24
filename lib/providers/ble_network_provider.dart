@@ -196,39 +196,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     return payloadBytes;
   }
 
-  Map<String, dynamic> _mergeChangesets(
-    Map<String, dynamic> a,
-    Map<String, dynamic> b,
-  ) {
-    if (a.isEmpty) return Map<String, dynamic>.from(b);
-    if (b.isEmpty) return Map<String, dynamic>.from(a);
-    final out = Map<String, dynamic>.from(a);
-    for (final entry in b.entries) {
-      final existing = out[entry.key];
-      if (existing is List && entry.value is List) {
-        final byId = <String, dynamic>{};
-        for (final row in existing) {
-          final id = row is Map
-              ? (row['msg_id'] ?? row['msgId'] ?? row['id'] ?? row['node_id'])
-                    ?.toString()
-              : null;
-          byId[id ?? existing.indexOf(row).toString()] = row;
-        }
-        for (final row in entry.value as List) {
-          final id = row is Map
-              ? (row['msg_id'] ?? row['msgId'] ?? row['id'] ?? row['node_id'])
-                    ?.toString()
-              : null;
-          byId[id ?? 'b${byId.length}'] = row;
-        }
-        out[entry.key] = byId.values.toList();
-      } else {
-        out[entry.key] = entry.value;
-      }
-    }
-    return out;
-  }
-
   void _handleMeshConnectionPhaseChanged() {
     _publishRadioFlags();
   }

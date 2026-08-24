@@ -18,7 +18,7 @@ import 'peer_hash_observation.dart';
 /// Byte budget in the ADV payload: we only send a fixed 8-char "Short Node ID".
 const int meshShortNodeIdLength = 8;
 
-/// Mesh discovery: central scanning via [FlutterBluePlus]; GAP advertise lives in [BleGattServer].
+/// Mesh discovery: central scanning via [FlutterBluePlus]; GAP advertise lives in native Android.
 class BleDiscoveryService {
   /// Advertised DB hash (uint32 int) → last seen BLE [BluetoothDevice.remoteId] for offer replies.
   static final Map<int, String> hashToMac = {};
@@ -128,39 +128,6 @@ class BleDiscoveryService {
       out[entry.key] = rows.length <= maxRowsPerTable
           ? rows
           : rows.take(maxRowsPerTable).toList();
-    }
-    return out;
-  }
-
-  static Map<String, dynamic> _mergeChangesetMaps(
-    Map<String, dynamic> a,
-    Map<String, dynamic> b,
-  ) {
-    if (a.isEmpty) return Map<String, dynamic>.from(b);
-    if (b.isEmpty) return Map<String, dynamic>.from(a);
-    final out = Map<String, dynamic>.from(a);
-    for (final entry in b.entries) {
-      final existing = out[entry.key];
-      if (existing is List && entry.value is List) {
-        final byId = <String, dynamic>{};
-        for (final row in existing) {
-          final id = row is Map
-              ? (row['msg_id'] ?? row['msgId'] ?? row['id'] ?? row['node_id'])
-                    ?.toString()
-              : null;
-          byId[id ?? 'a${byId.length}'] = row;
-        }
-        for (final row in entry.value as List) {
-          final id = row is Map
-              ? (row['msg_id'] ?? row['msgId'] ?? row['id'] ?? row['node_id'])
-                    ?.toString()
-              : null;
-          byId[id ?? 'b${byId.length}'] = row;
-        }
-        out[entry.key] = byId.values.toList();
-      } else {
-        out[entry.key] = entry.value;
-      }
     }
     return out;
   }
@@ -1017,9 +984,7 @@ class BleDiscoveryService {
               if (cmp > 0) {
                 continue; // Peer owns idle anti-entropy.
               }
-              if (cmp == 0 &&
-                  localHashInt != null &&
-                  localHashInt >= remoteHashInt) {
+              if (cmp == 0 && localHashInt >= remoteHashInt) {
                 continue;
               }
             }
