@@ -17,6 +17,54 @@ Install the app on two or more phones that are near each other. Each phone is on
 
 ---
 
+## How the mesh works
+
+Every phone does the same jobs. There is no “server” phone — each device both **listens** and **shares**.
+
+```mermaid
+flowchart TD
+  subgraph everyPhone [Each phone]
+    A[App open + Bluetooth on] --> B[Advertise: I am here]
+    A --> C[Scan: look for nearby peers]
+    B --> D[Peer chips appear]
+    C --> D
+  end
+
+  subgraph sendMsg [When you send a message]
+    E[You tap Send] --> F[Saved on your phone]
+    F --> G[Mark nearby peers as needing catch-up]
+    G --> H[Connect over Bluetooth and push the update]
+  end
+
+  subgraph otherPhones [On other phones]
+    H --> I[Peer receives and merges the message]
+    I --> J[Message shows in their chat]
+    I --> K{Another phone still behind?}
+    K -->|Yes| L[That peer can sync through a neighbor]
+    L --> J
+    K -->|No| M[Mesh looks caught up]
+  end
+
+  D --> E
+```
+
+### What each role means
+
+| Role | What that phone does |
+|------|----------------------|
+| **Sender** | Saves the message locally, then actively tries to deliver it to peers that are behind |
+| **Direct peer** (green chip) | Talks Bluetooth straight to the sender and merges the update |
+| **Indirect peer** (yellow chip) | Not in radio range of the sender, but can still get the message via a phone in the middle |
+| **Every phone** | Keeps advertising, scanning, and comparing “are we caught up?” so the history converges |
+
+So in a three-phone line `A ↔ B ↔ C`, if **A** sends:
+
+1. **A** stores the message and syncs with **B**.
+2. **B** merges it, then can sync with **C**.
+3. **C** gets the message even without a direct link to **A**.
+
+---
+
 ## Getting around
 
 The bottom bar has two tabs:
