@@ -1,6 +1,8 @@
-# Bluetooth Mesh Chat
+# Meshenger
 
 A peer-to-peer chat app that syncs messages over Bluetooth Low Energy — no Wi‑Fi or cellular required. Nearby phones form a small mesh and share chat history automatically.
+
+> **Status: in progress.** This is the newer Android Flutter version of my offline Bluetooth project. The current implementation targets Android devices. The README documents the present design and development tools, not a finished release.
 
 Building or debugging the project? See **[DEVELOPMENT.md](DEVELOPMENT.md)**.
 
