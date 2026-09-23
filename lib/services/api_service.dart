@@ -22,7 +22,7 @@ class ApiService {
     if (_server != null) return;
     
     try {
-      _server = await HttpServer.bind(InternetAddress.anyIPv4, 8080);
+      _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 8080);
       debugPrint('Stress Test API running on port 8080');
       
       _server!.listen((HttpRequest request) async {
