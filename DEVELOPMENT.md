@@ -23,7 +23,7 @@ Project conventions: [`.cursorrules`](.cursorrules) (Riverpod, Protobuf OTA, sma
 
 Package / activity: `com.example.bluetooth_app/.MainActivity`
 
-Stress API is gated by `ENABLE_STRESS_TEST_API` in `lib/main.dart` (currently `true`). When enabled, look for logcat: `Stress Test API running on port 8080`.
+The stress API is gated by `ENABLE_STRESS_TEST_API` in `lib/main.dart` and runs only in debug builds. It binds to device loopback on port 8080 for ADB forwarding. When enabled, look for logcat: `Stress Test API running on port 8080`.
 
 ---
 
