@@ -1,12 +1,13 @@
 import 'package:dynamic_color/dynamic_color.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
 import 'services/api_service.dart';
 
-// Set this to false in production or when not actively running a stress test
-const bool ENABLE_STRESS_TEST_API = true;
+// Run the local stress-test API only in debug builds.
+const bool ENABLE_STRESS_TEST_API = kDebugMode;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
