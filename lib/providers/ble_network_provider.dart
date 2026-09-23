@@ -279,12 +279,25 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   }
 
   Stream<List<MeshNodeState>> watchActivePeers() async* {
-    while (true) {
+    while (!_presenceBump.isClosed) {
       // Either periodic tick or an explicit bump (e.g. after payload receive).
-      await Future.any([
-        Future<void>.delayed(const Duration(seconds: 1)),
-        _presenceBump.stream.first,
-      ]);
+      Timer? timer;
+      try {
+        final completer = Completer<void>();
+        timer = Timer(const Duration(seconds: 1), () {
+          if (!completer.isCompleted) completer.complete();
+        });
+        await Future.any([
+          completer.future,
+          _presenceBump.stream.first,
+        ]);
+      } catch (_) {
+        break;
+      } finally {
+        timer?.cancel();
+      }
+
+      if (_presenceBump.isClosed) break;
 
       final now = DateTime.now();
       final out = <MeshNodeState>[];

@@ -107,7 +107,7 @@ def deploy_and_launch():
         run_cmd(f"adb -s {device} forward tcp:{local_port} tcp:8080")
         run_cmd(f"adb -s {device} shell am force-stop {APP_PACKAGE}", check=False)
         run_cmd(f"adb -s {device} shell am start -n {APP_PACKAGE}/{APP_ACTIVITY}")
-        print(f"Launched — API http://127.0.0.1:{local_port}")
+        print(f"Launched - API http://127.0.0.1:{local_port}")
         deployed.append((device, model, local_port))
         port_idx += 1
 

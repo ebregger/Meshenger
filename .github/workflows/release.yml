@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. v1.0.0; defaults to pubspec.yaml version if blank)'
+        required: false
+        type: string
+        default: ''
+      draft:
+        description: 'Create as a draft release'
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark as a pre-release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build & Distribute APKs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run unit tests
+        run: flutter test
+
+      - name: Determine version and release tag
+        id: versioning
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.tag_name }}" ]; then
+            TAG="${{ inputs.tag_name }}"
+          else
+            PUB_VER=$(grep '^version:' pubspec.yaml | head -n1 | awk '{print $2}' | cut -d'+' -f1)
+            TAG="v${PUB_VER}"
+          fi
+          echo "TAG_NAME=${TAG}" >> $GITHUB_ENV
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Resolved release tag: ${TAG}"
+
+      - name: Build Universal Release APK
+        run: flutter build apk --release
+
+      - name: Build Split-per-ABI Release APKs
+        run: flutter build apk --release --split-per-abi
+
+      - name: Stage & Rename Release Artifacts
+        id: stage-artifacts
+        run: |
+          mkdir -p release-assets
+          APK_DIR="build/app/outputs/flutter-apk"
+
+          # Copy and rename universal APK
+          cp "${APK_DIR}/app-release.apk" "release-assets/Meshenger-${TAG_NAME}-universal.apk"
+
+          # Copy and rename per-ABI APKs
+          cp "${APK_DIR}/app-arm64-v8a-release.apk" "release-assets/Meshenger-${TAG_NAME}-arm64-v8a.apk"
+          cp "${APK_DIR}/app-armeabi-v7a-release.apk" "release-assets/Meshenger-${TAG_NAME}-armeabi-v7a.apk"
+          cp "${APK_DIR}/app-x86_64-release.apk" "release-assets/Meshenger-${TAG_NAME}-x86_64.apk"
+
+          # Generate SHA256 checksums
+          cd release-assets
+          sha256sum *.apk > SHA256SUMS.txt
+          echo "Generated SHA256SUMS.txt:"
+          cat SHA256SUMS.txt
+
+      - name: Upload Release Artifacts to Workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshenger-release-${{ env.TAG_NAME }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: Meshenger ${{ env.TAG_NAME }}
+          files: |
+            release-assets/*.apk
+            release-assets/SHA256SUMS.txt
+          generate_release_notes: true
+          draft: ${{ inputs.draft || false }}
+          prerelease: ${{ inputs.prerelease || contains(env.TAG_NAME, '-') }}

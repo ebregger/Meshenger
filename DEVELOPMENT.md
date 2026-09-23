@@ -216,3 +216,21 @@ adb logcat -d | findstr /i "UI_CHANGED DISPLAYED MERGED Stress Test API"
 - Mesh sync / merge: `lib/providers/ble_network_provider.dart`
 - Discovery: `lib/services/ble_discovery_service.dart`
 - Native stack: `android/app/src/main/kotlin/com/example/bluetooth_app/MainActivity.kt`
+
+---
+
+## CI/CD Workflows
+
+Meshenger uses GitHub Actions located in [`.github/workflows/`](.github/workflows/):
+
+1. **`ci.yml`**: Validates every push and PR against `main`. Runs code analysis (`flutter analyze`), unit tests (`flutter test`), and builds the debug APK artifact (`meshenger-debug-apk`).
+2. **`release.yml`**: Compiles production release APKs (universal + split-per-ABI: `arm64-v8a`, `armeabi-v7a`, `x86_64`), computes `SHA256SUMS.txt`, and publishes a tagged GitHub Release.
+
+### Creating a Release
+
+To publish a new release:
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+Or trigger manually via **Actions** → **Release** → **Run workflow** in GitHub.
