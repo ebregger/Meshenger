@@ -1,28 +1,19 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// Fallback seed when [dynamic_color] cannot supply system palettes (older OS, etc.).
-const Color kFallbackSeedDeepBlue = Color(0xFF1E3A8A);
+/// Fixed brand seed for light/dark [ColorScheme]s (no Material You / dynamic color).
+const Color kBrandSeed = Color(0xFF1E3A8A);
 
-/// Resolves Material You light scheme, or a deep-blue [ColorScheme.fromSeed] fallback.
-ColorScheme resolveLightColorScheme(ColorScheme? lightDynamic) {
-  return lightDynamic ??
-      ColorScheme.fromSeed(
-        seedColor: kFallbackSeedDeepBlue,
-        brightness: Brightness.light,
-      );
-}
+final ColorScheme kLightColorScheme = ColorScheme.fromSeed(
+  seedColor: kBrandSeed,
+  brightness: Brightness.light,
+);
 
-/// Resolves Material You dark scheme, or a deep-blue [ColorScheme.fromSeed] fallback.
-ColorScheme resolveDarkColorScheme(ColorScheme? darkDynamic) {
-  return darkDynamic ??
-      ColorScheme.fromSeed(
-        seedColor: kFallbackSeedDeepBlue,
-        brightness: Brightness.dark,
-      );
-}
+final ColorScheme kDarkColorScheme = ColorScheme.fromSeed(
+  seedColor: kBrandSeed,
+  brightness: Brightness.dark,
+);
 
-/// Material 3 theme driven by a fully resolved [ColorScheme] (dynamic or fallback).
 ThemeData themeDataFromColorScheme(ColorScheme colorScheme) {
   return ThemeData(
     useMaterial3: true,

@@ -383,3 +383,16 @@ Traffic stays on the local Bluetooth mesh. There is no central chat server. Anyo
 - **Linux** and **web** — possible future targets; scaffolding may exist, but mesh chat is not productized there yet.
 
 Windows and macOS desktop targets are not in scope and have been removed from the repo.
+
+---
+
+## Automated Builds & Releases
+
+GitHub Actions automatically builds, verifies, and distributes Meshenger APKs:
+
+- **Continuous Integration (`CI`)**: Runs on pull requests and pushes to `main`. Executes `flutter analyze`, `flutter test`, builds a debug APK, and uploads it as an artifact for quick testing.
+- **Automated Releases (`Release`)**: Triggered by pushing a version tag (e.g. `v1.0.0`) or manually via GitHub Actions `workflow_dispatch`. Automatically compiles:
+  - Universal Release APK (`Meshenger-vX.Y.Z-universal.apk`)
+  - Architecture-specific APKs (`arm64-v8a`, `armeabi-v7a`, `x86_64`)
+  - SHA256 checksums (`SHA256SUMS.txt`)
+  - Creates a GitHub Release with release notes and attaches all binary assets.

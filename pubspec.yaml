@@ -1,5 +1,5 @@
 name: bluetooth_app
-description: Bluetooth mesh chat over BLE (CRDT-synced messages).
+description: Meshenger — peer-to-peer mesh chat over BLE (CRDT-synced messages).
 publish_to: "none"
 
 version: 1.0.0+1
@@ -12,7 +12,6 @@ dependencies:
     sdk: flutter
 
   flutter_riverpod: ^3.3.1
-  dynamic_color: ^1.8.1
   flutter_blue_plus: ^2.2.1
   permission_handler: ^12.0.1
   device_info_plus: ^12.3.0

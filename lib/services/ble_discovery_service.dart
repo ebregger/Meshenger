@@ -464,8 +464,9 @@ class BleDiscoveryService {
   static bool claimOrphanDialSuccess(String nodeId, String mac) {
     final at = _orphanDialSuccessAt.remove(mac);
     if (at == null) return false;
-    if (DateTime.now().difference(at) > const Duration(seconds: 30))
+    if (DateTime.now().difference(at) > const Duration(seconds: 30)) {
       return false;
+    }
     rememberSuccessfulDial(nodeId, mac);
     return true;
   }
@@ -1894,7 +1895,7 @@ class BleDiscoveryService {
             '🚀 [DISCOVERY] Urgent sync: no dial MACs '
             '(known=${peerIds.length}) — nudging scanner',
           );
-          print('URGENT_SYNC peers= none fresh=0/${peerIds.length}');
+          debugPrint('URGENT_SYNC peers= none fresh=0/${peerIds.length}');
           final live = currentNeighborIds;
           if (live.isNotEmpty) {
             final nudge = DateTime.now();
@@ -1936,7 +1937,7 @@ class BleDiscoveryService {
           '🚀 [DISCOVERY] Urgent sync → ${pool.length} peer(s) '
           '(behind=${behindPeers.length} fresh=${freshPeers.length}/${peerIds.length})',
         );
-        print(
+        debugPrint(
           'URGENT_SYNC peers=${pool.join(",")} behind=${behindPeers.length} '
           'fresh=${freshPeers.length}/${peerIds.length}',
         );

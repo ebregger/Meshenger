@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Bluetooth App</string>
+	<string>Meshenger</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>bluetooth_app</string>
+	<string>Meshenger</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -67,8 +67,8 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>This app uses Bluetooth to discover and sync data with nearby mesh network nodes.</string>
+	<string>Meshenger uses Bluetooth to discover and sync with nearby mesh peers.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>This app uses Bluetooth to discover and sync data with nearby mesh network nodes.</string>
+	<string>Meshenger uses Bluetooth to discover and sync with nearby mesh peers.</string>
 </dict>
 </plist>
