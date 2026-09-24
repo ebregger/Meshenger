@@ -28,10 +28,12 @@ Meshenger has no central server, but the current mesh traffic is **not encrypted
 
 ## Screenshots
 
-Screenshots will go here. Use a test mesh and non-sensitive sample messages and names.
+Screenshots use a test mesh and sample names. Avoid sharing real device identifiers.
 
 <!-- Screenshot slot: save as docs/screenshots/messages-and-peers.png -->
-**Messages and peers** — Capture the Messages tab with a short sample conversation and the peer chips visible. Ideally show direct and indirect peers so the colors have context.
+![Meshenger Messages screen with a sample conversation and nearby peers](docs/screenshots/messages-and-peers.png)
+
+**Messages and peers** — Sample conversation with nearby peers shown above it.
 
 <!-- Screenshot slot: save as docs/screenshots/peer-details.png -->
 **Peer details** — Capture the details shown after tapping a peer chip, including its connection path and sync state.
@@ -39,7 +41,7 @@ Screenshots will go here. Use a test mesh and non-sensitive sample messages and 
 <!-- Screenshot slot: save as docs/screenshots/configuration.png -->
 **Configuration** — Capture the display name, mesh identity, and radio or permission diagnostics.
 
-To add the images, save them at the paths above and replace each caption with an image link, for example: `![Messages and peers](docs/screenshots/messages-and-peers.png)`. Before capturing, hide personal names and device identifiers or use test devices with sample profiles.
+To add the remaining images, save them at the paths above and replace their captions with image links. Before capturing, hide personal names and device identifiers or use test devices with sample profiles.
 
 ## Get started
 
