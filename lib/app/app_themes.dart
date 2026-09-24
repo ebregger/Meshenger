@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// Fixed brand seed for light/dark [ColorScheme]s (no Material You / dynamic color).
-const Color kBrandSeed = Color(0xFF1E3A8A);
+/// Muted Material 3 blue seed shared by the app and launcher artwork.
+const Color kBrandSeed = Color(0xFF7189A6);
 
 final ColorScheme kLightColorScheme = ColorScheme.fromSeed(
   seedColor: kBrandSeed,

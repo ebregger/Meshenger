@@ -2,9 +2,9 @@
 <resources>
     <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">@drawable/launch_background</item>
-        <item name="android:windowSplashScreenBackground">#000000</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_system_dark</item>
-        <item name="android:windowSplashScreenIconBackgroundColor">#000000</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+        <!-- Leave the animated icon unset so Android reuses the launcher icon. -->
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/ic_launcher_background</item>
     </style>
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">#000000</item>

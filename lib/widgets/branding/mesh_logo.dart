@@ -18,7 +18,7 @@ class MeshLogo extends StatelessWidget {
 
   /// Canonical canvas — paint large, then [FittedBox] scales down (cleaner AA).
   static const double designSize = 384;
-  static const double designStroke = designSize * 0.038;
+  static const double designStroke = designSize * 0.029;
 
   /// Display size; the mark is drawn at [designSize] then scaled.
   final double size;
@@ -26,7 +26,7 @@ class MeshLogo extends StatelessWidget {
   /// Drawing progress for splash (1 = complete).
   final double progress;
 
-  /// When null, uses [ColorScheme] roles (primary / tertiary / secondary).
+  /// When null, uses the theme's primary color and its contrasting ink.
   final Color? bubbleColor;
   final Color? curveColor;
   final Color? nodeColor;
@@ -49,8 +49,8 @@ class MeshLogo extends StatelessWidget {
               painter: MeshLogoPainter(
                 progress: progress.clamp(0.0, 1.0),
                 bubbleColor: bubbleColor ?? scheme.primary,
-                curveColor: curveColor ?? scheme.tertiary,
-                nodeColor: nodeColor ?? scheme.secondary,
+                curveColor: curveColor ?? scheme.onPrimary,
+                nodeColor: nodeColor ?? scheme.onPrimary,
                 strokeWidth: designStroke,
               ),
             ),

@@ -2,17 +2,16 @@ import 'package:flutter/material.dart';
 
 import 'mesh_logo_geometry.dart';
 
-/// Draws the mesh mark. [progress] 0→1 drives a left-to-right reveal for launch.
+/// Draws the chat silhouette, then reveals the connected mesh inside it.
 class MeshLogoPainter extends CustomPainter {
   MeshLogoPainter({
     required this.progress,
     required this.bubbleColor,
     required this.curveColor,
     required this.nodeColor,
-    this.strokeWidth = 3.5,
+    this.strokeWidth = 12,
   });
 
-  /// 0 = empty, 1 = fully drawn.
   final double progress;
   final Color bubbleColor;
   final Color curveColor;
@@ -21,89 +20,48 @@ class MeshLogoPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final bubble = MeshLogoGeometry.bubblePath(size);
-    final curve = MeshLogoGeometry.curvePath(size);
-    final tail = MeshLogoGeometry.tailPath(size);
-
-    // Bubble outline draws first (~0–0.35 of the timeline).
-    final bubbleT = (progress / 0.35).clamp(0.0, 1.0);
-    final bubblePaint = Paint()
-      ..color = bubbleColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..isAntiAlias = true
-      ..filterQuality = FilterQuality.high;
-    _strokePartial(canvas, bubble, bubblePaint, bubbleT);
-    if (bubbleT > 0.85) {
-      canvas.drawPath(
-        tail,
-        Paint()
-          ..color = bubbleColor.withValues(alpha: ((bubbleT - 0.85) / 0.15).clamp(0.0, 1.0))
-          ..style = PaintingStyle.fill
-          ..isAntiAlias = true,
-      );
-    }
-
-    // Signal curve draws next (~0.20–0.90).
-    final curveT = ((progress - 0.20) / 0.70).clamp(0.0, 1.0);
-    _strokePartial(
-      canvas,
-      curve,
+    final bubbleT = (progress / 0.4).clamp(0.0, 1.0);
+    if (bubbleT <= 0) return;
+    canvas.drawPath(
+      MeshLogoGeometry.bubblePath(size),
       Paint()
+        ..color = bubbleColor.withValues(alpha: bubbleT)
+        ..isAntiAlias = true,
+    );
+
+    final linkT = ((progress - 0.25) / 0.55).clamp(0.0, 1.0);
+    if (linkT > 0) {
+      final path = MeshLogoGeometry.linkPath(size);
+      final paint = Paint()
         ..color = curveColor
         ..style = PaintingStyle.stroke
         ..strokeWidth = strokeWidth
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
-        ..isAntiAlias = true
-        ..filterQuality = FilterQuality.high,
-      curveT,
-    );
-
-    // Nodes pop when the curve reaches their junctions.
-    final nodeR = strokeWidth * 1.2;
-    _paintNode(
-      canvas,
-      MeshLogoGeometry.nodeOn(size, MeshLogoGeometry.leftNode),
-      nodeR,
-      ((curveT - 0.28) / 0.12).clamp(0.0, 1.0),
-    );
-    _paintNode(
-      canvas,
-      MeshLogoGeometry.nodeOn(size, MeshLogoGeometry.rightNode),
-      nodeR,
-      ((curveT - 0.62) / 0.12).clamp(0.0, 1.0),
-    );
-  }
-
-  void _paintNode(Canvas canvas, Offset c, double r, double t) {
-    if (t <= 0) return;
-    canvas.drawCircle(
-      c,
-      r * Curves.easeOutBack.transform(t),
-      Paint()..color = nodeColor.withValues(alpha: t.clamp(0.0, 1.0)),
-    );
-  }
-
-  void _strokePartial(Canvas canvas, Path path, Paint paint, double t) {
-    if (t <= 0) return;
-    if (t >= 1) {
-      canvas.drawPath(path, paint);
-      return;
+        ..isAntiAlias = true;
+      for (final metric in path.computeMetrics()) {
+        canvas.drawPath(metric.extractPath(0, metric.length * linkT), paint);
+      }
     }
-    for (final metric in path.computeMetrics()) {
-      canvas.drawPath(metric.extractPath(0, metric.length * t), paint);
+
+    for (var i = 0; i < MeshLogoGeometry.nodes.length; i++) {
+      final nodeT = ((progress - 0.40 - i * 0.12) / 0.18).clamp(0.0, 1.0);
+      if (nodeT <= 0) continue;
+      canvas.drawCircle(
+        MeshLogoGeometry.nodeOn(size, MeshLogoGeometry.nodes[i]),
+        size.width * 0.044 * Curves.easeOut.transform(nodeT),
+        Paint()
+          ..color = nodeColor
+          ..isAntiAlias = true,
+      );
     }
   }
 
   @override
-  bool shouldRepaint(covariant MeshLogoPainter oldDelegate) {
-    return oldDelegate.progress != progress ||
-        oldDelegate.bubbleColor != bubbleColor ||
-        oldDelegate.curveColor != curveColor ||
-        oldDelegate.nodeColor != nodeColor ||
-        oldDelegate.strokeWidth != strokeWidth;
-  }
+  bool shouldRepaint(covariant MeshLogoPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.bubbleColor != bubbleColor ||
+      oldDelegate.curveColor != curveColor ||
+      oldDelegate.nodeColor != nodeColor ||
+      oldDelegate.strokeWidth != strokeWidth;
 }

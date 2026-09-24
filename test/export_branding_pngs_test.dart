@@ -14,29 +14,38 @@ void main() {
 
   test('export branding PNGs via Skia', () async {
     final root = Directory.current.path;
-    final assets = Directory('$root/assets/branding')..createSync(recursive: true);
+    final assets = Directory('$root/assets/branding')
+      ..createSync(recursive: true);
     final res = Directory('$root/android/app/src/main/res');
 
-    const ink = Color(0xFF1C1B1F);
+    const ink = Color(0xFF7189A6);
     const white = Color(0xFFFFFFFF);
-    const black = Color(0xFF000000);
 
     final splashDark = await _renderLogo(
       size: 1024,
       pad: 0.08,
       bg: null,
       stroke: ink,
-      nodes: ink,
+      nodes: white,
     );
     final splashLight = await _renderLogo(
       size: 1024,
       pad: 0.08,
       bg: null,
       stroke: white,
-      nodes: white,
+      nodes: ink,
     );
     await _writePng(splashDark, '${assets.path}/splash_logo.png');
     await _writePng(splashLight, '${assets.path}/splash_logo_light.png');
+    final legacyIcon = await _renderLogo(
+      size: 1024,
+      pad: 0.22,
+      bg: ink,
+      stroke: white,
+      nodes: ink,
+    );
+    await _writePng(legacyIcon, '${assets.path}/mesh_logo_1024.png');
+    await _writePng(legacyIcon, '${assets.path}/splash_icon.png');
 
     const splashBuckets = {
       'drawable-mdpi': 192,
@@ -46,14 +55,15 @@ void main() {
       'drawable-xxxhdpi': 768,
     };
     for (final e in splashBuckets.entries) {
-      final dir = Directory('${res.path}/${e.key}')..createSync(recursive: true);
+      final dir = Directory('${res.path}/${e.key}')
+        ..createSync(recursive: true);
       await _writePng(
         await _renderLogo(
           size: e.value,
           pad: 0.08,
           bg: null,
           stroke: ink,
-          nodes: ink,
+          nodes: white,
         ),
         '${dir.path}/splash_logo.png',
       );
@@ -63,14 +73,26 @@ void main() {
           pad: 0.08,
           bg: null,
           stroke: white,
-          nodes: white,
+          nodes: ink,
         ),
         '${dir.path}/splash_logo_light.png',
       );
+      await _writePng(
+        await _renderLogo(
+          size: e.value,
+          pad: 0.22,
+          bg: ink,
+          stroke: white,
+          nodes: ink,
+        ),
+        '${dir.path}/splash_icon.png',
+      );
     }
-    final drawable = Directory('${res.path}/drawable')..createSync(recursive: true);
+    final drawable = Directory('${res.path}/drawable')
+      ..createSync(recursive: true);
     await _writePng(splashDark, '${drawable.path}/splash_logo.png');
     await _writePng(splashLight, '${drawable.path}/splash_logo_light.png');
+    await _writePng(legacyIcon, '${drawable.path}/splash_icon.png');
 
     const mipmaps = {
       'mipmap-mdpi': 48,
@@ -80,14 +102,15 @@ void main() {
       'mipmap-xxxhdpi': 192,
     };
     for (final e in mipmaps.entries) {
-      final dir = Directory('${res.path}/${e.key}')..createSync(recursive: true);
+      final dir = Directory('${res.path}/${e.key}')
+        ..createSync(recursive: true);
       await _writePng(
         await _renderLogo(
           size: e.value,
-          pad: 0.10,
-          bg: black,
+          pad: 0.22,
+          bg: ink,
           stroke: white,
-          nodes: white,
+          nodes: ink,
         ),
         '${dir.path}/ic_launcher.png',
       );
@@ -100,28 +123,19 @@ void main() {
       'drawable-xxxhdpi': 432,
     };
     for (final e in foreground.entries) {
-      final dir = Directory('${res.path}/${e.key}')..createSync(recursive: true);
+      final dir = Directory('${res.path}/${e.key}')
+        ..createSync(recursive: true);
       await _writePng(
         await _renderLogo(
           size: e.value,
-          pad: 0.18,
+          pad: 0.22,
           bg: null,
           stroke: white,
-          nodes: white,
+          nodes: ink,
         ),
         '${dir.path}/ic_launcher_foreground.png',
       );
     }
-    await _writePng(
-      await _renderLogo(
-        size: 1024,
-        pad: 0.08,
-        bg: black,
-        stroke: white,
-        nodes: white,
-      ),
-      '${assets.path}/mesh_logo_1024.png',
-    );
   });
 }
 
@@ -150,7 +164,7 @@ Future<ui.Image> _renderLogo({
   MeshLogoPainter(
     progress: 1,
     bubbleColor: stroke,
-    curveColor: stroke,
+    curveColor: nodes,
     nodeColor: nodes,
     strokeWidth: strokeWidth,
   ).paint(canvas, Size(inner, inner));
