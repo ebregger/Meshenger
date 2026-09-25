@@ -21,6 +21,7 @@ import android.bluetooth.le.AdvertisingSetCallback
 import android.bluetooth.le.AdvertisingSetParameters
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.os.Build
+import android.os.Bundle
 import android.os.BatteryManager
 import android.content.Intent
 import android.content.IntentFilter
@@ -28,6 +29,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.annotation.RequiresApi
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
@@ -46,6 +48,14 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
   private val TAG = "NativeMeshService"
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+      window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+      Log.i(TAG, "[DEV] keepScreenOn=true")
+    }
+  }
 
   private var eventSink: EventChannel.EventSink? = null
   private var bluetoothGattServer: BluetoothGattServer? = null
@@ -76,6 +86,7 @@ class MainActivity : FlutterActivity() {
   // Connection collision mutex: only one outbound GATT attempt may run at a time.
   private val isOutboundClientBusy = java.util.concurrent.atomic.AtomicBoolean(false)
   private val activeInboundServers = java.util.concurrent.atomic.AtomicInteger(0)
+  private val maxInboundServerClients = 1
   // Dart sets this during push-on-write so we reject a second inbound (GATT 133).
   @Volatile private var urgentHold = false
   @Volatile private var currentOutboundGatt: BluetoothGatt? = null
@@ -345,9 +356,8 @@ class MainActivity : FlutterActivity() {
           if (newState == BluetoothProfile.STATE_CONNECTED) {
             // 2-node: one inbound. Extra slots fill with RPA ghosts and the
             // real peer is rejected (inbound_cap_2 during 500-burst).
-            val inboundCap = 1
             val currentInbound = activeInboundServers.get()
-            if (currentInbound >= inboundCap) {
+            if (currentInbound >= maxInboundServerClients) {
               val ghostMac = connectedServerClients.keys.firstOrNull {
                 notifyReadyServerClients[it] != true && it != device.address
               }
@@ -754,9 +764,9 @@ class MainActivity : FlutterActivity() {
 
       val isLegacy = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
       val isIOS = false
-      // Only advertise busy when at inbound capacity — flagging busy on the first
-      // connection made every peer back off and multi-second catch-up stalls.
-      val isBusy = activeInboundServers.get() >= 2
+      // Match the advertised bit to the actual inbound limit. With a one-client
+      // cap, the previous >=2 threshold never reported busy and peers kept colliding.
+      val isBusy = activeInboundServers.get() >= maxInboundServerClients
       val hopDistance = 0 
 
       var flags = 0

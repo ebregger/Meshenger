@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../constants/ble_constants.dart';
 import '../providers/database_provider.dart';
 import 'mesh_catchup.dart';
+import 'mesh_dial_policy.dart';
 import 'native_mesh_service.dart';
 import 'native_mesh_urgent.dart';
 import 'peer_hash_observation.dart';
@@ -205,7 +206,11 @@ class BleDiscoveryService {
   }
 
   /// First-hand observation (ADV / direct sync): always stamps [DateTime.now].
-  static void rememberPeerHash(String peerNodeId, int hash, {int? observedAtMs}) {
+  static void rememberPeerHash(
+    String peerNodeId,
+    int hash, {
+    int? observedAtMs,
+  }) {
     if (peerNodeId.isEmpty) return;
     final at = observedAtMs ?? DateTime.now().millisecondsSinceEpoch;
     final existing = peerObservedHash[peerNodeId];
@@ -884,6 +889,13 @@ class BleDiscoveryService {
             }
           }
 
+          // The peer advertises busy when its single inbound GATT slot is in
+          // use. Let that exchange finish instead of starting another connect.
+          if (targetBusy) {
+            _hashCooldowns[remoteHashInt] = DateTime.now();
+            continue;
+          }
+
           final deadHashTime = deadHashUntil[remoteHashInt];
           if (deadHashTime != null && DateTime.now().isBefore(deadHashTime)) {
             continue;
@@ -972,23 +984,21 @@ class BleDiscoveryService {
             _peerHashDivergedAt.remove(stableNodeId);
           }
 
-          // Initiator election ONLY for matched-hash anti-entropy among known peers.
-          // Unknown mesh advertisements must be dialed by whoever hears them so the
-          // UI learns node identity without waiting for a new message.
-          if (hashesMatch && !needsIdentity) {
-            String? remotePrefix = prefix;
-            final localPrefix = myNodeId.length >= 4
-                ? myNodeId.substring(0, 4)
-                : myNodeId.padRight(4, '0');
-            if (remotePrefix != null && remotePrefix.isNotEmpty) {
-              final cmp = localPrefix.compareTo(remotePrefix);
-              if (cmp > 0) {
-                continue; // Peer owns idle anti-entropy.
-              }
-              if (cmp == 0 && localHashInt >= remoteHashInt) {
-                continue;
-              }
+          // Elect one dialer for every peer pair, including divergent hashes.
+          // Previously both sides initiated after simultaneous writes, creating
+          // crossed GATT connects and a burst of connect watchdog timeouts.
+          if (!MeshDialPolicy.shouldInitiate(
+            localNodeId: myNodeId,
+            remoteNodeId: stableNodeId,
+            remoteNodeIdPrefix: prefix,
+            localHash: localHashInt,
+            remoteHash: remoteHashInt,
+          )) {
+            _hashCooldowns[remoteHashInt] = DateTime.now();
+            if (stableNodeId != null) {
+              unawaited(_tryInboundCatchupPush(myNodeId, stableNodeId));
             }
+            continue;
           }
 
           // Yield the outbound slot to urgent push-on-write, but still NOTIFY
@@ -1732,6 +1742,15 @@ class BleDiscoveryService {
 
     if (await _tryInboundUrgentPush(myNodeId, peerId)) return true;
 
+    if (!MeshDialPolicy.shouldInitiate(
+      localNodeId: myNodeId,
+      remoteNodeId: peerId,
+    )) {
+      final wait = remaining();
+      if (wait <= Duration.zero) return false;
+      return _waitForInboundUrgentPush(myNodeId, peerId, timeout: wait);
+    }
+
     final wait1 = remaining();
     if (wait1 > Duration.zero &&
         await _waitForInboundUrgentPush(
@@ -1889,8 +1908,31 @@ class BleDiscoveryService {
           return liveNeighbor;
         }
 
-        final freshPeers = peerIds.where(macUsable).toList();
+        final freshKnownPeers = peerIds.where(macUsable).toList();
+        final freshPeers = freshKnownPeers
+            .where(
+              (id) => MeshDialPolicy.shouldInitiate(
+                localNodeId: myNodeId,
+                remoteNodeId: id,
+              ),
+            )
+            .toList();
+        for (final peerId in freshKnownPeers) {
+          if (!freshPeers.contains(peerId)) {
+            // The elected peer owns the outbound. Reuse an existing inbound
+            // connection if one is already available, but don't cross-dial.
+            unawaited(_tryInboundCatchupPush(myNodeId, peerId));
+          }
+        }
         if (freshPeers.isEmpty) {
+          if (freshKnownPeers.isNotEmpty) {
+            debugPrint(
+              '🚀 [DISCOVERY] Urgent sync waiting for elected peer '
+              '(known=${freshKnownPeers.length})',
+            );
+            debugPrint('URGENT_SYNC peers= waiting-for-elected-peer');
+            return;
+          }
           debugPrint(
             '🚀 [DISCOVERY] Urgent sync: no dial MACs '
             '(known=${peerIds.length}) — nudging scanner',
@@ -1911,10 +1953,10 @@ class BleDiscoveryService {
           return;
         }
         // Prefer peers we know are behind; ignore caught-up ones while any remain.
-        final behindPeers =
-            freshPeers.where(isPeerKnownBehind).toList(growable: false);
-        final focusPeers =
-            behindPeers.isNotEmpty ? behindPeers : freshPeers;
+        final behindPeers = freshPeers
+            .where(isPeerKnownBehind)
+            .toList(growable: false);
+        final focusPeers = behindPeers.isNotEmpty ? behindPeers : freshPeers;
         focusPeers.sort((a, b) {
           final ua = _lastUrgentAttemptAt[a];
           final ub = _lastUrgentAttemptAt[b];

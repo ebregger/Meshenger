@@ -9,6 +9,7 @@ import urllib.parse
 PORTS = [18081, 18082]
 POLL_MS = 80
 MAX_MS = 8000
+SLA_MS = 5000
 GAP_S = 3
 N = 20
 
@@ -31,6 +32,17 @@ def req(port, path, method="GET", body=None):
 def has_tag(port, tag):
     res = req(port, f"/has_message?text={urllib.parse.quote(tag)}")
     return bool(res and res.get("found"))
+
+
+def classify_result(result):
+    """Classify a probe result using the SLA and the final catch-up check."""
+    if result.get("send_failed"):
+        return "SEND FAIL"
+    if result.get("ms") is not None:
+        return "OK" if result["ms"] <= SLA_MS else "SLOW"
+    if result.get("recovered_by_end"):
+        return "LATE RECOVERY"
+    return "FAIL"
 
 
 def warm_link(sender, receiver, attempt):
@@ -71,7 +83,14 @@ def main():
         t0 = time.time()
         send = req(sender, "/send", "POST", {"text": tag})
         if not send or send.get("error"):
-            results.append({"i": i, "ok": False, "ms": None, "sender": sender})
+            results.append({
+                "i": i,
+                "ok": False,
+                "ms": None,
+                "sender": sender,
+                "tag": tag,
+                "send_failed": True,
+            })
             print(f"  [{i + 1}/{n}] SEND FAIL port={sender}")
             time.sleep(GAP_S)
             continue
@@ -82,28 +101,57 @@ def main():
                 ms = int((time.time() - t0) * 1000)
                 break
             time.sleep(POLL_MS / 1000)
-        ok = ms is not None and ms <= 5000
-        results.append({"i": i, "ok": ok, "ms": ms, "sender": sender})
-        status = "OK" if ok else ("SLOW" if ms else "FAIL")
-        print(f"  [{i + 1}/{n}] {status} sender={sender} ms={ms}")
+        result = {
+            "i": i,
+            "ok": ms is not None and ms <= SLA_MS,
+            "ms": ms,
+            "sender": sender,
+            "tag": tag,
+            "send_failed": False,
+            "recovered_by_end": False,
+        }
+        results.append(result)
+        observed_status = "TIMEOUT" if ms is None else classify_result(result)
+        print(f"  [{i + 1}/{n}] {observed_status} sender={sender} ms={ms}")
         time.sleep(GAP_S)
 
+    # The timed window has ended; recheck messages that timed out so a delayed
+    # catch-up is reported separately from one that is still unresolved.
+    for result in results:
+        if result["send_failed"] or result["ms"] is not None:
+            continue
+        result["recovered_by_end"] = all(
+            has_tag(port, result["tag"]) for port in PORTS
+        )
+
     ok_count = sum(1 for r in results if r["ok"])
-    under5 = [r["ms"] for r in results if r["ms"] is not None and r["ms"] <= 5000]
+    slow = [r for r in results if classify_result(r) == "SLOW"]
+    late = [r for r in results if classify_result(r) == "LATE RECOVERY"]
+    missing = [r for r in results if classify_result(r) == "FAIL"]
+    send_failures = [r for r in results if classify_result(r) == "SEND FAIL"]
+    measured = [r["ms"] for r in results if r["ms"] is not None]
     clear = [r for r in results if r["sender"] == 18081]
     red = [r for r in results if r["sender"] == 18082]
     print("\n=== SUMMARY ===")
     print(f"OK under 5s: {ok_count}/{n}")
+    print(f"Slow (5-8s): {len(slow)}")
+    print(f"Recovered after 8s by end of run: {len(late)}")
+    print(f"Still missing at end of run: {len(missing)}")
+    print(f"Send failures: {len(send_failures)}")
+    for result in late:
+        print(f"  Late catch-up confirmed on both phones: {result['tag']}")
+    for result in missing:
+        print(f"  Still missing: {result['tag']}")
     print(f"Clear sends OK: {sum(1 for r in clear if r['ok'])}/{len(clear)}")
     print(f"Red sends OK: {sum(1 for r in red if r['ok'])}/{len(red)}")
-    if under5:
+    if measured:
         print(
-            f"Avg when OK: {sum(under5) / len(under5):.0f}ms "
-            f"min={min(under5)} max={max(under5)}"
+            f"Measured propagation latency: avg={sum(measured) / len(measured):.0f}ms "
+            f"min={min(measured)} max={max(measured)}"
         )
-    bad = [r for r in results if not r["ok"]]
+    bad = [r for r in results if classify_result(r) != "OK"]
     if bad:
-        print("Failures:", bad)
+        print("Non-SLA results:", bad)
     sys.exit(0 if ok_count == n else 1)
 
 

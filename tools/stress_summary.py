@@ -1,6 +1,33 @@
 import statistics
+import math
 
 from tools.stress_console import format_data_rate
+
+
+def mean_latency_confidence(values, target_precision_s=0.01):
+    """Return a large-sample 95% CI and iid sample-size estimate for latency."""
+    if len(values) < 30:
+        return None
+    if target_precision_s <= 0:
+        raise ValueError("target_precision_s must be positive")
+
+    mean = statistics.mean(values)
+    sample_sd = statistics.stdev(values)
+    margin = 1.96 * sample_sd / math.sqrt(len(values))
+    target_samples = max(
+        30,
+        math.ceil((1.96 * sample_sd / target_precision_s) ** 2),
+    )
+    return {
+        "n": len(values),
+        "mean": mean,
+        "sample_sd": sample_sd,
+        "margin": margin,
+        "low": mean - margin,
+        "high": mean + margin,
+        "target_precision_s": target_precision_s,
+        "target_samples": target_samples,
+    }
 
 
 def print_run_summary(stream, result, details_path):
@@ -38,6 +65,31 @@ def print_run_summary(stream, result, details_path):
             f"  Latency: avg {mean:.2f}s | p50 {p50:.2f}s | "
             f"p95 {p95:.2f}s | max {max(values):.2f}s\n"
         )
+
+        if len(values) == len(sent):
+            confidence = mean_latency_confidence(values)
+            if confidence is not None:
+                confidence_text = (
+                    "  Mean latency 95% CI (normal approximation): "
+                    f"[{confidence['low']:.2f}, {confidence['high']:.2f}]s "
+                    f"(n={confidence['n']}, margin ±{confidence['margin']:.2f}s)\n"
+                    f"  At observed SD {confidence['sample_sd']:.2f}s, "
+                    f"±0.01s would need about {confidence['target_samples']:,} "
+                    "independent messages.\n"
+                    "  CI is for host-observed completion; 2s UI polling and "
+                    "within-run BLE correlation limit its interpretation.\n"
+                )
+                stream.write(confidence_text)
+                with open(details_path, "a", encoding="utf-8") as details:
+                    details.write("\nHost-observed latency confidence\n")
+                    details.write(confidence_text)
+            else:
+                stream.write("  Mean latency 95% CI: unavailable (need 30+ samples)\n")
+        else:
+            stream.write(
+                "  Mean latency 95% CI: unavailable (some messages were "
+                "unresolved)\n"
+            )
 
         threshold = max(5.0, mean + 3 * statistics.pstdev(values))
         outliers = [entry for entry in latencies if entry[0] > threshold]

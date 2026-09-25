@@ -246,6 +246,14 @@ def clear_chat_messages(ports):
     time.sleep(1)
 
 
+def maybe_clear_chat_messages(ports, preserve_messages=False):
+    """Prepare a benchmark without deleting existing chats when requested."""
+    if preserve_messages:
+        print(f"{Colors.OKCYAN}Preserving existing chat messages.{Colors.ENDC}")
+        return
+    clear_chat_messages(ports)
+
+
 def wipe_mesh_dbs(serials):
     """Full DB delete (messages + profiles). Prefer [clear_chat_messages] for stress."""
     pkg = "com.example.bluetooth_app"
@@ -284,7 +292,13 @@ def wipe_mesh_dbs(serials):
     print(f"{Colors.WARNING}DB wipe: APIs not ready after restart{Colors.ENDC}")
 
 
-def run_benchmark(num_messages=30, console=None, sender_port=None, single_sender=False):
+def run_benchmark(
+    num_messages=30,
+    console=None,
+    sender_port=None,
+    single_sender=False,
+    preserve_messages=False,
+):
     console = console or ProgressDisplay()
     console.message("Preparing devices…")
     infos = check_devices()
@@ -308,7 +322,7 @@ def run_benchmark(num_messages=30, console=None, sender_port=None, single_sender
         # Fallback: old deploy.py ordering assumption
         active_devices = adb_devices[: len(infos)]
 
-    clear_chat_messages(sorted(infos.keys()))
+    maybe_clear_chat_messages(sorted(infos.keys()), preserve_messages)
 
     print(f"\n{Colors.OKCYAN}Starting adb logcat streams for devices: {active_devices}{Colors.ENDC}")
     stop_event = threading.Event()
@@ -573,6 +587,11 @@ if __name__ == '__main__':
         help="Send all messages from the first live device only.",
     )
     parser.add_argument(
+        "--preserve-messages",
+        action="store_true",
+        help="Keep existing chat rows and measure only messages sent during this run.",
+    )
+    parser.add_argument(
         "--details-file",
         help="Detailed diagnostics path (default: timestamped .log file)",
     )
@@ -588,6 +607,7 @@ if __name__ == '__main__':
                 console,
                 sender_port=args.sender_port,
                 single_sender=args.single_sender,
+                preserve_messages=args.preserve_messages,
             )
         if isinstance(result, dict):
             outcome = "PASS" if result["success"] else "FAIL"

@@ -8,6 +8,7 @@ BASE_PORT = 18081
 # Flutter stable requires API 24+ (Android 7). Older tablets (e.g. Nexus 7 @ API 18)
 # cannot install or run this APK — skip them instead of hanging on install.
 MIN_SDK = 24
+INSTALL_TIMEOUT_SECONDS = 300
 
 
 def run_cmd(cmd, check=True, shell=True, timeout=None):
@@ -97,7 +98,13 @@ def deploy_and_launch():
             continue
 
         try:
-            run_cmd(f"adb -s {device} install -r {apk_path}", timeout=90)
+            # Large debug APKs can take longer to transfer over wireless ADB.
+            # Upload first, then install on-device so a slow package-manager
+            # stream does not consume the whole transfer timeout.
+            run_cmd(
+                f"adb -s {device} install -r --no-streaming {apk_path}",
+                timeout=INSTALL_TIMEOUT_SECONDS,
+            )
         except subprocess.TimeoutExpired:
             print(f"FAILED: adb install timed out on {device}")
             skipped.append((device, model, "install timeout"))
