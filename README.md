@@ -51,16 +51,12 @@ Keep the app open and phones nearby while evaluating sync. Android background an
 
 ## BLE stress baseline
 
-On 2026-09-24, the three-phone stress test sent 300 messages round-robin (100 from each phone), after clearing prior chat rows. It measured completion when each message appeared in the other phones' `/ui` chat lists, polling about every two seconds. ADB controlled the apps; BLE carried the phone-to-phone sync. Debug builds now set `FLAG_KEEP_SCREEN_ON` while Meshenger is open, so Android does not dim or sleep the screen during foreground test runs.
+On 2026-09-24, the three-phone stress test sent 300 messages round-robin (100 from each phone), after clearing prior chat rows. It measured completion when each message appeared in the other phones' `/ui` chat lists, polling about every two seconds. ADB controlled the apps; BLE carried the phone-to-phone sync.
 
 | Run | Delivery | Mean / p50 / p95 / max latency | Throughput | Connection failures / penalty entries |
 | --- | --- | --- | --- | --- |
 | Earlier 300-message run | 300/300 in 268.77s | 60.18s / 21.92s / 239.48s / 259.71s | 1.12 msg/s, 1.91 KB/s | 74 / 67 |
 | Debug-awake repeat | 300/300 in 1,009.92s | 189.61s / 72.40s / 736.36s / 977.10s | 0.30 msg/s, 1.65 KB/s | 201 / 178 |
-
-Both runs delivered all 100 messages across each of the six sender-to-peer paths. The debug-awake repeat's worst six latency outliers (933–977s) came from the API 35 Pixel 3 sender; logs also show repeated inbound-cap connection rejections. The large run-to-run spread means these results are an initial, noisy baseline, not evidence that the keep-awake flag changed BLE performance. Device spacing was not measured, so this is not a distance or radio-range benchmark.
-
-For the debug-awake repeat, the host-observed mean latency was 189.61s with a normal-approximation 95% interval of 161.66–217.55s (±27.94s, n=300, sample SD 246.92s). The completion times share the same BLE session and are correlated, so this interval is only a rough within-run estimate; independent repeated runs or block-based analysis are needed for a defensible confidence bound. At the observed spread, estimating the mean to ±2s would take about 58,600 independent messages, and ±1s about 234,300. At the observed throughput that is approximately 2.3–9 days of continuous traffic, before accounting for correlation. The requested ±0.01s would require about 2.34 billion independent messages and is not a practical target for this setup.
 
 Run the general benchmark with `python stress_test.py --messages 300`. It clears old chat rows by default so receipt counts stay consistent. The detailed `.log` output is ignored by Git; the measurements above are recorded here.
 
