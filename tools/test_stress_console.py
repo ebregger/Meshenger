@@ -32,8 +32,14 @@ class PollUiStatusTests(unittest.TestCase):
         }]
         receipt_matrix = defaultdict(lambda: defaultdict(set))
         completed_at = {}
+        receipt_at = {}
+        receipt_windows = {}
+        last_absent_at = {}
 
-        with patch("tools.stress_console.time.time", return_value=100.0):
+        with patch(
+            "tools.stress_console.time.monotonic",
+            side_effect=[100.0, 100.2, 100.5, 100.6],
+        ):
             status = poll_ui_status(
                 request,
                 ports,
@@ -42,16 +48,27 @@ class PollUiStatusTests(unittest.TestCase):
                 receipt_matrix,
                 completed_at,
                 started_at=90.0,
+                receipt_at=receipt_at,
+                receipt_windows=receipt_windows,
+                last_absent_at=last_absent_at,
             )
 
         self.assertEqual(status["propagated"], 0)
         self.assertNotIn(tag, completed_at)
         self.assertIn("phoneA→phoneC", status["behind_by_path"])
         self.assertEqual(receipt_matrix["phoneA"]["phoneB"], {tag})
+        self.assertEqual(receipt_at[("phoneA", "phoneB", tag)], 100.2)
+        self.assertEqual(
+            receipt_windows[("phoneA", "phoneB", tag)],
+            {"lower": 91.0, "upper": 100.2},
+        )
 
         # Phone C now paints the message in the chat UI.
         responses[18083] = {"messages": [{"body": tag}]}
-        with patch("tools.stress_console.time.time", return_value=101.0):
+        with patch(
+            "tools.stress_console.time.monotonic",
+            side_effect=[101.0, 101.1, 101.4, 101.5],
+        ):
             status = poll_ui_status(
                 request,
                 ports,
@@ -60,11 +77,19 @@ class PollUiStatusTests(unittest.TestCase):
                 receipt_matrix,
                 completed_at,
                 started_at=90.0,
+                receipt_at=receipt_at,
+                receipt_windows=receipt_windows,
+                last_absent_at=last_absent_at,
             )
 
         self.assertEqual(status["propagated"], 1)
-        self.assertEqual(completed_at[tag], 101.0)
-        self.assertEqual(status["average_latency_ms"], 10000.0)
+        self.assertEqual(receipt_at[("phoneA", "phoneC", tag)], 101.4)
+        self.assertEqual(
+            receipt_windows[("phoneA", "phoneC", tag)],
+            {"lower": 100.5, "upper": 101.4},
+        )
+        self.assertEqual(completed_at[tag], 101.4)
+        self.assertAlmostEqual(status["average_latency_ms"], 10400.0)
         self.assertEqual(receipt_matrix["phoneA"]["phoneC"], {tag})
 
 

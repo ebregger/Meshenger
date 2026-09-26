@@ -37,6 +37,12 @@ class BleDiscoveryService {
   /// Urgent dials must use scan-fresh RPAs — GATT/bind MACs go stale under Android RPA.
   static final Map<String, DateTime> nodeIdMacSeenAt = {};
 
+  /// Latest local scanner RSSI sample for each stable peer identity.
+  static final Map<String, int> nodeIdRssiDbm = {};
+
+  /// Host time of the latest [nodeIdRssiDbm] sample.
+  static final Map<String, DateTime> nodeIdRssiSeenAt = {};
+
   /// Last MAC that completed a successful outbound offer to this nodeId.
   static final Map<String, String> lastGoodDialMac = {};
 
@@ -56,6 +62,9 @@ class BleDiscoveryService {
 
   /// Drop gossip older than this so stale fingerprints cannot recirculate.
   static const Duration peerHashMaxAge = Duration(minutes: 3);
+
+  /// Match the scanner's cached-result cutoff before using an RPA to dial.
+  static const Duration dialMacFreshnessWindow = Duration(seconds: 3);
 
   /// Stable nodeId -> last version vector we believe that peer held.
   /// Used so initiator pushes are true deltas instead of the entire DB every dial.
@@ -412,10 +421,44 @@ class BleDiscoveryService {
     deadMacUntil.remove(mac);
   }
 
+  static void rememberScanRssi(String nodeId, int rssi, {DateTime? seenAt}) {
+    if (nodeId.isEmpty) return;
+    final at = seenAt ?? DateTime.now();
+    final previousAt = nodeIdRssiSeenAt[nodeId];
+    if (previousAt != null && at.isBefore(previousAt)) return;
+    nodeIdRssiDbm[nodeId] = rssi;
+    nodeIdRssiSeenAt[nodeId] = at;
+  }
+
+  /// Bind a MAC learned from a GATT connection without marking it scan-fresh.
+  static void rememberObservedPeerMac(String nodeId, String mac) {
+    if (nodeId.isEmpty || mac.isEmpty || mac == '<unknown>') return;
+    macToNodeId[mac] = nodeId;
+  }
+
   /// Live scan MAC beats last successful dial (RPAs rotate; old dial MACs timeout).
-  static String? preferredDialMac(String nodeId) {
-    final candidates = candidateDialMacs(nodeId);
-    return candidates.isEmpty ? null : candidates.first;
+  static String? preferredDialMac(String nodeId, {DateTime? now}) {
+    final mac = nodeIdToMac[nodeId];
+    final seenAt = nodeIdMacSeenAt[nodeId];
+    if (mac == null || seenAt == null) return null;
+    final age = (now ?? DateTime.now()).difference(seenAt);
+    if (age > dialMacFreshnessWindow) return null;
+    return mac;
+  }
+
+  static String? scanFreshDialMac(String nodeId, {DateTime? now}) {
+    return preferredDialMac(nodeId, now: now);
+  }
+
+  /// Return a scan-fresh address for [nodeId] only when it differs from a
+  /// failed RPA. A retry against the same address would repeat the stale target.
+  static String? freshAlternateDialMac(
+    String nodeId,
+    String failedMac, {
+    DateTime? now,
+  }) {
+    final candidate = scanFreshDialMac(nodeId, now: now);
+    return candidate == null || candidate == failedMac ? null : candidate;
   }
 
   /// All known dial targets for [nodeId], freshest scan sighting first.
@@ -444,6 +487,56 @@ class BleDiscoveryService {
     final list = ranked.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     return [for (final e in list) e.key];
+  }
+
+  static List<String> dialMacSources(String nodeId, String mac) {
+    final sources = <String>[];
+    if (nodeIdToMac[nodeId] == mac) sources.add('nodeIdToMac');
+    if (lastGoodDialMac[nodeId] == mac) sources.add('lastGoodDialMac');
+    if (macToNodeId[mac] == nodeId) sources.add('macToNodeId');
+    for (final entry in hashToNodeId.entries) {
+      if (entry.value == nodeId && hashToMac[entry.key] == mac) {
+        sources.add('hashToMac');
+        break;
+      }
+    }
+    return sources.isEmpty ? const ['unknown'] : sources;
+  }
+
+  void _traceUrgentDialSelection(
+    String peerId,
+    List<String> macs,
+    String? selectedMac,
+  ) {
+    final now = DateTime.now();
+    final lastScanAt = nodeIdMacSeenAt[peerId];
+    final lastScanAgeMs = lastScanAt == null
+        ? 'unknown'
+        : now.difference(lastScanAt).inMilliseconds.toString();
+    final lastScanMac = nodeIdToMac[peerId] ?? 'unknown';
+    final candidateDetails = macs
+        .map((mac) {
+          return '$mac:${dialMacSources(peerId, mac).join('+')}';
+        })
+        .join(',');
+    final deadUntil = selectedMac == null ? null : deadMacUntil[selectedMac];
+    final deadRemainingMs = deadUntil == null
+        ? -1
+        : deadUntil.difference(now).inMilliseconds;
+    final selectedSources = selectedMac == null
+        ? 'none'
+        : dialMacSources(peerId, selectedMac).join('+');
+    debugPrint(
+      '[BLE_TRACE] EVENT:URGENT_DIAL_SELECTION | '
+      'PEER_NODE_ID:$peerId | TARGET_MAC:${selectedMac ?? 'none'} | '
+      'TARGET_SOURCES:$selectedSources | '
+      'CANDIDATES:$candidateDetails | LAST_SCAN_MAC:$lastScanMac | '
+      'LAST_SCAN_AGE_MS:$lastScanAgeMs | '
+      'FRESH_SCAN_ALLOWED:${selectedMac != null} | '
+      'CURRENT_NEIGHBOR:${currentNeighborIds.contains(peerId)} | '
+      'DEAD_REMAINING_MS:$deadRemainingMs | '
+      'WALL_MS:${now.millisecondsSinceEpoch}',
+    );
   }
 
   /// Call after a successful *outbound* dial whose peer nodeId is now known.
@@ -495,6 +588,7 @@ class BleDiscoveryService {
   StreamSubscription<List<ScanResult>>? _scanSub;
   Timer? _heartbeatTimer;
   DateTime? _lastResultAt;
+  final Map<String, DateTime> _lastRssiTraceAt = {};
 
   /// Set of remote hash values currently being connected to (prevents duplicate in-flight attempts).
   final Set<int> _connectingHashes = {};
@@ -628,11 +722,13 @@ class BleDiscoveryService {
     required void Function(String shortNodeId) onDiscovered,
     bool wipeMaps = true,
   }) async {
+    _localNodeId = myNodeId;
     if (wipeMaps) {
       _connectingHashes.clear();
       _connectingNodeIds.clear();
       _pendingQueue.clear();
       _hashCooldowns.clear();
+      _lastRssiTraceAt.clear();
       hashToMac.clear();
       hashToNodeId.clear();
       macToNodeId.clear();
@@ -640,6 +736,8 @@ class BleDiscoveryService {
       localSeenNodes.clear();
       nodeIdToMac.clear();
       nodeIdMacSeenAt.clear();
+      nodeIdRssiDbm.clear();
+      nodeIdRssiSeenAt.clear();
       lastGoodDialMac.clear();
       _orphanDialSuccessAt.clear();
       lastFullSync.clear();
@@ -650,6 +748,7 @@ class BleDiscoveryService {
       _activeBluetoothNodeId = null;
       _lastBluetoothActivityAt = null;
       _lastUrgentAttemptAt.clear();
+      _scanHandshakeThrottle.clear();
       _lastLocalWriteAt = null;
       _localWriteRateEwma = 0;
       deadMacUntil.clear();
@@ -739,6 +838,15 @@ class BleDiscoveryService {
           }
 
           final mac = r.device.remoteId.str;
+          final lastRssiTraceAt = _lastRssiTraceAt[mac];
+          if (lastRssiTraceAt == null ||
+              scanNow.difference(lastRssiTraceAt).inSeconds >= 5) {
+            _lastRssiTraceAt[mac] = scanNow;
+            debugPrint(
+              '[BLE_TRACE] EVENT:SCAN_SEEN | TARGET_MAC:$mac | '
+              'RSSI:${r.rssi} | WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
+            );
+          }
 
           // CRITICAL: skip self-advertisements. Android can see its own BLE advertisement
           // in scan results. Connecting to self causes a loopback that wastes all attempts.
@@ -749,16 +857,34 @@ class BleDiscoveryService {
           // --- SMART TELEMETRY / ROUTING GUARD ---
           var targetBusy = false;
           int? telemetryHash16;
+          String? telemetryNodeIdPrefix;
           final telemetryData = r.advertisementData.manufacturerData[0xFFE1];
           if (telemetryData != null && telemetryData.length >= 4) {
             final tBytes = Uint8List.fromList(telemetryData);
-            telemetryHash16 = (tBytes[0] << 8) | tBytes[1];
             // Bit Unpacking
             final int flags = tBytes[2] | (tBytes[3] << 8);
             final bool isBusy = (flags & (1 << 4)) != 0;
             targetBusy = isBusy;
+            if ((flags & (1 << 15)) != 0) {
+              telemetryNodeIdPrefix = tBytes
+                  .take(2)
+                  .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+                  .join();
+            } else {
+              // Older builds advertise a 16-bit hash fragment here.
+              telemetryHash16 = (tBytes[0] << 8) | tBytes[1];
+            }
           }
           // ---------------------------------------
+
+          final localNodeIdPrefix = myNodeId.length >= 4
+              ? myNodeId.substring(0, 4).toLowerCase()
+              : myNodeId.padRight(4, '0').toLowerCase();
+          if (telemetryNodeIdPrefix == localNodeIdPrefix) {
+            // The stable prefix catches our own advertiser even while Android
+            // rotates its BLE address and the scan response is still missing.
+            continue;
+          }
 
           Uint8List? remotePayload = _tryGetRemoteHash(r);
           final hasRealHash =
@@ -767,8 +893,23 @@ class BleDiscoveryService {
           // Service UUID / telemetry often arrive before the 0xFFE0 scan-response hash.
           // Still dial those peers — skipping them left the mesh with zero peers after restart.
           if (!hasRealHash && advertisesMeshService(r)) {
-            String? known = macToNodeId[mac];
-            if (known == null && telemetryHash16 != null) {
+            String? known;
+            if (telemetryNodeIdPrefix != null) {
+              known = nodeIdPrefixToNodeId[telemetryNodeIdPrefix];
+              final mappedMacNode = macToNodeId[mac];
+              if (known == null &&
+                  mappedMacNode != null &&
+                  mappedMacNode.toLowerCase().startsWith(
+                    telemetryNodeIdPrefix,
+                  )) {
+                known = mappedMacNode;
+              }
+            } else {
+              known = macToNodeId[mac];
+            }
+            if (known == null &&
+                telemetryNodeIdPrefix == null &&
+                telemetryHash16 != null) {
               for (final entry in hashToNodeId.entries) {
                 final fragment = (entry.key >> 32) & 0xffff;
                 if (fragment == telemetryHash16) {
@@ -780,17 +921,54 @@ class BleDiscoveryService {
             if (known != null) {
               localSeenNodes[known] = DateTime.now();
               rememberScanMac(known, mac, seenAt: r.timeStamp);
+              rememberScanRssi(known, r.rssi, seenAt: r.timeStamp);
+            }
+            final coolKey = mac.hashCode | 0x100000000;
+            if (targetBusy) {
+              // Match the full-hash path: do not open another client while the
+              // peer advertises that its single inbound slot is occupied.
+              _hashCooldowns[coolKey] = DateTime.now();
+              continue;
             }
             // Unknown advertisers stay off the UI until the identity handshake
             // returns a stable nodeId — raw MACs would look like extra devices.
             // Stable per-MAC cooldown key (not a DB hash — never compare for hashesMatch).
-            final coolKey = mac.hashCode | 0x100000000;
             final last = _hashCooldowns[coolKey];
             final coolSecs = known == null
                 ? 4 + (coolKey.abs() % 3)
                 : (targetBusy ? 8 : 5) + (coolKey.abs() % 4);
             if (last == null ||
                 DateTime.now().difference(last).inSeconds >= coolSecs) {
+              // Use the primary advertisement's stable node prefix when
+              // available so this path elects the same dialer as full scan data.
+              final localHash = _localHash;
+              final localHashFragment =
+                  localHash != null && localHash.length >= 4
+                  ? ByteData.sublistView(localHash).getUint16(2, Endian.big)
+                  : null;
+              final electedToInitiate = telemetryNodeIdPrefix != null
+                  ? MeshDialPolicy.shouldInitiate(
+                      localNodeId: myNodeId,
+                      remoteNodeIdPrefix: telemetryNodeIdPrefix,
+                    )
+                  : known != null
+                  ? MeshDialPolicy.shouldInitiate(
+                      localNodeId: myNodeId,
+                      remoteNodeId: known,
+                    )
+                  : MeshDialPolicy.shouldInitiateFromPartialHash(
+                      localHashFragment: localHashFragment,
+                      remoteHashFragment: telemetryHash16,
+                    );
+
+              if (!electedToInitiate) {
+                _hashCooldowns[coolKey] = DateTime.now();
+                if (known != null) {
+                  unawaited(_tryInboundCatchupPush(myNodeId, known));
+                }
+                continue;
+              }
+
               final syncKey = known ?? mac;
               final lastSync = lastFullSync[syncKey];
               // Unknown mesh advertisers always get an identity handshake, even when
@@ -883,6 +1061,7 @@ class BleDiscoveryService {
           if (stableNodeId != null) {
             hashToNodeId[remoteHashInt] = stableNodeId;
             rememberScanMac(stableNodeId, mac, seenAt: r.timeStamp);
+            rememberScanRssi(stableNodeId, r.rssi, seenAt: r.timeStamp);
             localSeenNodes[stableNodeId] = DateTime.now();
             if (prefix != null && prefix.isNotEmpty) {
               nodeIdPrefixToNodeId[prefix] = stableNodeId;
@@ -1123,9 +1302,35 @@ class BleDiscoveryService {
     // If the peer is already our GATT client, NOTIFY catch-up instead of a
     // second outbound (dual-role is what wedges Red→Clear after a burst).
     final inboundPeer = peerNodeId ?? macToNodeId[device.remoteId.str];
-    if (inboundPeer != null &&
-        await _tryInboundCatchupPush(myNodeId, inboundPeer)) {
-      return;
+    if (inboundPeer != null && !forceNewestPush) {
+      final now = DateTime.now();
+      if (_scanHandshakeThrottle.shouldThrottle(inboundPeer, now: now)) {
+        // scanResults contains repeated cached advertisements. Bound repeated
+        // active-link checks and trace logging to one per peer per second.
+        _hashCooldowns[remoteHashInt] = now;
+        return;
+      }
+    }
+    if (inboundPeer != null) {
+      if (await _tryInboundCatchupPush(myNodeId, inboundPeer)) return;
+
+      // The peer already owns the central role for this pair. Do not open a
+      // second GATT client while that server-side link is being set up; the
+      // peer's offer/reply carries both directions, and urgent writes are
+      // coalesced until its CCCD is ready.
+      final inboundMac = _resolveInboundMacForPeer(
+        inboundPeer,
+        await _nativeMesh.getActiveServerMacs(),
+      );
+      if (inboundMac != null) {
+        if (forceNewestPush) _inboundCatchupPending.add(inboundPeer);
+        debugPrint(
+          '[BLE_TRACE] EVENT:OUTBOUND_DEFERRED_INBOUND_ACTIVE | '
+          'PEER_NODE_ID:$inboundPeer | TARGET_MAC:$inboundMac | '
+          'WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
+        );
+        return;
+      }
     }
     // Scan-path dials must yield while urgent push-on-write holds the radio.
     if (!forceNewestPush) {
@@ -1463,9 +1668,13 @@ class BleDiscoveryService {
   final Set<String> _inboundCatchupPending = {};
   final Map<String, DateTime> _lastHashRepairAttempt = {};
   final Map<String, DateTime> _lastUrgentAttemptAt = {};
+  final _scanHandshakeThrottle = MeshScanHandshakeThrottle(
+    window: const Duration(seconds: 1),
+  );
   bool _urgentSyncRunning = false;
   bool _urgentSyncDirty = false;
   final Map<String, DateTime> _peerHashDivergedAt = {};
+  String? _localNodeId;
   String? _urgentMyNodeId;
   String? _urgentTargetPeer;
   Completer<bool>? _urgentInboundCompleter;
@@ -1473,7 +1682,7 @@ class BleDiscoveryService {
   /// Native GATT server accepted a client — map RPA early for urgent targeting.
   void onServerClientConnected(String mac) {
     debugPrint('🔗 [DISCOVERY] Server client connected: $mac');
-    final myNodeId = _urgentMyNodeId;
+    final myNodeId = _urgentMyNodeId ?? _localNodeId;
     if (myNodeId == null || mac.isEmpty) return;
 
     var peer = macToNodeId[mac];
@@ -1481,14 +1690,14 @@ class BleDiscoveryService {
       peer = _urgentTargetPeer ?? currentNeighborIds.first;
     }
     if (peer != null) {
-      rememberScanMac(peer, mac, seenAt: DateTime.now());
+      rememberObservedPeerMac(peer, mac);
     }
   }
 
   /// CCCD enabled — NOTIFY push is safe on this inbound link.
   void onServerClientReady(String mac) {
     debugPrint('🔗 [DISCOVERY] Server client NOTIFY-ready: $mac');
-    final myNodeId = _urgentMyNodeId;
+    final myNodeId = _urgentMyNodeId ?? _localNodeId;
     if (myNodeId == null || mac.isEmpty) return;
 
     var peer = macToNodeId[mac];
@@ -1497,14 +1706,24 @@ class BleDiscoveryService {
     }
     if (peer == null) return;
 
-    rememberScanMac(peer, mac, seenAt: DateTime.now());
+    rememberObservedPeerMac(peer, mac);
+    if (_urgentMyNodeId == null && !_inboundCatchupPending.contains(peer)) {
+      return;
+    }
     if (_urgentTargetPeer != null && peer != _urgentTargetPeer) return;
 
     unawaited(() async {
       if (await _tryInboundUrgentPush(myNodeId, peer!)) {
-        await _nativeMesh.cancelOutbound();
+        _inboundCatchupPending.remove(peer);
+        // Cancel only this peer's active outbound. A ready inbound link is the
+        // preferred path, while unrelated peers should keep their own transfer.
+        if (_connectingNodeIds.contains(peer)) {
+          await _nativeMesh.cancelOutbound();
+        }
         final c = _urgentInboundCompleter;
-        if (c != null && !c.isCompleted) c.complete(true);
+        if (_urgentTargetPeer == peer && c != null && !c.isCompleted) {
+          c.complete(true);
+        }
       }
     }());
   }
@@ -1619,7 +1838,6 @@ class BleDiscoveryService {
     try {
       await _pushNewestOverInbound(myNodeId, mac);
       rememberSuccessfulDial(peerId, mac);
-      rememberScanMac(peerId, mac, seenAt: DateTime.now());
       // Newest-N is latency-only — do not credit the vector (that skips holes).
       return true;
     } catch (e) {
@@ -1726,11 +1944,12 @@ class BleDiscoveryService {
     return false;
   }
 
-  /// Inbound-first, then parallel outbound/inbound race — under [maxBudget].
+  /// Prefer an existing inbound link; otherwise the elected peer dials once,
+  /// refreshing the RPA before one retry if the first address fails.
   Future<bool> _urgentDeliverPeer(
     String myNodeId,
     String peerId, {
-    Duration maxBudget = const Duration(milliseconds: 4200),
+    Duration maxBudget = const Duration(milliseconds: 7000),
   }) async {
     final stopwatch = Stopwatch()..start();
     final totalCap = maxBudget;
@@ -1740,59 +1959,135 @@ class BleDiscoveryService {
       return left.isNegative ? Duration.zero : left;
     }
 
-    if (await _tryInboundUrgentPush(myNodeId, peerId)) return true;
+    final previousTarget = _urgentTargetPeer;
+    final previousCompleter = _urgentInboundCompleter;
+    final inboundDelivered = Completer<bool>();
+    _urgentTargetPeer = peerId;
+    _urgentInboundCompleter = inboundDelivered;
+    try {
+      if (await _tryInboundUrgentPush(myNodeId, peerId)) return true;
 
+      if (!MeshDialPolicy.shouldInitiate(
+        localNodeId: myNodeId,
+        remoteNodeId: peerId,
+      )) {
+        final wait = remaining();
+        return wait > Duration.zero &&
+            await _waitForInboundUrgentPush(myNodeId, peerId, timeout: wait);
+      }
+
+      // Give a peer that already started the elected connection a brief chance
+      // to reach CCCD-ready before opening our own GATT client.
+      final initialWait = remaining();
+      if (initialWait > Duration.zero &&
+          await _waitForInboundUrgentPush(
+            myNodeId,
+            peerId,
+            timeout: initialWait < const Duration(milliseconds: 250)
+                ? initialWait
+                : const Duration(milliseconds: 250),
+          )) {
+        return true;
+      }
+
+      var selectedMac = scanFreshDialMac(peerId);
+      if (selectedMac == null) {
+        final wait = remaining();
+        return wait > Duration.zero &&
+            await _waitForInboundUrgentPush(myNodeId, peerId, timeout: wait);
+      }
+
+      for (var attempt = 0; attempt < 2; attempt++) {
+        if (await _tryInboundUrgentPush(myNodeId, peerId)) return true;
+
+        final attemptMac = selectedMac;
+        if (attemptMac == null) return false;
+        final candidates = candidateDialMacs(peerId);
+        _traceUrgentDialSelection(peerId, candidates, attemptMac);
+        final budgetLeft = remaining();
+        if (budgetLeft <= Duration.zero) return false;
+        final attemptBudget = budgetLeft < const Duration(milliseconds: 5500)
+            ? budgetLeft
+            : const Duration(milliseconds: 5500);
+
+        try {
+          final device = BluetoothDevice.fromId(attemptMac);
+          final coolKey = 0x200000000 | (peerId.hashCode & 0xffffffff);
+          await _runMeshInitiatorHandshake(
+            myNodeId,
+            coolKey,
+            device,
+            peerNodeId: peerId,
+            peerKeyHint: peerId,
+            remoteHashTrusted: false,
+            forceNewestPush: true,
+          ).timeout(attemptBudget);
+          return true;
+        } catch (e) {
+          if (inboundDelivered.isCompleted) {
+            return await inboundDelivered.future;
+          }
+          debugPrint(
+            '⚠️ [DISCOVERY] Urgent sync try $peerId@$attemptMac failed: $e',
+          );
+          lastGoodDialMac.remove(peerId);
+          if (e is TimeoutException) await _nativeMesh.cancelOutbound();
+
+          if (attempt == 0) {
+            final wait = remaining();
+            final refreshBudget = wait < const Duration(milliseconds: 1200)
+                ? wait
+                : const Duration(milliseconds: 1200);
+            final alternate = await _waitForFreshAlternateDialMac(
+              peerId,
+              attemptMac,
+              timeout: refreshBudget,
+            );
+            if (alternate != null) {
+              selectedMac = alternate;
+              continue;
+            }
+          }
+
+          final tail = remaining();
+          return tail > Duration.zero &&
+              await _waitForInboundUrgentPush(myNodeId, peerId, timeout: tail);
+        }
+      }
+      return false;
+    } finally {
+      _urgentInboundCompleter = previousCompleter;
+      _urgentTargetPeer = previousTarget;
+    }
+  }
+
+  Future<String?> _waitForFreshAlternateDialMac(
+    String peerId,
+    String failedMac, {
+    required Duration timeout,
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final now = DateTime.now();
+      final alternate = freshAlternateDialMac(peerId, failedMac, now: now);
+      if (alternate != null) {
+        final deadUntil = deadMacUntil[alternate];
+        if (deadUntil == null || !now.isBefore(deadUntil)) return alternate;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 75));
+    }
+    return null;
+  }
+
+  /// Last-resort outbound dial after the urgent pipeline exhausts.
+  Future<bool> _urgentScanFallbackDial(String myNodeId, String peerId) async {
     if (!MeshDialPolicy.shouldInitiate(
       localNodeId: myNodeId,
       remoteNodeId: peerId,
     )) {
-      final wait = remaining();
-      if (wait <= Duration.zero) return false;
-      return _waitForInboundUrgentPush(myNodeId, peerId, timeout: wait);
+      return false;
     }
-
-    final wait1 = remaining();
-    if (wait1 > Duration.zero &&
-        await _waitForInboundUrgentPush(
-          myNodeId,
-          peerId,
-          timeout: wait1 < const Duration(milliseconds: 700)
-              ? wait1
-              : const Duration(milliseconds: 700),
-        )) {
-      return true;
-    }
-
-    final macs = candidateDialMacs(peerId);
-    if (macs.isEmpty) {
-      final wait = remaining();
-      if (wait <= Duration.zero) return false;
-      return _waitForInboundUrgentPush(myNodeId, peerId, timeout: wait);
-    }
-
-    final raceBudget = remaining();
-    if (raceBudget > const Duration(milliseconds: 800)) {
-      final budget = raceBudget < const Duration(milliseconds: 2800)
-          ? raceBudget
-          : const Duration(milliseconds: 2800);
-      if (await _raceUrgentDeliver(
-        myNodeId,
-        peerId,
-        macs.first,
-        budget: budget,
-      )) {
-        return true;
-      }
-    }
-
-    final tail = remaining();
-    if (tail <= Duration.zero) return false;
-    return _waitForInboundUrgentPush(myNodeId, peerId, timeout: tail);
-  }
-
-  /// Last-resort outbound dial after urgent pipeline exhausts (~2.5s cap).
-  Future<bool> _urgentScanFallbackDial(String myNodeId, String peerId) async {
-    final mac = preferredDialMac(peerId);
+    final mac = scanFreshDialMac(peerId);
     if (mac == null || mac.isEmpty) return false;
     deadMacUntil.remove(mac);
     try {
@@ -1806,72 +2101,12 @@ class BleDiscoveryService {
         peerKeyHint: peerId,
         remoteHashTrusted: false,
         forceNewestPush: true,
-      ).timeout(const Duration(milliseconds: 1200));
+      ).timeout(const Duration(milliseconds: 4000));
       return true;
     } catch (e) {
       debugPrint('⚠️ [DISCOVERY] Urgent fallback dial $peerId@$mac: $e');
+      if (e is TimeoutException) await _nativeMesh.cancelOutbound();
       return false;
-    }
-  }
-
-  /// Outbound dial vs inbound NOTIFY — first success wins within [budget].
-  Future<bool> _raceUrgentDeliver(
-    String myNodeId,
-    String peerId,
-    String mac, {
-    Duration budget = const Duration(milliseconds: 2700),
-  }) async {
-    _urgentTargetPeer = peerId;
-    final winner = Completer<bool>();
-    _urgentInboundCompleter = winner;
-    Timer? deadline;
-
-    Future<void> tryOutbound() async {
-      try {
-        final device = BluetoothDevice.fromId(mac);
-        final coolKey = 0x200000000 | (peerId.hashCode & 0xffffffff);
-        await _runMeshInitiatorHandshake(
-          myNodeId,
-          coolKey,
-          device,
-          peerNodeId: peerId,
-          peerKeyHint: peerId,
-          remoteHashTrusted: false,
-          forceNewestPush: true,
-        ).timeout(budget);
-        if (!winner.isCompleted) winner.complete(true);
-      } catch (e) {
-        debugPrint('⚠️ [DISCOVERY] Urgent sync try $peerId@$mac: $e');
-        lastGoodDialMac.remove(peerId);
-      }
-    }
-
-    Future<void> pollInbound() async {
-      final end = DateTime.now().add(budget);
-      while (DateTime.now().isBefore(end) && !winner.isCompleted) {
-        if (await _tryInboundUrgentPush(myNodeId, peerId)) {
-          await _nativeMesh.cancelOutbound();
-          if (!winner.isCompleted) winner.complete(true);
-          return;
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
-    }
-
-    unawaited(tryOutbound());
-    unawaited(pollInbound());
-    deadline = Timer(budget, () {
-      if (!winner.isCompleted) winner.complete(false);
-    });
-
-    try {
-      final ok = await winner.future;
-      if (!ok) await _nativeMesh.cancelOutbound();
-      return ok;
-    } finally {
-      deadline.cancel();
-      _urgentInboundCompleter = null;
-      _urgentTargetPeer = null;
     }
   }
 
@@ -1882,10 +2117,10 @@ class BleDiscoveryService {
     }
     _urgentSyncRunning = true;
     _urgentMyNodeId = myNodeId;
-    _urgentRadioHoldUntil = DateTime.now().add(const Duration(seconds: 5));
+    _urgentRadioHoldUntil = DateTime.now().add(const Duration(seconds: 8));
     await _nativeMesh.setUrgentHold(true);
     final urgentSw = Stopwatch()..start();
-    const urgentBudget = Duration(milliseconds: 4800);
+    const urgentBudget = Duration(milliseconds: 7500);
     try {
       do {
         _urgentSyncDirty = false;
@@ -1897,15 +2132,10 @@ class BleDiscoveryService {
 
         bool macUsable(String id) {
           final liveNeighbor = currentNeighborIds.contains(id);
-          final macs = candidateDialMacs(id);
-          if (macs.isEmpty) return liveNeighbor;
-
-          for (final mac in macs) {
-            final dead = deadMacUntil[mac];
-            if (liveNeighbor || dead == null || now.isAfter(dead)) return true;
-          }
-          // Live neighbor: dial anyway — native bypassDeadCache clears penalty box.
-          return liveNeighbor;
+          final mac = scanFreshDialMac(id, now: now);
+          if (mac == null) return false;
+          final dead = deadMacUntil[mac];
+          return liveNeighbor || dead == null || now.isAfter(dead);
         }
 
         final freshKnownPeers = peerIds.where(macUsable).toList();
@@ -1995,9 +2225,8 @@ class BleDiscoveryService {
           _lastUrgentAttemptAt[pick] = DateTime.now();
           lastFullSync.remove(pick);
           localSeenNodes[pick] = DateTime.now();
-          for (final mac in candidateDialMacs(pick)) {
-            deadMacUntil.remove(mac);
-          }
+          final freshMac = scanFreshDialMac(pick);
+          if (freshMac != null) deadMacUntil.remove(freshMac);
           for (final e in hashToNodeId.entries) {
             if (e.value == pick) _hashCooldowns.remove(e.key);
           }
@@ -2032,7 +2261,7 @@ class BleDiscoveryService {
           }
           if (!dialed) {
             final left = urgentBudget - urgentSw.elapsed;
-            if (left > const Duration(milliseconds: 1200)) {
+            if (left > const Duration(milliseconds: 4000)) {
               dialed = await _urgentScanFallbackDial(myNodeId, pick);
             }
           }

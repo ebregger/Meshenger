@@ -93,34 +93,60 @@ def poll_ui_status(
     receipt_matrix,
     completed_at,
     started_at,
+    receipt_at=None,
+    receipt_windows=None,
+    last_absent_at=None,
 ):
+    receipt_at = receipt_at if receipt_at is not None else {}
+    receipt_windows = receipt_windows if receipt_windows is not None else {}
+    last_absent_at = last_absent_at if last_absent_at is not None else {}
     device_messages = {}
+    observed_at_by_device = {}
     total_bytes = 0
     for port in ports:
         result = request(port, "/ui")
+        observed_at = time.monotonic()
         if not isinstance(result, dict):
             continue
         messages = result.get("messages") or []
         total_bytes += len(str(messages).encode("utf-8"))
-        device_messages[port_to_device.get(port, str(port))] = {
+        device = port_to_device.get(port, str(port))
+        device_messages[device] = {
             (m.get("textContent") or m.get("text") or m.get("body") or "")
             for m in messages
             if isinstance(m, dict)
         }
+        observed_at_by_device[device] = observed_at
 
     fully_propagated = 0
     sent_count = defaultdict(int)
     for sent in sent_messages:
         sender = sent["sender_device"]
         sent_count[sender] += 1
-        receivers = 0
+        receiver_times = []
         for device, texts in device_messages.items():
-            if device != sender and sent["tag"] in texts:
+            if device == sender:
+                continue
+            receipt_key = (sender, device, sent["tag"])
+            observed_at = observed_at_by_device[device]
+            if sent["tag"] in texts:
                 receipt_matrix[sender][device].add(sent["tag"])
-                receivers += 1
-        if receivers >= len(ports) - 1:
+                if receipt_key not in receipt_at:
+                    receipt_at[receipt_key] = observed_at
+                    lower_bound = max(
+                        sent["sent_at"],
+                        last_absent_at.get(receipt_key, sent["sent_at"]),
+                    )
+                    receipt_windows[receipt_key] = {
+                        "lower": lower_bound,
+                        "upper": observed_at,
+                    }
+                receiver_times.append(receipt_at[receipt_key])
+            elif receipt_key not in receipt_at:
+                last_absent_at[receipt_key] = observed_at
+        if len(receiver_times) >= len(ports) - 1:
             fully_propagated += 1
-            completed_at.setdefault(sent["tag"], time.time())
+            completed_at.setdefault(sent["tag"], max(receiver_times))
 
     behind = {}
     devices = sorted(port_to_device.values())
@@ -142,7 +168,7 @@ def poll_ui_status(
         "average_latency_ms": (
             sum(latencies) * 1000 / len(latencies) if latencies else None
         ),
-        "elapsed_s": time.time() - started_at,
+        "elapsed_s": time.monotonic() - started_at,
         "behind_by_path": behind,
         "total_kb": total_bytes / 1024,
     }

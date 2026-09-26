@@ -429,6 +429,21 @@ class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
             final lastSeenText = localSecondsAgo < 5
                 ? 'Just now'
                 : '$localSecondsAgo seconds ago';
+            final rssiDbm = liveNode?.rssiDbm ?? widget.initialState.rssiDbm;
+            final rssiSeenAt =
+                liveNode?.rssiSeenAt ?? widget.initialState.rssiSeenAt;
+            final String rssiText;
+            if (rssiDbm == null || rssiSeenAt == null) {
+              rssiText = 'No scan reading yet';
+            } else {
+              final ageSeconds = DateTime.now()
+                  .difference(rssiSeenAt)
+                  .inSeconds;
+              final ageText = ageSeconds <= 0
+                  ? 'just now'
+                  : '${ageSeconds}s ago';
+              rssiText = '$rssiDbm dBm · $ageText';
+            }
 
             return SingleChildScrollView(
               child: Column(
@@ -440,6 +455,18 @@ class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
                       const Icon(Icons.timer, size: 16, color: Colors.grey),
                       const SizedBox(width: 8),
                       Text('Last Seen: $lastSeenText'),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.signal_cellular_alt,
+                        size: 16,
+                        color: Colors.grey,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text('Last scan RSSI: $rssiText')),
                     ],
                   ),
                   const SizedBox(height: 14),

@@ -3,6 +3,18 @@
 /// A single connection carries deltas in both directions. Electing one dialer
 /// avoids crossed connects when both devices notice the same divergence.
 class MeshDialPolicy {
+  /// Elects one initiator when only a 16-bit database-hash fragment is
+  /// available. Equal or missing fragments are ambiguous, so callers wait for
+  /// the full hash and node-ID prefix.
+  static bool shouldInitiateFromPartialHash({
+    required int? localHashFragment,
+    required int? remoteHashFragment,
+  }) {
+    if (localHashFragment == null || remoteHashFragment == null) return false;
+    if (localHashFragment == remoteHashFragment) return false;
+    return localHashFragment < remoteHashFragment;
+  }
+
   static bool shouldInitiate({
     required String localNodeId,
     String? remoteNodeId,
@@ -29,7 +41,33 @@ class MeshDialPolicy {
       return localHash < remoteHash;
     }
 
-    // Equal short prefixes/hashes are rare; permit an identity handshake.
-    return true;
+    // Without a stable identity or a differing hash there is no symmetric
+    // tie-breaker. Wait for a complete advertisement instead of cross-dialing.
+    return false;
   }
+}
+
+/// Limits repeated scan-path handshakes for the same peer.
+///
+/// FlutterBluePlus emits growing batches of recent advertisements. Without a
+/// per-peer gate, each copy can trigger the same native connection lookup and
+/// trace event while an inbound GATT link is already active.
+class MeshScanHandshakeThrottle {
+  MeshScanHandshakeThrottle({required this.window});
+
+  final Duration window;
+  final Map<String, DateTime> _lastHandledAt = {};
+
+  bool shouldThrottle(String peerId, {DateTime? now}) {
+    if (peerId.isEmpty) return false;
+    final current = now ?? DateTime.now();
+    final previous = _lastHandledAt[peerId];
+    if (previous != null && current.difference(previous) < window) {
+      return true;
+    }
+    _lastHandledAt[peerId] = current;
+    return false;
+  }
+
+  void clear() => _lastHandledAt.clear();
 }

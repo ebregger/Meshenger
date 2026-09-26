@@ -79,6 +79,24 @@ class NativeMeshService {
     }
   }
 
+  /// MACs with an active inbound GATT connection, including links whose
+  /// notification subscription has not completed yet.
+  Future<List<String>> getActiveServerMacs() async {
+    try {
+      final raw = await _bleMethodChannel.invokeMethod<List<Object?>>(
+        'active_server_macs',
+      );
+      if (raw == null) return const [];
+      return [
+        for (final mac in raw)
+          if (mac != null) mac.toString(),
+      ];
+    } on PlatformException catch (e) {
+      debugPrint('🔥 Native active_server_macs failed: ${e.message}');
+      return const [];
+    }
+  }
+
   /// Power-cycles the Bluetooth adapter (Force OFF then ON) on Android 11 and below.
   /// Returns true if the toggle was attempted, false if restricted by OS version.
   Future<bool> forceToggleBluetooth() async {

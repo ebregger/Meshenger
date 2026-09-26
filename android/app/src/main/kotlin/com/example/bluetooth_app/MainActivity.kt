@@ -34,6 +34,7 @@ import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import java.util.UUID
@@ -81,8 +82,17 @@ class MainActivity : FlutterActivity() {
   private val connectedServerClients = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
   /// Inbound clients that enabled NOTIFY on our CCCD (safe to push deltas).
   private val notifyReadyServerClients = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+  private val serverClientLock = Any()
+  private val serverClientConnectedAtMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+  private val serverClientLastActivityAtMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+  private val serverConnectionIds = java.util.concurrent.ConcurrentHashMap<String, String>()
+  private val serverClientEvicting = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+  // Allow a peer time to discover the service and subscribe before treating an
+  // unready connection as stale. Recent GATT activity refreshes this deadline.
+  private val pendingInboundStaleAfterMs = 12_000L
   // Set to true during resetNativeServer() to suppress re-entrant disconnect callbacks.
   @Volatile private var isResettingServer = false
+  @Volatile private var serverServiceReady = false
   // Connection collision mutex: only one outbound GATT attempt may run at a time.
   private val isOutboundClientBusy = java.util.concurrent.atomic.AtomicBoolean(false)
   private val activeInboundServers = java.util.concurrent.atomic.AtomicInteger(0)
@@ -92,16 +102,20 @@ class MainActivity : FlutterActivity() {
   @Volatile private var currentOutboundGatt: BluetoothGatt? = null
   @Volatile private var heldClientGatt: BluetoothGatt? = null
   @Volatile private var heldWriteChar: BluetoothGattCharacteristic? = null
+  @Volatile private var heldClientTraceAttemptId: String? = null
   @Volatile private var heldChunkSize: Int = 20
   @Volatile private var heldClientLeaseStartedAtMs: Long = 0L
   private val clientIoLock = Object()
   @Volatile private var clientIoOk: Boolean? = null
   @Volatile private var heldNotifyLatch: CountDownLatch? = null
   private val outboundCancelRequested = AtomicBoolean(false)
+  // Reuse one Handler so removeCallbacks() can cancel the lease posted earlier.
+  private val heldClientHandler = Handler(Looper.getMainLooper())
   private val heldClientRelease = Runnable {
     val g = heldClientGatt
     heldClientGatt = null
     heldWriteChar = null
+    heldClientTraceAttemptId = null
     heldClientLeaseStartedAtMs = 0L
     try { g?.disconnect() } catch (_: Throwable) {}
   }
@@ -121,10 +135,32 @@ class MainActivity : FlutterActivity() {
   private val serverReplyExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
   private val serverNotifyLock = Object()
   @Volatile private var lastNotifyOk: Boolean? = null
+  @Volatile private var lastNotifyMac: String? = null
+  @Volatile private var notifyStartedAtMs: Long = 0L
   // Per-client MTU negotiated on the server side so we know the notify chunk size.
   private val serverMtuMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
   private val REQUEST_BLUETOOTH_PERMS = 4312
+
+  private fun traceBle(
+    event: String,
+    mac: String? = null,
+    attemptId: String? = null,
+    fields: Map<String, Any?> = emptyMap(),
+    connectionId: String? = null,
+  ) {
+    val values = mutableListOf(
+      "EVENT:$event",
+      "MONO_MS:${SystemClock.elapsedRealtime()}",
+    )
+    if (!mac.isNullOrBlank()) values.add("TARGET_MAC:$mac")
+    if (!attemptId.isNullOrBlank()) values.add("ATTEMPT_ID:$attemptId")
+    if (!connectionId.isNullOrBlank()) values.add("CONNECTION_ID:$connectionId")
+    for ((key, value) in fields) {
+      if (value != null) values.add("$key:$value")
+    }
+    Log.d(TAG, "[BLE_TRACE] ${values.joinToString(" | ")}")
+  }
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
@@ -166,6 +202,9 @@ class MainActivity : FlutterActivity() {
         }
         "connected_server_macs" -> {
           result.success(ArrayList(notifyReadyServerClients.keys.filter { notifyReadyServerClients[it] == true }))
+        }
+        "active_server_macs" -> {
+          result.success(ArrayList(connectedServerClients.keys))
         }
         "has_inbound_clients" -> {
           result.success(connectedServerClients.isNotEmpty())
@@ -268,9 +307,88 @@ class MainActivity : FlutterActivity() {
         return
       }
 
+      serverServiceReady = false
+
       val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
       val adapter = bluetoothManager.adapter
+      val startupHandler = Handler(Looper.getMainLooper())
+      val startupResultCompleted = AtomicBoolean(false)
+      var serviceRegistrationTimeout: Runnable? = null
+
+      fun finishStartupAfterServiceRegistration(status: Int) {
+        startupHandler.post {
+          if (!startupResultCompleted.compareAndSet(false, true)) return@post
+          serviceRegistrationTimeout?.let(startupHandler::removeCallbacks)
+
+          if (status != BluetoothGatt.GATT_SUCCESS) {
+            serverServiceReady = false
+            traceBle(
+              "SERVER_SERVICE_REGISTRATION_FAILED",
+              fields = mapOf("STATUS" to status),
+            )
+            try { bluetoothGattServer?.close() } catch (_: Throwable) {}
+            bluetoothGattServer = null
+            result.error("service_add_failed", "GATT service registration failed with status $status", null)
+            return@post
+          }
+
+          val registeredServices = bluetoothGattServer?.services.orEmpty()
+          traceBle(
+            "SERVER_SERVICE_READY",
+            fields = mapOf(
+              "SERVICE_COUNT" to registeredServices.size,
+              "SERVICE_UUIDS" to registeredServices.joinToString(",") { it.uuid.toString() },
+            ),
+          )
+          serverServiceReady = true
+          isResettingServer = false
+          outboundCancelRequested.set(false)
+          try {
+            // addService() only queues registration with Android. Advertising here,
+            // before onServiceAdded(), lets peers connect while the GATT database is
+            // still unavailable and can leave their service discovery callback hanging.
+            advertiser = adapter.bluetoothLeAdvertiser
+            if (advertiser == null) {
+              serverServiceReady = false
+              try { bluetoothGattServer?.close() } catch (_: Throwable) {}
+              bluetoothGattServer = null
+              result.error("advertiser_unavailable", "BluetoothLeAdvertiser is null", null)
+              return@post
+            }
+
+            // API 26+: use exclusively the modern AdvertisingSet API so hash updates never
+            // restart the radio (bypasses Android's undocumented 5-restarts-in-30s ban).
+            // Pre-API 26: fall back to the classic legacy advertiser.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+              startModernAdvertising(currentAdvertiserHash)
+            } else {
+              startLegacyAdvertising(currentAdvertiserHash)
+            }
+
+            // Return our own BLE address so Dart can filter self-advertisements from scan results.
+            val ownAddress = try { adapter.address } catch (_: Throwable) { "" }
+            Log.d(TAG, "[SERVER] Own BLE address: $ownAddress")
+            result.success(ownAddress)
+          } catch (t: Throwable) {
+            serverServiceReady = false
+            try { bluetoothGattServer?.close() } catch (_: Throwable) {}
+            bluetoothGattServer = null
+            result.error("server_error", t.message ?: "Unknown error", null)
+          }
+        }
+      }
+
       val callback = object : BluetoothGattServerCallback() {
+        override fun onServiceAdded(status: Int, service: BluetoothGattService) {
+          super.onServiceAdded(status, service)
+          if (service.uuid != SERVICE_UUID) return
+          traceBle(
+            "SERVER_SERVICE_ADDED_CALLBACK",
+            fields = mapOf("STATUS" to status, "UUID" to service.uuid.toString()),
+          )
+          finishStartupAfterServiceRegistration(status)
+        }
+
         override fun onCharacteristicWriteRequest(
           device: BluetoothDevice,
           requestId: Int,
@@ -283,6 +401,14 @@ class MainActivity : FlutterActivity() {
           try {
             if (characteristic.uuid != CHARACTERISTIC_UUID) return
             val bytes = value ?: ByteArray(0)
+            val now = SystemClock.elapsedRealtime()
+            serverClientLastActivityAtMs[device.address] = now
+            traceBle(
+              "SERVER_WRITE_CHUNK",
+              device.address,
+              connectionId = serverConnectionIds[device.address],
+              fields = mapOf("BYTES" to bytes.size, "OFFSET" to offset),
+            )
             deadMacs.remove(device.address)
             failureCounts.remove(device.address)
             Handler(Looper.getMainLooper()).post {
@@ -312,14 +438,32 @@ class MainActivity : FlutterActivity() {
           super.onMtuChanged(device, mtu)
           Log.d(TAG, "[SERVER] onMtuChanged: mtu=$mtu for device=${device.address}")
           serverMtuMap[device.address] = mtu
+          serverClientLastActivityAtMs[device.address] = SystemClock.elapsedRealtime()
+          traceBle(
+            "SERVER_MTU_CHANGED",
+            device.address,
+            connectionId = serverConnectionIds[device.address],
+            fields = mapOf("MTU" to mtu),
+          )
         }
 
         override fun onNotificationSent(device: BluetoothDevice, status: Int) {
           super.onNotificationSent(device, status)
           synchronized(serverNotifyLock) {
             lastNotifyOk = (status == BluetoothGatt.GATT_SUCCESS)
+            lastNotifyMac = device.address
             serverNotifyLock.notifyAll()
           }
+          val startedAt = notifyStartedAtMs
+          traceBle(
+            "SERVER_NOTIFY_CALLBACK",
+            device.address,
+            connectionId = serverConnectionIds[device.address],
+            fields = mapOf(
+              "STATUS" to status,
+              "DURATION_MS" to if (startedAt > 0L) SystemClock.elapsedRealtime() - startedAt else null,
+            ),
+          )
         }
 
         override fun onDescriptorWriteRequest(
@@ -336,73 +480,168 @@ class MainActivity : FlutterActivity() {
           if (responseNeeded) {
             bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value ?: ByteArray(0))
           }
-          // Mark NOTIFY-ready only after the CCCD response so SDK 28 clients
-          // actually subscribe before we push.
-          if (descriptor.uuid == CCCD_UUID && value != null && value.isNotEmpty() &&
-              (value[0].toInt() and 0x01) != 0) {
-            notifyReadyServerClients[device.address] = true
-            Handler(Looper.getMainLooper()).post {
-              eventSink?.success(hashMapOf("event" to "server_ready", "mac" to device.address))
+          if (descriptor.uuid == CCCD_UUID && value != null) {
+            serverClientLastActivityAtMs[device.address] = SystemClock.elapsedRealtime()
+            val notifyEnabled = value.isNotEmpty() && (value[0].toInt() and 0x01) != 0
+            if (notifyEnabled) {
+              notifyReadyServerClients[device.address] = true
+              val connectedAt = serverClientConnectedAtMs[device.address] ?: SystemClock.elapsedRealtime()
+              traceBle(
+                "SERVER_CCCD_READY",
+                device.address,
+                connectionId = serverConnectionIds[device.address],
+                fields = mapOf("CONNECT_TO_READY_MS" to SystemClock.elapsedRealtime() - connectedAt),
+              )
+              Handler(Looper.getMainLooper()).post {
+                eventSink?.success(hashMapOf("event" to "server_ready", "mac" to device.address))
+              }
+            } else {
+              notifyReadyServerClients.remove(device.address)
+              traceBle(
+                "SERVER_CCCD_DISABLED",
+                device.address,
+                connectionId = serverConnectionIds[device.address],
+              )
             }
           }
         }
 
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
           super.onConnectionStateChange(device, status, newState)
-          // Suppress all callbacks during a server reset to avoid the infinite-disconnect
-          // cascade: close() fires DISCONNECTED for every cached slot, and if we call
-          // cancelConnection() in response, it fires DISCONNECTED again, ad infinitum.
-          if (isResettingServer) return
-          if (newState == BluetoothProfile.STATE_CONNECTED) {
-            // 2-node: one inbound. Extra slots fill with RPA ghosts and the
-            // real peer is rejected (inbound_cap_2 during 500-burst).
-            val currentInbound = activeInboundServers.get()
-            if (currentInbound >= maxInboundServerClients) {
-              val ghostMac = connectedServerClients.keys.firstOrNull {
-                notifyReadyServerClients[it] != true && it != device.address
-              }
-              if (ghostMac != null) {
-                Log.w(
-                  TAG,
-                  "[DIAGNOSTIC] TARGET_MAC:$ghostMac | EVENT:CONNECTION_REJECTED | REASON:replace_ghost_for_${device.address}"
-                )
-                try {
-                  val ghost = BluetoothAdapter.getDefaultAdapter()?.getRemoteDevice(ghostMac)
-                  if (ghost != null) bluetoothGattServer?.cancelConnection(ghost)
-                } catch (_: Throwable) {}
-                connectedServerClients.remove(ghostMac)
-                notifyReadyServerClients.remove(ghostMac)
-                if (activeInboundServers.get() > 0) activeInboundServers.decrementAndGet()
-              } else {
-                Log.w(
-                  TAG,
-                  "[DIAGNOSTIC] TARGET_MAC:${device.address} | EVENT:CONNECTION_REJECTED | REASON:inbound_cap_$currentInbound"
-                )
-                try {
-                  bluetoothGattServer?.cancelConnection(device)
-                } catch (_: Throwable) {}
-                return
-              }
+          // During reset/startup, reject links before their server-side GATT database
+          // is ready. A peer may still have a connect attempt in flight even after its
+          // scan has stopped; leaving that link attached can make Android 15 receive a
+          // primary-service request without returning an ATT response.
+          if (isResettingServer || !serverServiceReady) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+              traceBle(
+                "SERVER_CONNECTION_REJECTED_BEFORE_SERVICE_READY",
+                device.address,
+                fields = mapOf(
+                  "STATUS" to status,
+                  "RESETTING" to isResettingServer,
+                  "SERVICE_READY" to serverServiceReady,
+                ),
+              )
+              try { bluetoothGattServer?.cancelConnection(device) } catch (_: Throwable) {}
             }
-            val wasAlreadyConnected = connectedServerClients.put(device.address, true) != null
-            if (!wasAlreadyConnected) {
-              val activeConns = activeInboundServers.incrementAndGet()
-              Log.d(TAG, "[SERVER] Client connected: ${device.address}. Active inbound connections: $activeConns")
-              if (activeConns > 1) {
-                Log.w(TAG, "[DIAGNOSTIC] SERVER COLLISION WARNING! Multiple concurrent clients connected ($activeConns). This may cause GATT 133 panics.")
+            return
+          }
+          if (newState == BluetoothProfile.STATE_CONNECTED) {
+            val now = SystemClock.elapsedRealtime()
+            val newConnectionId = UUID.randomUUID().toString().take(8)
+            var rejectedReason: String? = null
+            var stalePendingMacToCancel: String? = null
+            var connectionId = newConnectionId
+            var activeConns = 0
+            synchronized(serverClientLock) {
+              if (connectedServerClients.containsKey(device.address)) return
+              val currentInbound = connectedServerClients.size
+              if (currentInbound >= maxInboundServerClients) {
+                val stalePendingMac = connectedServerClients.keys.firstOrNull { mac ->
+                  val lastActivity = serverClientLastActivityAtMs[mac]
+                    ?: serverClientConnectedAtMs[mac]
+                    ?: now
+                  notifyReadyServerClients[mac] != true &&
+                    !serverClientEvicting.containsKey(mac) &&
+                    now - lastActivity >= pendingInboundStaleAfterMs
+                }
+                if (stalePendingMac == null) {
+                  rejectedReason = "inbound_cap_$currentInbound"
+                } else {
+                  serverClientEvicting[stalePendingMac] = true
+                  stalePendingMacToCancel = stalePendingMac
+                  rejectedReason = "stale_pending_slot_releasing"
+                }
               }
-              updateServerBusyState()
-              Handler(Looper.getMainLooper()).post {
-                eventSink?.success(hashMapOf("event" to "server_connect", "mac" to device.address))
+              if (rejectedReason == null) {
+                connectedServerClients[device.address] = true
+                serverClientConnectedAtMs[device.address] = now
+                serverClientLastActivityAtMs[device.address] = now
+                serverConnectionIds[device.address] = newConnectionId
+                connectionId = newConnectionId
               }
+              activeConns = connectedServerClients.size
+              activeInboundServers.set(activeConns)
+            }
+
+            stalePendingMacToCancel?.let { staleMac ->
+              Log.w(
+                TAG,
+                "[DIAGNOSTIC] TARGET_MAC:$staleMac | EVENT:CONNECTION_EVICTION_REQUESTED | REASON:unready_idle_timeout"
+              )
+              traceBle(
+                "SERVER_PENDING_EVICTION_REQUESTED",
+                staleMac,
+                fields = mapOf("REASON" to "unready_idle_timeout"),
+              )
+              try {
+                val staleDevice = BluetoothAdapter.getDefaultAdapter()?.getRemoteDevice(staleMac)
+                if (staleDevice != null) bluetoothGattServer?.cancelConnection(staleDevice)
+              } catch (_: Throwable) {}
+            }
+
+            if (rejectedReason != null) {
+              Log.w(
+                TAG,
+                "[DIAGNOSTIC] TARGET_MAC:${device.address} | EVENT:CONNECTION_REJECTED | REASON:$rejectedReason"
+              )
+              traceBle(
+                "SERVER_CONNECTION_REJECTED",
+                device.address,
+                fields = mapOf("REASON" to rejectedReason, "ACTIVE" to activeConns),
+              )
+              try {
+                bluetoothGattServer?.cancelConnection(device)
+              } catch (_: Throwable) {}
+              return
+            }
+
+            Log.d(TAG, "[SERVER] Client connected: ${device.address}. Active inbound connections: $activeConns")
+            traceBle(
+              "SERVER_CONNECTED",
+              device.address,
+              connectionId = connectionId,
+              fields = mapOf("ACTIVE" to activeConns),
+            )
+            if (activeConns > 1) {
+              Log.w(TAG, "[DIAGNOSTIC] SERVER COLLISION WARNING! Multiple concurrent clients connected ($activeConns). This may cause GATT 133 panics.")
+            }
+            updateServerBusyState()
+            Handler(Looper.getMainLooper()).post {
+              eventSink?.success(
+                hashMapOf(
+                  "event" to "server_connect",
+                  "mac" to device.address,
+                  "connectionId" to connectionId,
+                ),
+              )
             }
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-            val activeConnsBefore = activeInboundServers.get()
-            val wasConnected = connectedServerClients.remove(device.address) != null
-            notifyReadyServerClients.remove(device.address)
+            var activeConnsBefore = 0
+            var activeConnsAfter = 0
+            var connectionId: String? = null
+            var wasConnected = false
+            synchronized(serverClientLock) {
+              activeConnsBefore = connectedServerClients.size
+              wasConnected = connectedServerClients.remove(device.address) != null
+              notifyReadyServerClients.remove(device.address)
+              serverClientConnectedAtMs.remove(device.address)
+              serverClientLastActivityAtMs.remove(device.address)
+              connectionId = serverConnectionIds.remove(device.address)
+              serverClientEvicting.remove(device.address)
+              serverMtuMap.remove(device.address)
+              activeConnsAfter = connectedServerClients.size
+              activeInboundServers.set(activeConnsAfter)
+            }
             if (wasConnected) {
-              val activeConnsAfter = activeInboundServers.decrementAndGet()
               Log.d(TAG, "[SERVER] Client disconnected: ${device.address} status=$status. Active inbound connections now: $activeConnsAfter")
+              traceBle(
+                "SERVER_DISCONNECTED",
+                device.address,
+                connectionId = connectionId,
+                fields = mapOf("STATUS" to status, "ACTIVE" to activeConnsAfter),
+              )
               if (status != 0 && activeConnsBefore > 1) {
                 Log.e(TAG, "[DIAGNOSTIC] SERVER COLLISION ERROR! Disconnection with status=$status while having $activeConnsBefore active connections.")
               }
@@ -428,7 +667,8 @@ class MainActivity : FlutterActivity() {
         currentNodeIdPrefix = nodeId.substring(0, 4).toByteArray()
       }
 
-      // Ensure the GATT service exists before we advertise.
+      // Queue the GATT service registration. Android confirms that the service is
+      // actually available through onServiceAdded(); advertising waits for that callback.
       val writeNoResponseCharacteristic = BluetoothGattCharacteristic(
         CHARACTERISTIC_UUID,
         // Support both write-with-response (client reliability) and no-response.
@@ -459,31 +699,25 @@ class MainActivity : FlutterActivity() {
 
       val added = bluetoothGattServer?.addService(service) ?: false
       if (!added) {
+        serverServiceReady = false
+        startupResultCompleted.set(true)
+        try { bluetoothGattServer?.close() } catch (_: Throwable) {}
+        bluetoothGattServer = null
         result.error("service_add_failed", "Failed to add GATT service", null)
         return
       }
 
-      // Start BLE advertising after service is registered.
-      advertiser = adapter.bluetoothLeAdvertiser
-      if (advertiser == null) {
-        result.error("advertiser_unavailable", "BluetoothLeAdvertiser is null", null)
-        return
+      serviceRegistrationTimeout = Runnable {
+        if (!startupResultCompleted.compareAndSet(false, true)) return@Runnable
+        serverServiceReady = false
+        traceBle("SERVER_SERVICE_REGISTRATION_TIMEOUT", fields = mapOf("TIMEOUT_MS" to 5000))
+        try { bluetoothGattServer?.close() } catch (_: Throwable) {}
+        bluetoothGattServer = null
+        result.error("service_add_timeout", "Timed out waiting for Android to register the GATT service", null)
       }
-
-      // API 26+: use exclusively the modern AdvertisingSet API so hash updates never
-      // restart the radio (bypasses Android's undocumented 5-restarts-in-30s ban).
-      // Pre-API 26: fall back to the classic legacy advertiser.
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        startModernAdvertising(currentAdvertiserHash)
-      } else {
-        startLegacyAdvertising(currentAdvertiserHash)
-      }
-
-      // Return our own BLE address so Dart can filter self-advertisements from scan results.
-      val ownAddress = try { adapter.address } catch (_: Throwable) { "" }
-      Log.d(TAG, "[SERVER] Own BLE address: $ownAddress")
-      result.success(ownAddress)
+      startupHandler.postDelayed(serviceRegistrationTimeout!!, 5000)
     } catch (t: Throwable) {
+      serverServiceReady = false
       result.error("server_error", t.message ?: "Unknown error", null)
     }
   }
@@ -494,6 +728,12 @@ class MainActivity : FlutterActivity() {
     // Raise the guard flag BEFORE close() so the DISCONNECTED callbacks fired
     // by close() are silently swallowed instead of cascading into cancelConnection() calls.
     isResettingServer = true
+    serverServiceReady = false
+    outboundCancelRequested.set(true)
+    val outboundGatt = currentOutboundGatt
+    currentOutboundGatt = null
+    try { outboundGatt?.disconnect() } catch (_: Throwable) {}
+    try { outboundGatt?.close() } catch (_: Throwable) {}
     try {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         advertisingSetCallback?.let { cb ->
@@ -507,35 +747,50 @@ class MainActivity : FlutterActivity() {
           try { adv.stopAdvertising(cb) } catch (_: Throwable) {}
         }
       }
-      bluetoothGattServer?.clearServices()
+      // close() unregisters this GATT server and releases its hosted services.
+      // Calling clearServices() immediately before close() queues a second, async
+      // database mutation. On Android 15 we observed service discovery requests
+      // reach the peripheral with no ATT response after a rapid clear/close/reopen.
       bluetoothGattServer?.close()
     } catch (_: Throwable) {}
     bluetoothGattServer = null
     connectedServerClients.clear()
     notifyReadyServerClients.clear()
+    serverClientConnectedAtMs.clear()
+    serverClientLastActivityAtMs.clear()
+    serverConnectionIds.clear()
+    serverClientEvicting.clear()
+    serverMtuMap.clear()
     deadMacs.clear()
     isOutboundClientBusy.set(false)
     activeInboundServers.set(0)
-    currentOutboundGatt = null
-    outboundCancelRequested.set(false)
     try {
-      Handler(Looper.getMainLooper()).removeCallbacks(heldClientRelease)
+      heldClientHandler.removeCallbacks(heldClientRelease)
     } catch (_: Throwable) {}
     val held = heldClientGatt
     heldClientGatt = null
+    heldClientTraceAttemptId = null
     heldClientLeaseStartedAtMs = 0L
     try { held?.close() } catch (_: Throwable) {}
-    isResettingServer = false
-    Log.d(TAG, "[SERVER] GATT server reset complete.")
-    result.success(null)
+    // Let Android finish unregistering the old server before reusing its serverIf.
+    // startAdvertising() opens and registers the replacement as soon as this result
+    // completes, so return asynchronously after a short teardown settling window.
+    // Keep the reset guard active until the replacement service is registered; the
+    // stress runner pauses scans on all peers before reaching this point.
+    Handler(Looper.getMainLooper()).postDelayed({
+      traceBle("SERVER_RESET_SETTLED", fields = mapOf("WAIT_MS" to 500))
+      Log.d(TAG, "[SERVER] GATT server reset complete.")
+      result.success(null)
+    }, 500L)
   }
 
   @SuppressLint("MissingPermission")
   private fun releaseHeldClientNow() {
-    Handler(Looper.getMainLooper()).removeCallbacks(heldClientRelease)
+    heldClientHandler.removeCallbacks(heldClientRelease)
     val g = heldClientGatt
     heldClientGatt = null
     heldWriteChar = null
+    heldClientTraceAttemptId = null
     heldClientLeaseStartedAtMs = 0L
     try { g?.disconnect() } catch (_: Throwable) {}
     try { g?.close() } catch (_: Throwable) {}
@@ -550,9 +805,8 @@ class MainActivity : FlutterActivity() {
     val hardRemaining =
       (heldClientLeaseStartedAtMs + heldClientMaxLeaseMs - now).coerceAtLeast(0L)
     val delayMs = minOf(heldClientIdleMs, hardRemaining)
-    val handler = Handler(Looper.getMainLooper())
-    handler.removeCallbacks(heldClientRelease)
-    handler.postDelayed(heldClientRelease, delayMs)
+    heldClientHandler.removeCallbacks(heldClientRelease)
+    heldClientHandler.postDelayed(heldClientRelease, delayMs)
     Log.d(
       TAG,
       "[GATT] Held-link lease refresh idle=${delayMs}ms hardRemaining=${hardRemaining}ms"
@@ -563,6 +817,7 @@ class MainActivity : FlutterActivity() {
   private fun writeOnHeldClient(
     payload: ByteArray,
     result: MethodChannel.Result,
+    attemptId: String,
   ): Boolean {
     val g = heldClientGatt ?: return false
     val characteristic = heldWriteChar ?: return false
@@ -572,7 +827,8 @@ class MainActivity : FlutterActivity() {
       }
       return true
     }
-    Handler(Looper.getMainLooper()).removeCallbacks(heldClientRelease)
+    heldClientHandler.removeCallbacks(heldClientRelease)
+    heldClientTraceAttemptId = attemptId
     val notifyLatch = CountDownLatch(1)
     heldNotifyLatch = notifyLatch
     try {
@@ -602,6 +858,11 @@ class MainActivity : FlutterActivity() {
       val chunkSize = heldChunkSize.coerceIn(20, 512)
       var offset = 0
       Log.d(TAG, "[GATT] Reusing held client link ${payload.size}B chunk=$chunkSize")
+      traceBle(
+        "CLIENT_HELD_LINK_REUSE",
+        attemptId = attemptId,
+        fields = mapOf("BYTES" to payload.size, "CHUNK_SIZE" to chunkSize),
+      )
       while (offset < payload.size) {
         val length = minOf(chunkSize, payload.size - offset)
         if (!writeBlocking(payload.copyOfRange(offset, offset + length))) {
@@ -623,9 +884,15 @@ class MainActivity : FlutterActivity() {
       }
       Handler(Looper.getMainLooper()).post { result.success(null) }
       heldClientGatt = g
+      traceBle("CLIENT_HELD_LINK_COMPLETE", attemptId = attemptId)
       return true
     } catch (t: Throwable) {
       Log.e(TAG, "[GATT] Held-link exception ${t.message} — releasing")
+      traceBle(
+        "CLIENT_HELD_LINK_FAILED",
+        attemptId = attemptId,
+        fields = mapOf("DETAIL" to t.javaClass.simpleName),
+      )
       releaseHeldClientNow()
       return false
     } finally {
@@ -648,16 +915,24 @@ class MainActivity : FlutterActivity() {
   @SuppressLint("MissingPermission")
   private fun disconnectInboundClients() {
     val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    val macs = connectedServerClients.keys.toList()
+    val macs = synchronized(serverClientLock) {
+      val currentMacs = connectedServerClients.keys.toList()
+      connectedServerClients.clear()
+      notifyReadyServerClients.clear()
+      serverClientConnectedAtMs.clear()
+      serverClientLastActivityAtMs.clear()
+      serverConnectionIds.clear()
+      serverClientEvicting.clear()
+      serverMtuMap.clear()
+      activeInboundServers.set(0)
+      currentMacs
+    }
     for (mac in macs) {
       try {
         val device = bm.adapter.getRemoteDevice(mac)
         bluetoothGattServer?.cancelConnection(device)
       } catch (_: Throwable) {}
-      connectedServerClients.remove(mac)
-      notifyReadyServerClients.remove(mac)
     }
-    activeInboundServers.set(0)
     updateServerBusyState()
     Log.d(TAG, "[SERVER] disconnect_inbound cleared ${macs.size} client(s)")
   }
@@ -735,19 +1010,20 @@ class MainActivity : FlutterActivity() {
       .setIncludeTxPowerLevel(false)
       .setIncludeDeviceName(false)
       .addServiceUuid(ParcelUuid(SERVICE_UUID))
-      .addManufacturerData(0xFFE1, buildTelemetryBytes(hashPayload))
+      .addManufacturerData(0xFFE1, buildTelemetryBytes())
       .build()
   }
 
-  private fun buildTelemetryBytes(hashPayload: ByteArray): ByteArray {
+  private fun buildTelemetryBytes(): ByteArray {
       val telemetry = ByteArray(4)
-      if (hashPayload.size >= 4) {
-          telemetry[0] = hashPayload[2]
-          telemetry[1] = hashPayload[3]
-      } else if (hashPayload.size >= 2) {
-          telemetry[0] = hashPayload[0]
-          telemetry[1] = hashPayload[1]
-      }
+      // Keep the stable node prefix in the primary advertisement. The full
+      // database hash and prefix remain in the scan response, which can arrive
+      // later; this prefix lets both peers elect the same dialer and filter our
+      // own resolvable address during that gap.
+      val prefixText = String(currentNodeIdPrefix, Charsets.UTF_8).take(4)
+      val prefixValue = prefixText.toIntOrNull(16) ?: 0
+      telemetry[0] = ((prefixValue shr 8) and 0xFF).toByte()
+      telemetry[1] = (prefixValue and 0xFF).toByte()
       
       val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
       val activeNetwork = connectivityManager.activeNetwork
@@ -778,13 +1054,16 @@ class MainActivity : FlutterActivity() {
       
       val clampedHop = hopDistance.coerceIn(0, 3)
       flags = flags or (clampedHop shl 5)
+      // Bit 15 marks bytes 0..1 as the compact node-ID prefix. Older builds
+      // ignore this reserved flag bit and continue to read the busy flag.
+      flags = flags or (1 shl 15)
 
       telemetry[2] = (flags and 0xFF).toByte()
       telemetry[3] = ((flags shr 8) and 0xFF).toByte()
 
       val hex0 = String.format("%02X", telemetry[0].toInt() and 0xFF)
       val hex1 = String.format("%02X", telemetry[1].toInt() and 0xFF)
-      Log.d(TAG, "[DIAGNOSTIC] BROADCASTING TELEMETRY HEADER BYTES: 0x$hex0 0x$hex1")
+      Log.d(TAG, "[DIAGNOSTIC] BROADCASTING NODE PREFIX BYTES: 0x$hex0 0x$hex1")
 
       return telemetry
   }
@@ -891,6 +1170,10 @@ class MainActivity : FlutterActivity() {
 
   @SuppressLint("MissingPermission")
   private fun sendPayloadToPeer(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
+    if (isResettingServer) {
+      result.error("server_resetting", "GATT service is being reset", null)
+      return
+    }
     val macAddress = call.argument<String>("macAddress")
     val isRandom = call.argument<Boolean>("isRandom") ?: false
     val bypassDeadCache = call.argument<Boolean>("bypassDeadCache") ?: false
@@ -906,13 +1189,32 @@ class MainActivity : FlutterActivity() {
     }
 
     gattExecutor.submit {
-      outboundCancelRequested.set(false)
+      if (isResettingServer) {
+        Handler(Looper.getMainLooper()).post {
+          result.error("server_resetting", "GATT service is being reset", null)
+        }
+        return@submit
+      }
+      val attemptId = UUID.randomUUID().toString().take(8)
+      val attemptStartedAtMs = SystemClock.elapsedRealtime()
+      traceBle(
+        "CLIENT_ATTEMPT_STARTED",
+        macAddress,
+        attemptId,
+        mapOf("PAYLOAD_BYTES" to payload.size, "BYPASS_CACHE" to bypassDeadCache),
+      )
       val deadUntil = deadMacs[macAddress]
-      if (!bypassDeadCache && deadUntil != null && System.currentTimeMillis() < deadUntil) {
+      if (!bypassDeadCache && deadUntil != null && SystemClock.elapsedRealtime() < deadUntil) {
+        traceBle(
+          "CLIENT_ATTEMPT_SKIPPED",
+          macAddress,
+          attemptId,
+          mapOf("REASON" to "dead_cache"),
+        )
         Handler(Looper.getMainLooper()).post { result.error("timeout", "MAC $macAddress is in dead-cache", null) }
         return@submit
       }
-      if (writeOnHeldClient(payload, result)) {
+      if (writeOnHeldClient(payload, result, attemptId)) {
         return@submit
       }
       if (bypassDeadCache) {
@@ -939,11 +1241,19 @@ class MainActivity : FlutterActivity() {
 
       val lock = Object()
       var lastWriteOk: Boolean? = null
+      var pendingWriteBytes = 0
+      var pendingWriteOffset = 0
       var phase: String = "connecting"
       var gatt: BluetoothGatt? = null
 
       fun completeSuccessOnMain() {
         if (isCompleted.compareAndSet(false, true)) {
+          traceBle(
+            "CLIENT_ATTEMPT_COMPLETE",
+            macAddress,
+            attemptId,
+            mapOf("DURATION_MS" to SystemClock.elapsedRealtime() - attemptStartedAtMs),
+          )
           Handler(Looper.getMainLooper()).post { result.success(null) }
           taskLatch.countDown()
         }
@@ -951,6 +1261,16 @@ class MainActivity : FlutterActivity() {
 
       fun completeErrorOnMain(code: String, message: String) {
         if (isCompleted.compareAndSet(false, true)) {
+          traceBle(
+            "CLIENT_ATTEMPT_FAILED",
+            macAddress,
+            attemptId,
+            mapOf(
+              "PHASE" to phase,
+              "ERROR_CODE" to code,
+              "DURATION_MS" to SystemClock.elapsedRealtime() - attemptStartedAtMs,
+            ),
+          )
           isOutboundClientBusy.set(false)
           try { gatt?.disconnect() } catch (_: Throwable) {}
           try { gatt?.close() } catch (_: Throwable) {}
@@ -969,9 +1289,20 @@ class MainActivity : FlutterActivity() {
           val count = failureCounts.getOrDefault(macAddress, 0) + 1
           failureCounts[macAddress] = count
           val timeoutMs = Math.min(500 * Math.pow(2.0, count.toDouble()).toLong(), 2000L)
-          deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
+          deadMacs[macAddress] = SystemClock.elapsedRealtime() + timeoutMs
           Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
           Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:timeout")
+          traceBle(
+            "CLIENT_ATTEMPT_FAILED",
+            macAddress,
+            attemptId,
+            mapOf(
+              "PHASE" to phase,
+              "ERROR_CODE" to "connect_timeout",
+              "DURATION_MS" to SystemClock.elapsedRealtime() - attemptStartedAtMs,
+              "PENALTY_MS" to timeoutMs,
+            ),
+          )
           try { gatt?.disconnect() } catch (_: Throwable) {}
           try { gatt?.close() } catch (_: Throwable) {}
           Handler(Looper.getMainLooper()).post { result.error("timeout", "Timed out waiting for connection", null) }
@@ -981,6 +1312,16 @@ class MainActivity : FlutterActivity() {
       val transferWatchdog = Runnable {
         isOutboundClientBusy.set(false)
         Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:transfer_timeout")
+        traceBle(
+          "CLIENT_ATTEMPT_FAILED",
+          macAddress,
+          attemptId,
+          mapOf(
+            "PHASE" to phase,
+            "ERROR_CODE" to "transfer_timeout",
+            "DURATION_MS" to SystemClock.elapsedRealtime() - attemptStartedAtMs,
+          ),
+        )
         try { gatt?.disconnect() } catch (_: Throwable) {}
         try { gatt?.close() } catch (_: Throwable) {}
         if (isCompleted.compareAndSet(false, true)) {
@@ -989,8 +1330,50 @@ class MainActivity : FlutterActivity() {
         }
       }
       val mainHandler = Handler(Looper.getMainLooper())
-      // Watchdog starts when connectGatt is issued (not before jitter), otherwise a
-      // 0–1.8s delay silently eats most of a 4s budget and Pixel 3 peers time out.
+      var mtuRequestStartedAtMs = 0L
+      val mtuStageAdvanced = AtomicBoolean(false)
+      var mtuFallbackRunnable: Runnable? = null
+
+      fun queueServiceDiscovery(g: BluetoothGatt) {
+        phase = "discover_services"
+        mainHandler.postDelayed({
+          if (!isCompleted.get()) {
+            try {
+              val started = g.discoverServices()
+              traceBle(
+                "CLIENT_DISCOVERY_STARTED",
+                macAddress,
+                attemptId,
+                mapOf("STARTED" to started),
+              )
+            } catch (e: Exception) {
+              completeErrorOnMain("SERVICES_EXCEPTION", "Failed to initiate discoverServices")
+            }
+          }
+        }, 50)
+      }
+
+      fun recordDefaultMtuFallback(g: BluetoothGatt, reason: String, status: Int? = null) {
+        negotiatedChunkSize = 20
+        val fields = mutableMapOf<String, Any>(
+          "REASON" to reason,
+          "WAIT_MS" to if (mtuRequestStartedAtMs == 0L) 0L else SystemClock.elapsedRealtime() - mtuRequestStartedAtMs,
+          "CHUNK_SIZE" to negotiatedChunkSize,
+        )
+        if (status != null) fields["STATUS"] = status
+        traceBle("CLIENT_MTU_FALLBACK", macAddress, attemptId, fields)
+        Log.w(TAG, "[GATT] Continuing with default MTU chunk size 20 mac=$macAddress reason=$reason")
+        queueServiceDiscovery(g)
+      }
+
+      fun fallbackToDefaultMtu(g: BluetoothGatt, reason: String, status: Int? = null) {
+        if (!mtuStageAdvanced.compareAndSet(false, true)) return
+        mtuFallbackRunnable?.let { mainHandler.removeCallbacks(it) }
+        recordDefaultMtuFallback(g, reason, status)
+      }
+
+      // Start the watchdog when connectGatt is issued, so the short radio-settle
+      // delay does not consume the peer's connection budget.
 
       try {
         val gattCallback = object : BluetoothGattCallback() {
@@ -1002,30 +1385,63 @@ class MainActivity : FlutterActivity() {
               isOutboundClientBusy.set(true)
               Log.d(TAG, "[GATT] STATE_CONNECTED mac=$macAddress")
               Log.d(TAG, "[BENCHMARK] TARGET_MAC:$macAddress | EVENT:GATT_CONNECTED | TIMESTAMP:${System.currentTimeMillis()}")
+              traceBle(
+                "CLIENT_CONNECTED",
+                macAddress,
+                attemptId,
+                mapOf("CONNECT_MS" to SystemClock.elapsedRealtime() - attemptStartedAtMs),
+              )
               mainHandler.removeCallbacks(connectionWatchdog)
               // Offer round-trips should finish in a few seconds. A 60s transfer
               // watchdog left urgent push-on-write blocked behind a dead peer.
               mainHandler.postDelayed(transferWatchdog, 15000)
+              // Negotiate a larger MTU before discovery when Android supports it.
+              // Some debug builds accept requestMtu() but omit onMtuChanged; the
+              // bounded fallback keeps discovery moving at the 20-byte default.
               phase = "request_mtu"
-              Handler(Looper.getMainLooper()).postDelayed({
+              mainHandler.postDelayed({
                 if (!isCompleted.get()) {
                   try {
+                    mtuRequestStartedAtMs = SystemClock.elapsedRealtime()
                     val ok = g.requestMtu(512)
                     Log.d(TAG, "[GATT] requestMtu initiated: $ok mac=$macAddress")
+                    traceBle(
+                      "CLIENT_MTU_REQUESTED",
+                      macAddress,
+                      attemptId,
+                      mapOf("REQUESTED_MTU" to 512, "STARTED" to ok),
+                    )
+                    if (ok) {
+                      val fallback = Runnable {
+                        if (!isCompleted.get()) {
+                          fallbackToDefaultMtu(g, "callback_timeout")
+                        }
+                      }
+                      mtuFallbackRunnable = fallback
+                      mainHandler.postDelayed(fallback, 1500L)
+                    } else {
+                      fallbackToDefaultMtu(g, "request_not_started")
+                    }
                   } catch (e: Exception) {
-                    Log.e(TAG, "[GATT] requestMtu exception mac=$macAddress", e)
-                    completeErrorOnMain("MTU_EXCEPTION", "Failed to initiate requestMtu")
+                    Log.w(TAG, "[GATT] requestMtu exception; continuing at default MTU mac=$macAddress", e)
+                    fallbackToDefaultMtu(g, "request_exception")
                   }
                 }
               }, 50)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
               Log.d(TAG, "[GATT] STATE_DISCONNECTED phase=$phase status=$status mac=$macAddress")
+              traceBle(
+                "CLIENT_DISCONNECTED",
+                macAddress,
+                attemptId,
+                mapOf("STATUS" to status, "PHASE" to phase),
+              )
               isOutboundClientBusy.set(false) // Always release the mutex on disconnect.
               if (!isCompleted.get()) {
                 val count = failureCounts.getOrDefault(macAddress, 0) + 1
                 failureCounts[macAddress] = count
                 val timeoutMs = Math.min(500 * Math.pow(2.0, count.toDouble()).toLong(), 2000L)
-                deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
+                deadMacs[macAddress] = SystemClock.elapsedRealtime() + timeoutMs
                 Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
                 Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:$status")
                 try { g.close() } catch (_: Throwable) {}
@@ -1033,7 +1449,10 @@ class MainActivity : FlutterActivity() {
               } else {
                 // Already completed (e.g. after receiving EOF from server notify).
                 try { g.close() } catch (_: Throwable) {}
-                if (heldClientGatt === g) heldClientGatt = null
+                if (heldClientGatt === g) {
+                  heldClientGatt = null
+                  heldClientTraceAttemptId = null
+                }
               }
             }
           }
@@ -1042,33 +1461,38 @@ class MainActivity : FlutterActivity() {
             super.onMtuChanged(g, mtu, status)
             Log.d(TAG, "[GATT] onMtuChanged mtu=$mtu status=$status mac=$macAddress")
             if (g == null) return
+            if (!mtuStageAdvanced.compareAndSet(false, true)) {
+              traceBle(
+                "CLIENT_MTU_CALLBACK_LATE",
+                macAddress,
+                attemptId,
+                mapOf("MTU" to mtu, "STATUS" to status),
+              )
+              return
+            }
+            mtuFallbackRunnable?.let { mainHandler.removeCallbacks(it) }
             if (status == BluetoothGatt.GATT_SUCCESS) {
               // Subtract 3 bytes for the ATT protocol header (1 opcode + 2 handle).
               // Also clamp to 512: Android's GATT stack hard-caps attribute writes at 512 bytes
               // regardless of the negotiated MTU. Some devices report mtu=517 (L2CAP frame size)
               // which would cause writeCharacteristic to throw if we naively use mtu-3=514.
               negotiatedChunkSize = (mtu - 3).coerceIn(20, 512)
+              traceBle(
+                "CLIENT_MTU_READY",
+                macAddress,
+                attemptId,
+                mapOf("MTU" to mtu, "CHUNK_SIZE" to negotiatedChunkSize, "STATUS" to status),
+              )
               Log.d(TAG, "[GATT] Effective chunk size: $negotiatedChunkSize bytes mac=$macAddress")
-              phase = "discover_services"
-              Handler(Looper.getMainLooper()).postDelayed({
-                if (!isCompleted.get()) {
-                  try {
-                    g.discoverServices()
-                  } catch (e: Exception) {
-                    completeErrorOnMain("SERVICES_EXCEPTION", "Failed to initiate discoverServices")
-                  }
-                }
-              }, 50)
+              queueServiceDiscovery(g)
             } else {
-              val count = failureCounts.getOrDefault(macAddress, 0) + 1
-              failureCounts[macAddress] = count
-              val timeoutMs = Math.min(500 * Math.pow(2.0, count.toDouble()).toLong(), 2000L)
-              deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
-              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
-              Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:mtu_failure_$status")
-              g.disconnect()
-              g.close()
-              completeErrorOnMain("MTU_FAILED", "Failed to request MTU")
+              traceBle(
+                "CLIENT_MTU_FAILED",
+                macAddress,
+                attemptId,
+                mapOf("MTU" to mtu, "STATUS" to status),
+              )
+              recordDefaultMtuFallback(g, "callback_failed", status)
             }
           }
 
@@ -1079,6 +1503,12 @@ class MainActivity : FlutterActivity() {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
               phase = "services_discovered"
+              traceBle(
+                "CLIENT_SERVICES_READY",
+                macAddress,
+                attemptId,
+                mapOf("STATUS" to status),
+              )
               val service = g.getService(SERVICE_UUID)
               val characteristic = service?.getCharacteristic(CHARACTERISTIC_UUID)
 
@@ -1087,38 +1517,80 @@ class MainActivity : FlutterActivity() {
                   try {
                     phase = "subscribe_notify"
                     val notifyChar = service.getCharacteristic(NOTIFY_CHARACTERISTIC_UUID)
-                    if (notifyChar != null) {
-                      g.setCharacteristicNotification(notifyChar, true)
-                      val descriptor = notifyChar.getDescriptor(CCCD_UUID)
-                      if (descriptor != null) {
-                        synchronized(lock) { lastWriteOk = null }
-                        val started = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                          g.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothGatt.GATT_SUCCESS
-                        } else {
-                          @Suppress("DEPRECATION")
-                          descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                          @Suppress("DEPRECATION")
-                          g.writeDescriptor(descriptor)
-                        }
-                        if (started) {
-                          val deadlineMs = System.currentTimeMillis() + 8000L
-                          synchronized(lock) {
-                            while (lastWriteOk == null && System.currentTimeMillis() < deadlineMs) {
-                              lock.wait(250L)
-                            }
-                          }
-                          Log.d(TAG, "[GATT] Subscribed to NOTIFY mac=$macAddress result=$lastWriteOk")
-                        }
+                    if (notifyChar == null) {
+                      completeErrorOnMain("NOTIFY_CHAR_NOT_FOUND", "Notify characteristic not found")
+                      return@Thread
+                    }
+                    val localNotifyEnabled = g.setCharacteristicNotification(notifyChar, true)
+                    val descriptor = notifyChar.getDescriptor(CCCD_UUID)
+                    if (descriptor == null) {
+                      completeErrorOnMain("CCCD_NOT_FOUND", "Notify CCCD not found")
+                      return@Thread
+                    }
+                    if (!localNotifyEnabled) {
+                      completeErrorOnMain("NOTIFY_ENABLE_FAILED", "Failed to enable local notifications")
+                      return@Thread
+                    }
+                    synchronized(lock) { lastWriteOk = null }
+                    val started = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                      g.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothGatt.GATT_SUCCESS
+                    } else {
+                      @Suppress("DEPRECATION")
+                      descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                      @Suppress("DEPRECATION")
+                      g.writeDescriptor(descriptor)
+                    }
+                    traceBle(
+                      "CLIENT_CCCD_WRITE_STARTED",
+                      macAddress,
+                      attemptId,
+                      mapOf("STARTED" to started),
+                    )
+                    if (!started) {
+                      completeErrorOnMain("CCCD_START_FAILED", "Failed to start CCCD write")
+                      return@Thread
+                    }
+                    val deadlineMs = SystemClock.elapsedRealtime() + 8000L
+                    synchronized(lock) {
+                      while (lastWriteOk == null && SystemClock.elapsedRealtime() < deadlineMs) {
+                        lock.wait(250L)
                       }
+                    }
+                    val subscriptionResult = synchronized(lock) { lastWriteOk }
+                    val subscriptionReady = subscriptionResult == true
+                    traceBle(
+                      if (subscriptionReady) "CLIENT_CCCD_READY" else "CLIENT_CCCD_FAILED",
+                      macAddress,
+                      attemptId,
+                      mapOf(
+                        "RESULT" to subscriptionResult,
+                        "WAIT_MS" to (8000L - (deadlineMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)),
+                      ),
+                    )
+                    Log.d(TAG, "[GATT] Subscribed to NOTIFY mac=$macAddress result=$subscriptionResult")
+                    if (!subscriptionReady) {
+                      completeErrorOnMain("CCCD_FAILED", "CCCD write did not complete successfully")
+                      return@Thread
                     }
 
                     phase = "writing"
                     heldWriteChar = characteristic
                     heldChunkSize = negotiatedChunkSize
                     characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    var offset = 0
 
                     fun writeBlocking(bytes: ByteArray): Boolean {
-                      synchronized(lock) { lastWriteOk = null }
+                      synchronized(lock) {
+                        lastWriteOk = null
+                        pendingWriteBytes = bytes.size
+                        pendingWriteOffset = offset
+                      }
+                      traceBle(
+                        "CLIENT_WRITE_STARTED",
+                        macAddress,
+                        attemptId,
+                        mapOf("BYTES" to bytes.size, "OFFSET" to offset),
+                      )
 
                       val started: Boolean = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                         val rc = g.writeCharacteristic(characteristic, bytes, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
@@ -1132,9 +1604,9 @@ class MainActivity : FlutterActivity() {
 
                       if (!started) return false
 
-                      val deadlineMs = System.currentTimeMillis() + 8000L
+                      val deadlineMs = SystemClock.elapsedRealtime() + 8000L
                       synchronized(lock) {
-                        while (lastWriteOk == null && System.currentTimeMillis() < deadlineMs) {
+                        while (lastWriteOk == null && SystemClock.elapsedRealtime() < deadlineMs) {
                           lock.wait(250L)
                         }
                         return lastWriteOk == true
@@ -1143,7 +1615,6 @@ class MainActivity : FlutterActivity() {
 
                     // Use the MTU negotiated with this specific peer, not a hardcoded constant.
                     // Android is not guaranteed to grant 512; it may stay at 23 bytes (default) on some devices.
-                    var offset = 0
                     Log.d(TAG, "[GATT] Starting chunked write: ${payload.size} bytes in chunks of $negotiatedChunkSize mac=$macAddress")
                     while (offset < payload.size) {
                       val length = minOf(negotiatedChunkSize, payload.size - offset)
@@ -1174,6 +1645,12 @@ class MainActivity : FlutterActivity() {
                     // isOutboundClientBusy is still held → gatt_busy storms (Red3 lag).
                     // Success is signaled when we receive the server's "||EOF||" notify.
                     Log.d(TAG, "[GATT] Offer sent. Waiting for notify Delta reply mac=$macAddress")
+                    traceBle(
+                      "CLIENT_OFFER_EOF_SENT",
+                      macAddress,
+                      attemptId,
+                      mapOf("PAYLOAD_BYTES" to payload.size, "CHUNK_SIZE" to negotiatedChunkSize),
+                    )
                     failureCounts.remove(macAddress)
                   } catch (t: Throwable) {
                     try { g.disconnect() } catch (_: Throwable) {}
@@ -1182,6 +1659,7 @@ class MainActivity : FlutterActivity() {
                   }
                 }.start()
               } else {
+                traceBle("CLIENT_CHARACTERISTIC_MISSING", macAddress, attemptId)
                 g.disconnect()
                 g.close()
                 val discovered = try {
@@ -1201,7 +1679,7 @@ class MainActivity : FlutterActivity() {
               val count = failureCounts.getOrDefault(macAddress, 0) + 1
               failureCounts[macAddress] = count
               val timeoutMs = Math.min(500 * Math.pow(2.0, count.toDouble()).toLong(), 2000L)
-              deadMacs[macAddress] = System.currentTimeMillis() + timeoutMs
+              deadMacs[macAddress] = SystemClock.elapsedRealtime() + timeoutMs
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:PENALTY_BOX_ENTERED | DURATION:${timeoutMs/1000}")
               Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_FAILED | REASON:discovery_failed_$status")
               g.disconnect()
@@ -1217,6 +1695,12 @@ class MainActivity : FlutterActivity() {
           ) {
             super.onDescriptorWrite(g, descriptor, status)
             Log.d(TAG, "[GATT] onDescriptorWrite status=$status mac=$macAddress")
+            traceBle(
+              "CLIENT_CCCD_WRITE_RESULT",
+              macAddress,
+              attemptId,
+              mapOf("STATUS" to status, "SUCCESS" to (status == BluetoothGatt.GATT_SUCCESS)),
+            )
             synchronized(lock) {
               lastWriteOk = status == BluetoothGatt.GATT_SUCCESS
               lock.notifyAll()
@@ -1230,9 +1714,23 @@ class MainActivity : FlutterActivity() {
           ) {
             super.onCharacteristicWrite(g, characteristic, status)
             Log.d(TAG, "[GATT] onCharacteristicWrite status=$status mac=$macAddress")
-            synchronized(lock) {
+            val writeContext = synchronized(lock) {
               lastWriteOk = status == BluetoothGatt.GATT_SUCCESS
               lock.notifyAll()
+              pendingWriteBytes to pendingWriteOffset
+            }
+            if (heldClientGatt !== g) {
+              traceBle(
+                "CLIENT_WRITE_RESULT",
+                macAddress,
+                attemptId,
+                mapOf(
+                  "STATUS" to status,
+                  "SUCCESS" to (status == BluetoothGatt.GATT_SUCCESS),
+                  "BYTES" to writeContext.first,
+                  "OFFSET" to writeContext.second,
+                ),
+              )
             }
             synchronized(clientIoLock) {
               clientIoOk = status == BluetoothGatt.GATT_SUCCESS
@@ -1263,6 +1761,17 @@ class MainActivity : FlutterActivity() {
           private fun handleNotifyChunk(g: BluetoothGatt, charUuid: UUID, value: ByteArray) {
             if (charUuid != NOTIFY_CHARACTERISTIC_UUID) return
             Log.d(TAG, "[GATT-NOTIFY] Received chunk ${value.size} bytes from server mac=$macAddress")
+            val traceAttemptId = if (heldClientGatt === g) {
+              heldClientTraceAttemptId ?: attemptId
+            } else {
+              attemptId
+            }
+            traceBle(
+              if (value.contentEquals("||EOF||".toByteArray())) "CLIENT_DELTA_EOF_RECEIVED" else "CLIENT_DELTA_CHUNK_RECEIVED",
+              macAddress,
+              traceAttemptId,
+              mapOf("BYTES" to value.size),
+            )
             // Forward the chunk to Flutter exactly as if a write came in from the other direction.
             Handler(Looper.getMainLooper()).post {
               val payload: HashMap<String, Any> = hashMapOf("mac" to macAddress, "bytes" to value)
@@ -1278,6 +1787,7 @@ class MainActivity : FlutterActivity() {
               // Reuse this link for immediate newest + old-page catch-up, but cap
               // the lease so another mesh peer gets the single inbound slot.
               heldClientGatt = g
+              heldClientTraceAttemptId = traceAttemptId
               scheduleHeldClientRelease(g)
             }
           }
@@ -1286,6 +1796,7 @@ class MainActivity : FlutterActivity() {
         // Connection collision guard: only one outbound GATT attempt at a time.
         if (!isOutboundClientBusy.compareAndSet(false, true)) {
           Log.d(TAG, "[DIAGNOSTIC] TARGET_MAC:$macAddress | EVENT:CONNECTION_SKIPPED | REASON:gatt_busy")
+          traceBle("CLIENT_ATTEMPT_SKIPPED", macAddress, attemptId, mapOf("REASON" to "gatt_busy"))
           Handler(Looper.getMainLooper()).post { result.error("gatt_busy", "GATT is currently busy, retry on next scan cycle", null) }
           return@submit
         }
@@ -1294,10 +1805,10 @@ class MainActivity : FlutterActivity() {
         // watchdog and making live catch-up miss the few-second budget.
         val jitterMs = (50..250).random().toLong()
         Handler(Looper.getMainLooper()).postDelayed({
-          if (isCompleted.get() || outboundCancelRequested.get()) {
+          if (isCompleted.get() || outboundCancelRequested.get() || isResettingServer) {
             isOutboundClientBusy.set(false)
             if (!isCompleted.get()) {
-              completeErrorOnMain("cancelled", "Outbound cancelled")
+              completeErrorOnMain("cancelled", "Outbound cancelled or GATT service resetting")
             }
             return@postDelayed
           }
@@ -1307,15 +1818,22 @@ class MainActivity : FlutterActivity() {
             return@postDelayed
           }
           releaseHeldClientNow()
-          // Urgent push-on-write uses bypassDeadCache; fail stale RPAs faster so a
-          // scan-MAC retry still fits in the few-second catch-up budget.
-          val connectTimeoutMs = if (bypassDeadCache) 1800L else 3500L
+          // Keep the fast path unchanged for peers that connect promptly while
+          // giving slower/farther links enough time to finish the LE handshake.
+          val connectTimeoutMs = if (bypassDeadCache) 3500L else 5000L
           mainHandler.postDelayed(connectionWatchdog, connectTimeoutMs)
+          traceBle(
+            "CLIENT_CONNECT_STARTED",
+            macAddress,
+            attemptId,
+            mapOf("TIMEOUT_MS" to connectTimeoutMs, "ADDRESS_TYPE" to addressType),
+          )
           gatt = device.connectGatt(this@MainActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
           currentOutboundGatt = gatt
           if (gatt == null) {
             mainHandler.removeCallbacks(connectionWatchdog)
             isOutboundClientBusy.set(false)
+            traceBle("CLIENT_CONNECT_REJECTED", macAddress, attemptId, mapOf("REASON" to "null_gatt"))
             completeErrorOnMain("connect_failed", "connectGatt returned null")
           }
         }, jitterMs)
@@ -1354,34 +1872,84 @@ class MainActivity : FlutterActivity() {
         val mtu = serverMtuMap[macAddress] ?: 23
         val chunkSize = (mtu - 3).coerceIn(20, 512)
 
-        fun notifyBlocking(chunk: ByteArray): Boolean {
-          synchronized(serverNotifyLock) { lastNotifyOk = null }
+        fun notifyBlocking(chunk: ByteArray, offset: Int, isEof: Boolean = false): Boolean {
+          val startedAt = SystemClock.elapsedRealtime()
+          synchronized(serverNotifyLock) {
+            lastNotifyOk = null
+            lastNotifyMac = null
+            notifyStartedAtMs = startedAt
+          }
 
-          if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            server.notifyCharacteristicChanged(device, notifyChar, false, chunk)
+          val startStatus: Int
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            startStatus = server.notifyCharacteristicChanged(device, notifyChar, false, chunk)
           } else {
             @Suppress("DEPRECATION")
             notifyChar.value = chunk
-            server.notifyCharacteristicChanged(device, notifyChar, false)
+            @Suppress("DEPRECATION")
+            val started = server.notifyCharacteristicChanged(device, notifyChar, false)
+            startStatus = if (started) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
           }
+          if (startStatus != BluetoothGatt.GATT_SUCCESS) {
+            traceBle(
+              "SERVER_NOTIFY_REJECTED",
+              macAddress,
+              connectionId = serverConnectionIds[macAddress],
+              fields = mapOf("STATUS" to startStatus, "BYTES" to chunk.size, "OFFSET" to offset, "EOF" to isEof),
+            )
+            return false
+          }
+          traceBle(
+            "SERVER_NOTIFY_STARTED",
+            macAddress,
+            connectionId = serverConnectionIds[macAddress],
+            fields = mapOf("BYTES" to chunk.size, "OFFSET" to offset, "EOF" to isEof),
+          )
 
-          // SDK 28 often never fires onNotificationSent for unconfirmed NOTIFY.
-          // Wait briefly for an explicit NACK; treat timeout as sent.
-          val deadlineMs = System.currentTimeMillis() + 400L
+          // Older Android releases may omit this callback for unconfirmed NOTIFY.
+          // Keep the timeout fallback, but record callback latency and outcomes so
+          // it can be tuned from measurements without hiding stack rejects.
+          val deadlineMs = startedAt + 400L
+          var callbackResult: Boolean? = null
           synchronized(serverNotifyLock) {
-            while (lastNotifyOk == null && System.currentTimeMillis() < deadlineMs) {
+            while (
+              (lastNotifyOk == null || lastNotifyMac != macAddress) &&
+              SystemClock.elapsedRealtime() < deadlineMs
+            ) {
               serverNotifyLock.wait(50L)
             }
-            return lastNotifyOk != false
+            if (lastNotifyMac == macAddress) callbackResult = lastNotifyOk
           }
+          val waitedMs = SystemClock.elapsedRealtime() - startedAt
+          val accepted = callbackResult != false
+          traceBle(
+            "SERVER_NOTIFY_COMPLETE",
+            macAddress,
+            connectionId = serverConnectionIds[macAddress],
+            fields = mapOf(
+              "RESULT" to accepted,
+              "CALLBACK" to callbackResult,
+              "WAIT_MS" to waitedMs,
+              "BYTES" to chunk.size,
+              "OFFSET" to offset,
+              "EOF" to isEof,
+            ),
+          )
+          return accepted
         }
 
         Log.d(TAG, "[GATT-NOTIFY] Sending ${payload.size} bytes in chunks of $chunkSize to mac=$macAddress")
+        traceBle(
+          "SERVER_REPLY_STARTED",
+          macAddress,
+          connectionId = serverConnectionIds[macAddress],
+          fields = mapOf("BYTES" to payload.size, "CHUNK_SIZE" to chunkSize),
+        )
         var offset = 0
         while (offset < payload.size) {
           val length = minOf(chunkSize, payload.size - offset)
           val chunk = payload.copyOfRange(offset, offset + length)
-          if (!notifyBlocking(chunk)) {
+          if (!notifyBlocking(chunk, offset)) {
             Log.e(TAG, "[GATT-NOTIFY] Notify chunk failed at offset=$offset")
             Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify chunk failed at offset=$offset", null) }
             return@submit
@@ -1390,12 +1958,18 @@ class MainActivity : FlutterActivity() {
         }
 
         val eof = "||EOF||".toByteArray()
-        if (!notifyBlocking(eof)) {
+        if (!notifyBlocking(eof, payload.size, isEof = true)) {
           Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify EOF failed", null) }
           return@submit
         }
 
         Log.d(TAG, "[GATT-NOTIFY] Delta fully sent to mac=$macAddress")
+        traceBle(
+          "SERVER_REPLY_COMPLETE",
+          macAddress,
+          connectionId = serverConnectionIds[macAddress],
+          fields = mapOf("BYTES" to payload.size),
+        )
         Handler(Looper.getMainLooper()).post { result.success(null) }
       } catch (t: Throwable) {
         Log.e(TAG, "[GATT-NOTIFY] Exception during reply", t)

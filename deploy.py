@@ -1,3 +1,4 @@
+import argparse
 import subprocess
 import os
 import re
@@ -61,17 +62,34 @@ def clear_stale_forwards():
                 run_cmd(f"adb forward --remove tcp:{port}", check=False)
 
 
-def deploy_and_launch():
+def parse_devices_arg(value):
+    devices = [part.strip() for part in value.split(",") if part.strip()]
+    if not devices:
+        raise argparse.ArgumentTypeError("provide one or more ADB serials")
+    if len(devices) != len(set(devices)):
+        raise argparse.ArgumentTypeError("ADB serials must be unique")
+    return devices
+
+
+def deploy_and_launch(device_serials=None):
     print("--- 1. Building APK ---")
     run_cmd("flutter build apk --debug", shell=True)
     apk_path = os.path.join(
         "build", "app", "outputs", "flutter-apk", "app-debug.apk"
     )
 
-    devices = get_devices()
-    if not devices:
+    online_devices = get_devices()
+    if not online_devices:
         print("No devices found!")
         return
+
+    if device_serials:
+        missing = [serial for serial in device_serials if serial not in online_devices]
+        if missing:
+            raise SystemExit(f"Requested device(s) are not online: {', '.join(missing)}")
+        devices = device_serials
+    else:
+        devices = online_devices
 
     print(f"--- 2. Found {len(devices)} adb device(s): {devices} ---")
     clear_stale_forwards()
@@ -134,4 +152,10 @@ def deploy_and_launch():
 
 
 if __name__ == "__main__":
-    deploy_and_launch()
+    parser = argparse.ArgumentParser(description="Build and deploy the debug app to ADB devices.")
+    parser.add_argument(
+        "--devices",
+        type=parse_devices_arg,
+        help="Comma-separated ADB serials; deploy only to these devices.",
+    )
+    deploy_and_launch(parser.parse_args().devices)

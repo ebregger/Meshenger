@@ -50,6 +50,9 @@ app.*.map.json
 
 # Stress / probe / benchmark run dumps (local only)
 # Note: *.log is already ignored above.
+/load_sweep_runs/
+*_bluetooth/
+*.btsnoop
 stress_*.txt
 long_stress_*.txt
 probe_*.txt

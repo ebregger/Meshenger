@@ -66,6 +66,40 @@ void main() {
       );
     });
 
+    test('partial advertisement hashes elect one side symmetrically', () {
+      expect(
+        MeshDialPolicy.shouldInitiateFromPartialHash(
+          localHashFragment: 7,
+          remoteHashFragment: 9,
+        ),
+        isTrue,
+      );
+      expect(
+        MeshDialPolicy.shouldInitiateFromPartialHash(
+          localHashFragment: 9,
+          remoteHashFragment: 7,
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not elect either side from equal or missing partial hashes', () {
+      expect(
+        MeshDialPolicy.shouldInitiateFromPartialHash(
+          localHashFragment: 7,
+          remoteHashFragment: 7,
+        ),
+        isFalse,
+      );
+      expect(
+        MeshDialPolicy.shouldInitiateFromPartialHash(
+          localHashFragment: null,
+          remoteHashFragment: 7,
+        ),
+        isFalse,
+      );
+    });
+
     test('never initiates a link to itself', () {
       const node = '10000000-0000-0000-0000-000000000001';
       expect(

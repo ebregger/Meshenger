@@ -287,10 +287,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         timer = Timer(const Duration(seconds: 1), () {
           if (!completer.isCompleted) completer.complete();
         });
-        await Future.any([
-          completer.future,
-          _presenceBump.stream.first,
-        ]);
+        await Future.any([completer.future, _presenceBump.stream.first]);
       } catch (_) {
         break;
       } finally {
@@ -401,6 +398,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             macAddress: mac,
             status: status,
             lastSeen: latestTime,
+            rssiDbm: BleDiscoveryService.nodeIdRssiDbm[id],
+            rssiSeenAt: BleDiscoveryService.nodeIdRssiSeenAt[id],
             isTalking: BleDiscoveryService.isNodeTalking(id, now: now),
             meshCaughtUp: BleDiscoveryService.isPeerCaughtUp(id),
             routeViaId: routeViaId,
@@ -1261,6 +1260,14 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     _publishRadioFlags();
   }
 
+  /// Stops only peer discovery while keeping the app's mesh session active.
+  /// The stress runner uses this to pause every selected scanner before it
+  /// resets their GATT servers, then resumes scanning after all servers are ready.
+  Future<void> stopScanning() async {
+    await _discovery.stopScanning();
+    _publishRadioFlags();
+  }
+
   /// Stops scan + peripheral advertising.
   Future<void> stopNetwork() async {
     _meshSessionActive = false;
@@ -1300,6 +1307,8 @@ class MeshNodeState {
     this.macAddress,
     required this.status,
     required this.lastSeen,
+    this.rssiDbm,
+    this.rssiSeenAt,
     this.isTalking = false,
     this.meshCaughtUp,
     this.routeViaId,
@@ -1311,6 +1320,8 @@ class MeshNodeState {
   final String? macAddress;
   final PeerStatus status;
   final DateTime lastSeen;
+  final int? rssiDbm;
+  final DateTime? rssiSeenAt;
   final bool isTalking;
 
   /// `true` when advertised/synced CRDT hash last matched ours, `false` when
