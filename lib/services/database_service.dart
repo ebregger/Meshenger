@@ -14,20 +14,32 @@ import 'database_mappers.dart';
 class DatabaseService {
   DatabaseService();
 
+  DatabaseService.forTesting(SqliteCrdt database) : _db = database;
+
   SqliteCrdt? _db;
   Future<void>? _initTask;
 
   // Stage 2: DB hash is expensive; cache it and invalidate on known writes/merges.
   int? _cachedDbHashU32;
   bool _dbHashDirty = true;
+  int _dbHashRevision = 0;
+  Future<int>? _dbHashTask;
+
+  // Urgent offers request the version vector after every local message write.
+  // Keep a snapshot and advance its local frontier from the exact HLC assigned
+  // to local writes; remote merges and deletes invalidate the snapshot.
+  Map<String, String>? _cachedVersionVector;
+  int _versionVectorRevision = 0;
+  String? _localWriteFrontierHlc;
 
   Future<void> init() => _initTask ??= _initialize();
 
   Future<void> _initialize() async {
-    final docsDir = await getApplicationDocumentsDirectory();
-    final dbPath = '${docsDir.path}/mesh_network.db';
-
-    _db = await SqliteCrdt.open(dbPath);
+    if (_db == null) {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final dbPath = '${docsDir.path}/mesh_network.db';
+      _db = await SqliteCrdt.open(dbPath);
+    }
 
     // sql_crdt appends is_deleted, hlc, node_id, modified — do not declare them here.
     // Use mesh_node_id (not node_id) so we do not duplicate CRDT's node_id column.
@@ -57,6 +69,35 @@ class DatabaseService {
         PRIMARY KEY (file_id, chunk_index)
       )
     ''');
+
+    // Urgent live-row reads filter deleted records before sorting the newest
+    // messages and profiles.
+    await _db!.execute('''
+      CREATE INDEX IF NOT EXISTS idx_messages_live_node_hlc
+      ON messages (is_deleted, node_id, hlc)
+    ''');
+    await _db!.execute('''
+      CREATE INDEX IF NOT EXISTS idx_users_live_node_hlc
+      ON users (is_deleted, node_id, hlc)
+    ''');
+    await _db!.execute('''
+      CREATE INDEX IF NOT EXISTS idx_bitmap_chunks_live_node_hlc
+      ON bitmap_chunks (is_deleted, node_id, hlc)
+    ''');
+    // Delta queries use a per-node HLC frontier and must include tombstones.
+    // This index keeps those queries bounded as deleted chat rows accumulate.
+    await _db!.execute('''
+      CREATE INDEX IF NOT EXISTS idx_messages_node_hlc
+      ON messages (node_id, hlc)
+    ''');
+    await _db!.execute('''
+      CREATE INDEX IF NOT EXISTS idx_users_node_hlc
+      ON users (node_id, hlc)
+    ''');
+    await _db!.execute('''
+      CREATE INDEX IF NOT EXISTS idx_bitmap_chunks_node_hlc
+      ON bitmap_chunks (node_id, hlc)
+    ''');
   }
 
   SqliteCrdt get _crdt {
@@ -67,29 +108,82 @@ class DatabaseService {
     return db;
   }
 
+  void _invalidateVersionVectorCache() {
+    _versionVectorRevision++;
+    _cachedVersionVector = null;
+  }
+
+  void _markDatabaseHashDirty() {
+    _dbHashRevision++;
+    _dbHashDirty = true;
+  }
+
+  void _recordLocalWriteHlc(String hlc) {
+    _markDatabaseHashDirty();
+    final previousFrontier = _localWriteFrontierHlc;
+    if (previousFrontier == null || hlc.compareTo(previousFrontier) > 0) {
+      _localWriteFrontierHlc = hlc;
+    }
+
+    final vector = _cachedVersionVector;
+    final nodeId = _crdt.nodeId;
+    if (vector != null) {
+      final previous = vector[nodeId];
+      if (previous == null || hlc.compareTo(previous) > 0) {
+        vector[nodeId] = hlc;
+      }
+    }
+  }
+
+  void _overlayLocalWriteFrontier(Map<String, String> vector) {
+    final hlc = _localWriteFrontierHlc;
+    if (hlc == null) return;
+    final nodeId = _crdt.nodeId;
+    final previous = vector[nodeId];
+    if (previous == null || hlc.compareTo(previous) > 0) {
+      vector[nodeId] = hlc;
+    }
+  }
+
   /// Underlying sql_crdt node id (canonical HLC identity).
   String get localNodeId => _crdt.nodeId;
 
-  /// Global max HLC per logical node across mesh CRDT tables (live rows only).
+  /// Global max HLC per logical node across mesh CRDT tables, including
+  /// tombstones. Excluding tombstones makes every deleted row look perpetually
+  /// newer than a peer's frontier, so catch-up resends the same delete pages.
   Future<Map<String, String>> getVersionVector() async {
     await init();
+    final cached = _cachedVersionVector;
+    if (cached != null) return Map<String, String>.from(cached);
+
+    final revision = _versionVectorRevision;
     final result = await _crdt.query('''
       SELECT node_id, MAX(hlc) AS max_hlc
       FROM (
-        SELECT node_id, hlc FROM messages WHERE is_deleted = 0
+        SELECT node_id, hlc FROM messages
         UNION ALL
-        SELECT node_id, hlc FROM users WHERE is_deleted = 0
+        SELECT node_id, hlc FROM users
         UNION ALL
-        SELECT node_id, hlc FROM bitmap_chunks WHERE is_deleted = 0
+        SELECT node_id, hlc FROM bitmap_chunks
       )
-      WHERE node_id IS NOT NULL
+      WHERE node_id IS NOT NULL AND node_id != ''
       GROUP BY node_id
     ''');
-    return {
+    final vector = <String, String>{
       for (final row in result)
         if (row['node_id'] != null && row['max_hlc'] != null)
           row['node_id']! as String: row['max_hlc']! as String,
     };
+    // Local writes can proceed while the query is queued. Their exact HLC is
+    // tracked separately, so fold the latest local frontier into this result
+    // rather than discarding the snapshot on every continuously arriving send.
+    _overlayLocalWriteFrontier(vector);
+    // A remote merge may finish while the query is queued. Avoid caching a
+    // snapshot that predates that change; a later call will reload it.
+    if (revision == _versionVectorRevision) {
+      _cachedVersionVector = vector;
+    }
+    return Map<String, String>.from(vector);
   }
 
   static Map<String, String> _normalizeRemoteVector(
@@ -119,11 +213,73 @@ class DatabaseService {
 
   /// Rows strictly newer than [remoteVector] per node (column or HLC-derived id).
   Future<Map<String, dynamic>> getDeltaChangeset(
-    Map<String, dynamic> remoteVector,
-  ) async {
+    Map<String, dynamic> remoteVector, {
+    int? maxRows,
+  }) async {
     await init();
     final remote = _normalizeRemoteVector(remoteVector);
-    final fullChangeset = await _crdt.getChangeset();
+    final local = await getVersionVector();
+    // Callers that immediately page or truncate a delta should avoid reading
+    // and sorting the entire tombstone history just to keep the first rows.
+    // Read one extra row per table so they can tell whether more data remains.
+    final queryLimit = maxRows == null ? null : (maxRows < 0 ? 0 : maxRows) + 1;
+    Map<String, dynamic> fullChangeset;
+    if (local.isEmpty && queryLimit == null) {
+      fullChangeset = await _crdt.getChangeset();
+    } else {
+      // Ask SQLite for rows beyond the peer's frontier instead of loading the
+      // whole CRDT into Dart and filtering it. Tombstone-heavy databases can
+      // contain thousands of old rows, while each live delta is usually tiny.
+      final clauses = <String>[
+        'node_id IS NULL',
+        "node_id = ''",
+        'hlc IS NULL',
+        "hlc = ''",
+      ];
+      final args = <Object?>[];
+      var parameter = 1;
+      for (final entry in local.entries) {
+        final remoteMax = remote[entry.key];
+        if (remoteMax != null && entry.value.compareTo(remoteMax) <= 0) {
+          continue;
+        }
+        if (remoteMax == null) {
+          clauses.add('node_id = ?$parameter');
+          args.add(entry.key);
+          parameter++;
+        } else {
+          clauses.add('(node_id = ?$parameter AND hlc > ?${parameter + 1})');
+          args
+            ..add(entry.key)
+            ..add(remoteMax);
+          parameter += 2;
+        }
+      }
+      final where = 'WHERE (${clauses.join(' OR ')})';
+      final orderAndLimit = queryLimit == null
+          ? ''
+          : ' ORDER BY hlc ASC, msg_id ASC LIMIT ?$parameter';
+      final userOrderAndLimit = queryLimit == null
+          ? ''
+          : ' ORDER BY hlc ASC, mesh_node_id ASC LIMIT ?$parameter';
+      final bitmapOrderAndLimit = queryLimit == null
+          ? ''
+          : ' ORDER BY hlc ASC, file_id ASC, chunk_index ASC LIMIT ?$parameter';
+      final queryArgs = <Object?>[...args, ?queryLimit];
+      fullChangeset = await _crdt.getChangeset(
+        customQueries: {
+          'messages': (
+            'SELECT * FROM messages $where$orderAndLimit',
+            queryArgs,
+          ),
+          'users': ('SELECT * FROM users $where$userOrderAndLimit', queryArgs),
+          'bitmap_chunks': (
+            'SELECT * FROM bitmap_chunks $where$bitmapOrderAndLimit',
+            queryArgs,
+          ),
+        },
+      );
+    }
     final delta = <String, dynamic>{};
 
     fullChangeset.forEach((table, records) {
@@ -258,7 +414,30 @@ class DatabaseService {
     int maxRows = 40,
   }) async {
     await init();
-    final fullChangeset = await _crdt.getChangeset();
+    final limit = maxRows < 0 ? 0 : maxRows;
+    // Read only rows that can fit in the outgoing page. Fetching and sorting
+    // every CRDT row in Dart made each urgent push slower as chat history grew.
+    // Keep one bounded query per table because message rows retain priority
+    // over profile and bitmap rows when the shared budget is applied below.
+    final fullChangeset = await _crdt.getChangeset(
+      customQueries: {
+        'messages': (
+          'SELECT * FROM messages WHERE is_deleted = 0 '
+              'ORDER BY hlc DESC LIMIT ?1',
+          [limit],
+        ),
+        'users': (
+          'SELECT * FROM users WHERE is_deleted = 0 '
+              'ORDER BY hlc DESC LIMIT ?1',
+          [limit],
+        ),
+        'bitmap_chunks': (
+          'SELECT * FROM bitmap_chunks WHERE is_deleted = 0 '
+              'ORDER BY hlc DESC LIMIT ?1',
+          [limit],
+        ),
+      },
+    );
     final out = <String, dynamic>{};
     var budget = maxRows;
     final keys = fullChangeset.keys.toList()
@@ -339,6 +518,20 @@ class DatabaseService {
     if (!_dbHashDirty && _cachedDbHashU32 != null) {
       return _cachedDbHashU32!;
     }
+    final inFlight = _dbHashTask;
+    if (inFlight != null) return inFlight;
+
+    final revision = _dbHashRevision;
+    final task = _computeDatabaseHash(revision);
+    _dbHashTask = task;
+    try {
+      return await task;
+    } finally {
+      if (identical(_dbHashTask, task)) _dbHashTask = null;
+    }
+  }
+
+  Future<int> _computeDatabaseHash(int revision) async {
     final result = await _crdt.query('''
       SELECT hlc FROM messages WHERE is_deleted = 0
       UNION ALL
@@ -373,8 +566,13 @@ class DatabaseService {
     }
 
     final out = hash.toInt();
-    _cachedDbHashU32 = out;
-    _dbHashDirty = false;
+    // A write or merge may have been queued while the query was running. Keep
+    // the computed value for current callers, but leave the cache dirty so the
+    // next request refreshes it. This also prevents duplicate concurrent scans.
+    if (revision == _dbHashRevision) {
+      _cachedDbHashU32 = out;
+      _dbHashDirty = false;
+    }
     return out;
   }
 
@@ -425,12 +623,73 @@ class DatabaseService {
   ///
   /// Round-trips through JSON + [_decodeChangeset] so `hlc` / `modified` become
   /// [Hlc] instances — required by [Crdt.validateChangeset].
-  Future<void> mergeSyncChangeset(Map<String, dynamic> changeset) async {
+  Future<void> mergeSyncChangeset(
+    Map<String, dynamic> changeset, {
+    void Function(String stage, int elapsedUs)? onStage,
+  }) async {
     await init();
-    _dbHashDirty = true;
+    _markDatabaseHashDirty();
+    _invalidateVersionVectorCache();
+
+    final decodeTimer = Stopwatch()..start();
     final hydrated = _decodeChangeset(jsonEncode(changeset));
+    onStage?.call('decode', decodeTimer.elapsedMicroseconds);
+
+    final mergeTimer = Stopwatch()..start();
     await _crdt.merge(_castChangeset(hydrated));
+    onStage?.call('crdt_merge', mergeTimer.elapsedMicroseconds);
+
+    // Invalidate again after the mutation so a read queued behind the early
+    // invalidation cannot cache a snapshot from just before the merge.
+    _markDatabaseHashDirty();
+    _invalidateVersionVectorCache();
+
+    final settleTimer = Stopwatch()..start();
     await Future<void>.delayed(const Duration(milliseconds: 100));
+    onStage?.call('settle_delay', settleTimer.elapsedMicroseconds);
+  }
+
+  /// Whether [changeset] contains a message row that is newer than the local
+  /// copy (or is not present locally). Call before merging so the mesh can
+  /// relay newly received chat without re-forwarding every anti-entropy reply.
+  Future<bool> hasNewerIncomingMessages(Map<String, dynamic> changeset) async {
+    await init();
+    final rawRows = changeset['messages'];
+    if (rawRows is! List || rawRows.isEmpty) return false;
+
+    final incomingById = <String, String?>{};
+    for (final rawRow in rawRows) {
+      if (rawRow is! Map) continue;
+      final id = (rawRow['msg_id'] ?? rawRow['msgId'])?.toString();
+      if (id == null || id.isEmpty) continue;
+      incomingById[id] = rawRow['hlc']?.toString();
+    }
+    if (incomingById.isEmpty) return false;
+
+    final ids = incomingById.keys.toList(growable: false);
+    final placeholders = List<String>.generate(
+      ids.length,
+      (index) => '?${index + 1}',
+    ).join(', ');
+    final existingRows = await _crdt.query(
+      'SELECT msg_id, hlc FROM messages WHERE msg_id IN ($placeholders)',
+      ids,
+    );
+    final existingById = <String, String>{
+      for (final row in existingRows)
+        if (row['msg_id'] != null && row['hlc'] != null)
+          row['msg_id']!.toString(): row['hlc']!.toString(),
+    };
+
+    for (final entry in incomingById.entries) {
+      final existingHlc = existingById[entry.key];
+      if (existingHlc == null) return true;
+      final incomingHlc = entry.value;
+      if (incomingHlc != null && incomingHlc.compareTo(existingHlc) > 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Parses mesh sync JSON and restores hybrid logical clocks for CRDT merge.
@@ -470,7 +729,8 @@ class DatabaseService {
 
   Future<void> upsertNodeProfile(NodeProfile value) async {
     await init();
-    _dbHashDirty = true;
+    _markDatabaseHashDirty();
+    final writeHlc = _crdt.canonicalTime.increment().toString();
     await _crdt.execute(
       '''
       INSERT INTO users (mesh_node_id, display_name, timestamp)
@@ -481,6 +741,7 @@ class DatabaseService {
       ''',
       [value.nodeId, value.displayName, value.timestamp.toInt()],
     );
+    _recordLocalWriteHlc(writeHlc);
   }
 
   Future<List<NodeProfile>> fetchNodeProfiles() async {
@@ -537,7 +798,8 @@ class DatabaseService {
     final trimmed = name.trim();
 
     final nodeId = await IdentityService().getOrCreateMyNodeId();
-    _dbHashDirty = true;
+    _markDatabaseHashDirty();
+    final writeHlc = _crdt.canonicalTime.increment().toString();
     await _crdt.execute(
       '''
       INSERT INTO users (mesh_node_id, display_name, timestamp)
@@ -548,12 +810,14 @@ class DatabaseService {
       ''',
       [nodeId, trimmed, DateTime.now().millisecondsSinceEpoch],
     );
+    _recordLocalWriteHlc(writeHlc);
   }
 
   /// Uses [_crdt.execute] so sql_crdt injects `hlc` / `modified` and advances the clock.
   Future<void> upsertTextMessage(TextMessage value) async {
     await init();
-    _dbHashDirty = true;
+    _markDatabaseHashDirty();
+    final writeHlc = _crdt.canonicalTime.increment().toString();
     await _crdt.execute(
       '''
       INSERT INTO messages (msg_id, origin_node_id, text_content, timestamp)
@@ -570,19 +834,31 @@ class DatabaseService {
         value.timestamp.toInt(),
       ],
     );
+    _recordLocalWriteHlc(writeHlc);
   }
 
   /// Stress-test reset: drop chat rows only; keep [users] display names.
   Future<int> clearTextMessages() async {
     await init();
-    _dbHashDirty = true;
-    final before = await _crdt.query(
-      'SELECT COUNT(*) AS c FROM messages WHERE is_deleted = 0',
+    _markDatabaseHashDirty();
+    _invalidateVersionVectorCache();
+    final liveRows = await _crdt.query(
+      'SELECT msg_id FROM messages WHERE is_deleted = 0 ORDER BY msg_id ASC',
     );
-    final count = (before.isEmpty ? 0 : before.first['c'] as int?) ?? 0;
-    await _crdt.execute('DELETE FROM messages');
+    // Each delete gets its own HLC. A single bulk DELETE gives every row the
+    // same frontier, which makes a 25-row catch-up page appear to cover every
+    // remaining row from that delete operation.
+    for (final row in liveRows) {
+      final messageId = row['msg_id']?.toString();
+      if (messageId == null || messageId.isEmpty) continue;
+      await _crdt.execute('DELETE FROM messages WHERE msg_id = ?1', [
+        messageId,
+      ]);
+    }
     await _crdt.execute('DELETE FROM bitmap_chunks');
-    return count;
+    _markDatabaseHashDirty();
+    _invalidateVersionVectorCache();
+    return liveRows.length;
   }
 
   Future<List<TextMessage>> fetchTextMessages() async {
@@ -651,7 +927,8 @@ class DatabaseService {
 
   Future<void> upsertBitmapChunk(BitmapChunk value) async {
     await init();
-    _dbHashDirty = true;
+    _markDatabaseHashDirty();
+    final writeHlc = _crdt.canonicalTime.increment().toString();
     await _crdt.execute(
       '''
       INSERT INTO bitmap_chunks (file_id, chunk_index, total_chunks, chunk_data)
@@ -662,6 +939,7 @@ class DatabaseService {
       ''',
       [value.fileId, value.chunkIndex, value.totalChunks, value.chunkData],
     );
+    _recordLocalWriteHlc(writeHlc);
   }
 
   Future<List<BitmapChunk>> fetchBitmapChunks(String fileId) async {

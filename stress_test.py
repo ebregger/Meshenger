@@ -72,7 +72,10 @@ class Telemetry:
         self.penalty_box = []  # { device, mac, duration }
         self.app_state_changes = []  # { device, state, t }
         self.ble_trace_events = []  # device-local monotonic BLE stage events
+        self.message_trace_events = []  # message-ID-correlated app and GATT events
+        self.scanner_errors = []  # Android BLE scanner registration/recovery errors
         self.android_bluetooth_logs = []  # framework/stack logs filtered by tag
+        self.advertiser_logs = []  # app-side hash updates and advertiser restarts
 
 
 telemetry = Telemetry()
@@ -111,6 +114,151 @@ def capture_peer_signal_snapshot(
         "elapsed_s": time.monotonic() - started_at,
         "peers_by_device": peers_by_device,
     }
+
+
+def wait_for_mesh_peer_visibility(
+    requester,
+    ports,
+    port_to_device,
+    node_ids_by_port,
+    timeout_s=20.0,
+    poll_interval_s=0.5,
+    rssi_max_age_s=15.0,
+    scanner_errors=None,
+):
+    """Wait until selected peers form a live mesh, using RSSI or direct GATT links.
+
+    A multi-hop mesh does not need an all-to-all radio graph. A recent direct
+    GATT exchange is stronger evidence of a usable edge than a scan RSSI sample,
+    so it can satisfy topology readiness when Android omits that RSSI callback.
+    """
+    started_at = time.monotonic()
+    deadline = started_at + timeout_s
+    rssi_max_age_ms = int(rssi_max_age_s * 1000)
+    selected_node_ids = set(node_ids_by_port.values())
+    expected_by_device = {
+        port_to_device.get(port, str(port)): sorted(
+            node_id
+            for node_id in selected_node_ids
+            if node_id != node_ids_by_port.get(port)
+        )
+        for port in ports
+    }
+    last_signature = None
+    latest = {}
+    while True:
+        peers_by_device = {}
+        visible_ready = True
+        signal_ready = True
+        now_ms = int(time.time() * 1000)
+        for port in ports:
+            device = port_to_device.get(port, str(port))
+            response = requester(port, "/peers")
+            peers = response.get("peers", []) if isinstance(response, dict) else []
+            selected_peers = [
+                {
+                    "id": peer.get("id"),
+                    "name": peer.get("name"),
+                    "status": peer.get("status"),
+                    "last_seen_ms": peer.get("lastSeenMs"),
+                    "rssi_dbm": peer.get("rssiDbm"),
+                    "rssi_seen_ms": peer.get("rssiSeenMs"),
+                }
+                for peer in peers
+                if isinstance(peer, dict)
+                and peer.get("id") in selected_node_ids
+                and peer.get("id") != node_ids_by_port.get(port)
+            ]
+            peers_by_device[device] = selected_peers
+            visible_ids = {peer["id"] for peer in selected_peers}
+            if not set(expected_by_device[device]).issubset(visible_ids):
+                visible_ready = False
+            for peer in selected_peers:
+                sample_at_ms = peer.get("rssi_seen_ms")
+                age_ms = now_ms - sample_at_ms if sample_at_ms is not None else None
+                peer["rssi_age_ms"] = age_ms
+                peer["rssi_fresh"] = (
+                    peer.get("rssi_dbm") is not None
+                    and age_ms is not None
+                    and -5000 <= age_ms <= rssi_max_age_ms
+                )
+                if not peer["rssi_fresh"]:
+                    signal_ready = False
+
+                last_seen_ms = peer.get("last_seen_ms")
+                last_seen_age_ms = (
+                    now_ms - last_seen_ms
+                    if isinstance(last_seen_ms, (int, float))
+                    else None
+                )
+                peer["last_seen_age_ms"] = last_seen_age_ms
+                peer["recent_direct"] = (
+                    peer.get("status") == "direct"
+                    and last_seen_age_ms is not None
+                    and -5000 <= last_seen_age_ms <= rssi_max_age_ms
+                )
+                peer["link_ready"] = peer["rssi_fresh"] or peer["recent_direct"]
+
+        adjacency = {node_id: set() for node_id in selected_node_ids}
+        connected_edges = set()
+        for port in ports:
+            device = port_to_device.get(port, str(port))
+            peers = peers_by_device.get(device, [])
+            local_node_id = node_ids_by_port.get(port)
+            if local_node_id not in adjacency:
+                continue
+            for peer in peers:
+                remote_node_id = peer.get("id")
+                if not peer.get("link_ready") or remote_node_id not in adjacency:
+                    continue
+                adjacency[local_node_id].add(remote_node_id)
+                adjacency[remote_node_id].add(local_node_id)
+                connected_edges.add(tuple(sorted((local_node_id, remote_node_id))))
+
+        remaining = set(selected_node_ids)
+        component_count = 0
+        while remaining:
+            component_count += 1
+            pending = [remaining.pop()]
+            while pending:
+                current = pending.pop()
+                newly_reached = adjacency[current] & remaining
+                remaining.difference_update(newly_reached)
+                pending.extend(newly_reached)
+
+        ready = bool(selected_node_ids) and component_count == 1
+        latest = {
+            "ready": ready,
+            "elapsed_s": time.monotonic() - started_at,
+            "timeout_s": timeout_s,
+            "rssi_max_age_s": rssi_max_age_s,
+            "expected_peers_by_device": expected_by_device,
+            "visible_peers_by_device": peers_by_device,
+            "all_selected_peers_visible": visible_ready,
+            "all_peer_signals_fresh": signal_ready,
+            "connected_component_count": component_count,
+            "connected_edges": [list(edge) for edge in sorted(connected_edges)],
+        }
+        error_snapshot = scanner_errors() if scanner_errors else []
+        if ready:
+            latest["reason"] = "selected_nodes_form_connected_mesh"
+            return latest
+        if error_snapshot:
+            latest["reason"] = "scanner_error"
+            latest["scanner_errors"] = error_snapshot
+            return latest
+
+        signature = json.dumps(peers_by_device, sort_keys=True)
+        if signature != last_signature:
+            print(
+                "[MESH_PEER_PREFLIGHT] "
+                + json.dumps(latest, sort_keys=True)
+            )
+            last_signature = signature
+        if time.monotonic() >= deadline:
+            latest["reason"] = "mesh_connectivity_timeout"
+            return latest
+        time.sleep(poll_interval_s)
 
 
 def request(port, path, method='GET', body=None, timeout=30, error_report=None):
@@ -502,8 +650,30 @@ def check_devices(
 
     reset_results = {}
     if scans_paused:
-        print(f"{Colors.OKCYAN}Resetting GATT servers while scans are paused...{Colors.ENDC}")
-        reset_results = post_all("/reset_ble", timeout=20)
+        print(
+            f"{Colors.OKCYAN}Resetting GATT servers one phone at a time "
+            f"while scans are paused...{Colors.ENDC}"
+        )
+        # Concurrent GATT-server restarts can leave Android's shared Bluetooth
+        # stack with neither peer discoverable. Reset each selected phone in
+        # turn, giving the advertiser a moment to settle before restarting the
+        # next server.
+        for index, port in enumerate(ready_ports):
+            error_report = {}
+            response = request(
+                port,
+                "/reset_ble",
+                method="POST",
+                body={},
+                timeout=20,
+                error_report=error_report,
+            )
+            reset_results[port] = {
+                "response": response,
+                "error": error_report.get("error"),
+            }
+            if status_of(reset_results[port]) == "ble_reset" and index + 1 < len(ready_ports):
+                time.sleep(1.0)
         for port in ready_ports:
             outcome = reset_results.get(port, {})
             response = outcome.get("response")
@@ -622,27 +792,71 @@ def logcat_worker(device_id, stop_event):
             except (TypeError, ValueError):
                 mono_ms = None
             try:
+                wall_ms = int(data.get('wall_ms', ''))
+            except (TypeError, ValueError):
+                wall_ms = None
+            try:
                 rssi = int(data['rssi']) if 'rssi' in data else None
             except (TypeError, ValueError):
                 rssi = None
+            host_observed_at = time.monotonic()
+            message_ids = [
+                message_id
+                for message_id in data.get('bench_message_ids', '').split(',')
+                if message_id
+            ]
+            event = {
+                'device': device_id,
+                'event': data.get('event', 'unknown'),
+                'target_mac': data.get('target_mac', ''),
+                'attempt_id': data.get('attempt_id', ''),
+                'connection_id': data.get('connection_id', ''),
+                'mono_ms': mono_ms,
+                'wall_ms': wall_ms,
+                'host_observed_at': host_observed_at,
+                'rssi': rssi,
+                'fields': data,
+            }
             with telemetry.lock:
-                telemetry.ble_trace_events.append({
-                    'device': device_id,
-                    'event': data.get('event', 'unknown'),
-                    'target_mac': data.get('target_mac', ''),
-                    'attempt_id': data.get('attempt_id', ''),
-                    'connection_id': data.get('connection_id', ''),
-                    'mono_ms': mono_ms,
-                    'host_observed_at': time.monotonic(),
-                    'rssi': rssi,
-                    'fields': data,
-                })
+                telemetry.ble_trace_events.append(event)
+                if message_ids:
+                    telemetry.message_trace_events.append({
+                        **event,
+                        'source': 'ble',
+                        'message_ids': message_ids,
+                        'timestamp_ms': wall_ms,
+                    })
             continue
 
         android_log_match = ANDROID_LOG_REGEX.match(line.strip())
         if android_log_match:
             priority, tag, message = android_log_match.groups()
             tag = tag.strip()
+            if "[ADV]" in message:
+                event = {
+                    "device": device_id,
+                    "host_observed_at": time.monotonic(),
+                    "priority": priority,
+                    "tag": tag,
+                    "message": message.strip(),
+                    "raw_line": line.strip(),
+                }
+                with telemetry.lock:
+                    telemetry.advertiser_logs.append(event)
+            if "Scanner hardware error:" in message or "SCAN_FAILED_APPLICATION_REGISTRATION_FAILED" in message:
+                scanner_error = {
+                    "device": device_id,
+                    "host_observed_at": time.monotonic(),
+                    "priority": priority,
+                    "tag": tag,
+                    "message": message.strip(),
+                }
+                with telemetry.lock:
+                    telemetry.scanner_errors.append(scanner_error)
+                print(
+                    f"[{device_id}] [SCANNER_ERROR] "
+                    f"{priority}/{tag}: {message.strip()}"
+                )
             if tag in ANDROID_BLUETOOTH_LOG_TAGS:
                 event = {
                     "device": device_id,
@@ -717,8 +931,22 @@ def logcat_worker(device_id, stop_event):
             t = int(data.get('TIMESTAMP', 0))
             mac = data.get('TARGET_MAC', '')
             msg_id = data.get('MSG_ID', '')
+            host_observed_at = time.monotonic()
             
             with telemetry.lock:
+                if msg_id:
+                    telemetry.message_trace_events.append({
+                        'source': 'app',
+                        'device': device_id,
+                        'event': event or 'unknown',
+                        'msg_id': msg_id,
+                        'timestamp_ms': t or None,
+                        'host_observed_at': host_observed_at,
+                        'target_mac': mac,
+                        'attempt_id': data.get('ATTEMPT_ID', ''),
+                        'connection_id': data.get('CONNECTION_ID', ''),
+                        'fields': data,
+                    })
                 if event == 'CREATED' and msg_id:
                     telemetry.created[msg_id] = {'device': device_id, 't': t}
                 elif event == 'SCAN_HIT' and mac:
@@ -1130,33 +1358,6 @@ def run_benchmark(
         t = threading.Thread(target=logcat_worker, args=(d, stop_event), daemon=True)
         t.start()
         threads.append(t)
-        
-    time.sleep(2)
-
-    expected_merges_per_msg = len(infos) - 1
-    all_ports = sorted(infos.keys())
-    port_to_device = {port: forward_map.get(port, f'port:{port}') for port in all_ports}
-    device_to_port = {v: k for k, v in port_to_device.items()}
-
-    if single_sender and sender_port is None:
-        sender_port = sorted(infos.keys())[0]
-    if sender_device is not None:
-        sender_port = device_to_port[sender_device]
-    if sender_port is not None:
-        if sender_port not in infos:
-            print(
-                f"{Colors.FAIL}Sender port {sender_port} is not among live devices "
-                f"{sorted(infos.keys())}.{Colors.ENDC}"
-            )
-            stop_event.set()
-            return False
-        send_ports = [sender_port]
-        print(
-            f"{Colors.OKCYAN}Single-sender mode: all messages from port "
-            f"{sender_port} ({port_to_device.get(sender_port, '?')}){Colors.ENDC}"
-        )
-    else:
-        send_ports = all_ports
 
     live_snoop_captures = []
     if hci_diagnostic:
@@ -1185,6 +1386,83 @@ def run_benchmark(
                 f"[BLUETOOTH_SOCKET_CAPTURE] {state['serial']}: "
                 f"streaming to {capture.output_path}"
             )
+
+    def stop_live_snoop_captures():
+        results = []
+        for capture in live_snoop_captures:
+            capture_result = capture.stop()
+            results.append(capture_result)
+            print(
+                f"[BLUETOOTH_SOCKET_CAPTURE] {capture_result['serial']}: "
+                f"{capture_result['packets']} packets, "
+                f"{capture_result['bytes']} bytes, error={capture_result['error']}"
+            )
+        return results
+
+    time.sleep(2)
+
+    expected_merges_per_msg = len(infos) - 1
+    all_ports = sorted(infos.keys())
+    port_to_device = {port: forward_map.get(port, f'port:{port}') for port in all_ports}
+    device_to_port = {v: k for k, v in port_to_device.items()}
+
+    def scanner_error_snapshot():
+        with telemetry.lock:
+            return list(telemetry.scanner_errors)
+
+    peer_preflight = wait_for_mesh_peer_visibility(
+        request,
+        all_ports,
+        port_to_device,
+        infos,
+        timeout_s=20.0,
+        scanner_errors=scanner_error_snapshot,
+    )
+    preflight_record["mesh_peer_visibility"] = peer_preflight
+    preflight_record["ready"] = bool(preflight_record["ready"] and peer_preflight["ready"])
+    print("[MESH_PEER_PREFLIGHT_RESULT] " + json.dumps(peer_preflight, sort_keys=True))
+    if not peer_preflight["ready"]:
+        print(
+            f"{Colors.FAIL}Preflight failed: selected phones did not form a "
+            "connected mesh after BLE reset; messages were not sent. "
+            f"Reason={peer_preflight.get('reason')}.{Colors.ENDC}"
+        )
+        for error in peer_preflight.get("scanner_errors", []):
+            print(
+                f"  Scanner error on {error['device']}: {error['message']}"
+            )
+        failed_preflight_captures = stop_live_snoop_captures()
+        if failed_preflight_captures:
+            preflight_record["bluetooth_socket_captures"] = failed_preflight_captures
+            print(
+                "[BLUETOOTH_SOCKET_CAPTURE_RESULTS] "
+                + json.dumps(failed_preflight_captures, sort_keys=True)
+            )
+        stop_event.set()
+        for thread in threads:
+            thread.join(timeout=2)
+        return False
+
+    if single_sender and sender_port is None:
+        sender_port = sorted(infos.keys())[0]
+    if sender_device is not None:
+        sender_port = device_to_port[sender_device]
+    if sender_port is not None:
+        if sender_port not in infos:
+            print(
+                f"{Colors.FAIL}Sender port {sender_port} is not among live devices "
+                f"{sorted(infos.keys())}.{Colors.ENDC}"
+            )
+            stop_live_snoop_captures()
+            stop_event.set()
+            return False
+        send_ports = [sender_port]
+        print(
+            f"{Colors.OKCYAN}Single-sender mode: all messages from port "
+            f"{sender_port} ({port_to_device.get(sender_port, '?')}){Colors.ENDC}"
+        )
+    else:
+        send_ports = all_ports
 
     maybe_clear_chat_messages(sorted(infos.keys()), preserve_messages)
 
@@ -1306,6 +1584,7 @@ def run_benchmark(
         with sent_messages_lock:
             sent_messages.append({
                 'tag': tag,
+                'message_id': res.get('msgId') if isinstance(res, dict) else None,
                 'sender_port': sender_port_i,
                 'sender_device': sender_device,
                 'sent_at': send_started_at,
@@ -1415,15 +1694,7 @@ def run_benchmark(
     time.sleep(1)
     runtime_sampler_thread.join(timeout=14)
 
-    live_snoop_capture_results = []
-    for capture in live_snoop_captures:
-        capture_result = capture.stop()
-        live_snoop_capture_results.append(capture_result)
-        print(
-            f"[BLUETOOTH_SOCKET_CAPTURE] {capture_result['serial']}: "
-            f"{capture_result['packets']} packets, {capture_result['bytes']} bytes, "
-            f"error={capture_result['error']}"
-        )
+    live_snoop_capture_results = stop_live_snoop_captures()
 
     print(f"\n{Colors.HEADER}{'='*40}")
     print(f"          BENCHMARK REPORT")
@@ -1574,6 +1845,21 @@ def run_benchmark(
                 )
             for error in capture["errors"]:
                 print(f"  Capture error: {error}")
+    tracked_message_ids = {
+        item.get('message_id')
+        for item in sent_messages
+        if item.get('message_id')
+    }
+    with telemetry.lock:
+        message_trace_events = [
+            event
+            for event in telemetry.message_trace_events
+            if event.get('msg_id') in tracked_message_ids
+            or tracked_message_ids.intersection(event.get('message_ids', []))
+        ]
+        ble_trace_events = list(telemetry.ble_trace_events)
+        android_bluetooth_logs = list(telemetry.android_bluetooth_logs)
+        advertiser_logs = list(telemetry.advertiser_logs)
     return {
         "success": fully_propagated >= num_messages,
         "profile": profile,
@@ -1589,6 +1875,7 @@ def run_benchmark(
         "sending_finished_at": sending_finished_at,
         "all_devices": sorted(port_to_device.values()),
         "preflight": preflight_record,
+        "peer_preflight": peer_preflight,
         "device_metadata": device_metadata,
         "device_runtime_state": {
             "start": device_runtime_state_start,
@@ -1604,8 +1891,11 @@ def run_benchmark(
         "connection_rejections": len(telemetry.connection_rejected),
         "penalty_entries": len(telemetry.penalty_box),
         "send_failures": sum(not item["send_ok"] for item in sent_messages),
-        "ble_trace_events": list(telemetry.ble_trace_events),
-        "android_bluetooth_logs": list(telemetry.android_bluetooth_logs),
+        "ble_trace_events": ble_trace_events,
+        "message_trace_events": message_trace_events,
+        "scanner_errors": scanner_error_snapshot(),
+        "android_bluetooth_logs": android_bluetooth_logs,
+        "advertiser_logs": advertiser_logs,
     }
 
 if __name__ == '__main__':
@@ -1676,7 +1966,7 @@ if __name__ == '__main__':
         action="store_true",
         help=(
             "Require full HCI snoop logging on every selected phone and capture "
-            "btsnoop artifacts after the run."
+            "btsnoop artifacts during preflight and the run."
         ),
     )
     args = parser.parse_args()

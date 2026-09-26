@@ -4,6 +4,23 @@ import 'package:sqlite_crdt/sqlite_crdt.dart';
 class MeshCatchup {
   static const int pageRows = 25;
 
+  /// Merge two observations of a peer's vector without moving a frontier back.
+  /// Offers can be created before an acknowledged catch-up page and arrive
+  /// afterward, so replacing the cache with that older offer causes page replay.
+  static Map<String, String> mergeVectors(
+    Map<String, String> known,
+    Map<String, String> incoming,
+  ) {
+    final merged = Map<String, String>.from(known);
+    for (final entry in incoming.entries) {
+      final previous = merged[entry.key];
+      if (previous == null || entry.value.compareTo(previous) > 0) {
+        merged[entry.key] = entry.value;
+      }
+    }
+    return merged;
+  }
+
   static int rowCount(Map<String, dynamic> changeset) {
     var n = 0;
     for (final v in changeset.values) {
@@ -76,16 +93,18 @@ class MeshLeasePolicy {
     final pages = ((backlogRows < 1 ? 1 : backlogRows) / MeshCatchup.pageRows)
         .ceil();
 
-    // A wider mesh needs shorter turns. A deeper delta earns more pages, but
-    // never beyond its fair share of a 45-second mesh rotation. Recent write
-    // pressure extends the useful turn before that backlog has accumulated.
+    // A wider mesh needs shorter turns. A two-node mesh gets a longer base
+    // lease so its single peer can finish a push across brief GATT churn. A
+    // deeper delta earns more pages, but never beyond its fair share of a
+    // 45-second mesh rotation. Recent write pressure extends the useful turn.
     final fairnessCapMs = (45000 / nodes).round().clamp(6000, 30000).toInt();
+    final baseLeaseMs = nodes == 2 ? 12000 : 6000;
     final loadBonusMs = (messagesPerSecond.clamp(0, 20) * 2500).round().clamp(
       0,
       6000,
     );
-    final desiredMs = (6000 + (pages * 3000) + loadBonusMs)
-        .clamp(6000, fairnessCapMs)
+    final desiredMs = (baseLeaseMs + (pages * 3000) + loadBonusMs)
+        .clamp(baseLeaseMs, fairnessCapMs)
         .toInt();
     final idleMs = (desiredMs ~/ 3).clamp(3200, 4500).toInt();
 

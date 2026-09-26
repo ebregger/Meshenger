@@ -22,10 +22,7 @@ void main() {
 
     test('takeOldest chooses one globally ordered page across tables', () {
       final delta = <String, dynamic>{
-        'messages': [
-          _row('m1', 'a', '001'),
-          _row('m4', 'b', '004'),
-        ],
+        'messages': [_row('m1', 'a', '001'), _row('m4', 'b', '004')],
         'users': [_row('u2', 'b', '002')],
         'bitmap_chunks': [_row('b3', 'a', '003')],
         'envelope_metadata': {'sender_id': 'ignored'},
@@ -37,14 +34,12 @@ void main() {
       ].cast<Map>();
 
       expect(MeshCatchup.rowCount(page), 3);
-      expect(
-        shipped.map((row) => row['id']).toSet(),
-        {'m1', 'u2', 'b3'},
-      );
-      expect(
-        shipped.map((row) => row['hlc']).toList()..sort(),
-        ['001', '002', '003'],
-      );
+      expect(shipped.map((row) => row['id']).toSet(), {'m1', 'u2', 'b3'});
+      expect(shipped.map((row) => row['hlc']).toList()..sort(), [
+        '001',
+        '002',
+        '003',
+      ]);
       expect(page.containsKey('envelope_metadata'), isFalse);
     });
 
@@ -75,50 +70,67 @@ void main() {
       expect(prior, {'a': '002', 'b': '003'});
     });
 
-    test('repeated pages and vector advancement ship every row exactly once', () {
-      final full = <String, dynamic>{
-        'messages': [
-          _row('a1', 'a', '001'),
-          _row('a2', 'a', '003'),
-          _row('b1', 'b', '002'),
-          _row('b2', 'b', '004'),
-        ],
-        'users': [_row('a3', 'a', '005')],
-        'bitmap_chunks': [_row('b3', 'b', '006')],
+    test('mergeVectors preserves newer frontiers from acknowledged pages', () {
+      final known = <String, String>{'a': '2026-09-26T10:00:02Z', 'b': '002'};
+      final staleOffer = <String, String>{
+        'a': '2026-09-26T10:00:01Z',
+        'c': '003',
       };
-      final sent = <String>[];
-      var vector = <String, String>{};
 
-      for (var turn = 0; turn < 10; turn++) {
-        final remaining = <String, dynamic>{};
-        for (final entry in full.entries) {
-          final rows = (entry.value as List).where((row) {
-            final owner = row['node_id'] as String;
-            final hlc = row['hlc'] as String;
-            final frontier = vector[owner];
-            return frontier == null || hlc.compareTo(frontier) > 0;
-          }).toList();
-          if (rows.isNotEmpty) remaining[entry.key] = rows;
-        }
-        if (remaining.isEmpty) break;
-
-        final page = MeshCatchup.takeOldest(remaining, maxRows: 2);
-        expect(MeshCatchup.rowCount(page), lessThanOrEqualTo(2));
-        for (final rows in page.values.whereType<List>()) {
-          for (final row in rows) {
-            sent.add(row['id'] as String);
-          }
-        }
-        vector = MeshCatchup.mergeVectorFromChangeset(vector, page);
-      }
-
-      final expected = [
-        for (final rows in full.values.whereType<List>())
-          for (final row in rows)
-            row['id'] as String,
-      ];
-      expect(sent.length, expected.length);
-      expect(sent.toSet(), expected.toSet());
+      expect(MeshCatchup.mergeVectors(known, staleOffer), {
+        'a': '2026-09-26T10:00:02Z',
+        'b': '002',
+        'c': '003',
+      });
+      expect(known['a'], '2026-09-26T10:00:02Z');
     });
+
+    test(
+      'repeated pages and vector advancement ship every row exactly once',
+      () {
+        final full = <String, dynamic>{
+          'messages': [
+            _row('a1', 'a', '001'),
+            _row('a2', 'a', '003'),
+            _row('b1', 'b', '002'),
+            _row('b2', 'b', '004'),
+          ],
+          'users': [_row('a3', 'a', '005')],
+          'bitmap_chunks': [_row('b3', 'b', '006')],
+        };
+        final sent = <String>[];
+        var vector = <String, String>{};
+
+        for (var turn = 0; turn < 10; turn++) {
+          final remaining = <String, dynamic>{};
+          for (final entry in full.entries) {
+            final rows = (entry.value as List).where((row) {
+              final owner = row['node_id'] as String;
+              final hlc = row['hlc'] as String;
+              final frontier = vector[owner];
+              return frontier == null || hlc.compareTo(frontier) > 0;
+            }).toList();
+            if (rows.isNotEmpty) remaining[entry.key] = rows;
+          }
+          if (remaining.isEmpty) break;
+
+          final page = MeshCatchup.takeOldest(remaining, maxRows: 2);
+          expect(MeshCatchup.rowCount(page), lessThanOrEqualTo(2));
+          for (final rows in page.values.whereType<List>()) {
+            for (final row in rows) {
+              sent.add(row['id'] as String);
+            }
+          }
+          vector = MeshCatchup.mergeVectorFromChangeset(vector, page);
+        }
+
+        final expected = [
+          for (final rows in full.values.whereType<List>())
+            for (final row in rows) row['id'] as String,
+        ];
+        expect(sent.length, expected.length);
+        expect(sent.toSet(), expected.toSet());
+      },
+    );
   });
 }

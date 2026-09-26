@@ -115,6 +115,7 @@ The screen, lock, idle, and Bluetooth state checks remain part of each run. The 
 
 - Keep BLE scanning and connections active more reliably in the background with an Android foreground service.
 - Show local notifications for incoming messages.
+- Expand fake BLE peer coverage through discovery, sync, and notification paths without physical Bluetooth hardware.
 - Decide and implement a stronger privacy model, including encryption if private conversations are needed.
 - Add chat history clearing and retention controls.
 - Support direct one-to-one conversations.

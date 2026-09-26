@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/ble_network_provider.dart';
+import '../widgets/incoming_message_notification_listener.dart';
 import 'app_bootstrap.dart';
 import 'app_themes.dart';
 
@@ -19,7 +20,7 @@ class MeshengerApp extends ConsumerWidget {
       themeMode: ThemeMode.system,
       theme: themeDataFromColorScheme(kLightColorScheme),
       darkTheme: themeDataFromColorScheme(kDarkColorScheme),
-      home: const AppBootstrap(),
+      home: const IncomingMessageNotificationListener(child: AppBootstrap()),
     );
   }
 }

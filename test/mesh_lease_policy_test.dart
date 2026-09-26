@@ -3,14 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('MeshLeasePolicy', () {
-    test('keeps a quiet two-node turn short', () {
+    test('allows a quiet two-node turn to finish across brief GATT churn', () {
       final lease = MeshLeasePolicy.calculate(
         meshNodeCount: 2,
         backlogRows: 25,
       );
 
-      expect(lease.maximum, const Duration(seconds: 9));
-      expect(lease.idle, const Duration(milliseconds: 3200));
+      expect(lease.maximum, const Duration(seconds: 15));
+      expect(lease.idle, const Duration(milliseconds: 4500));
     });
 
     test('extends a busy turn from write throughput', () {

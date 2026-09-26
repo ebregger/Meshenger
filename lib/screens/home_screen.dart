@@ -10,6 +10,7 @@ import '../providers/chat_provider.dart';
 import '../providers/identity_provider.dart';
 import '../providers/node_profiles_provider.dart';
 import '../screens/config_screen.dart';
+import '../services/local_message_notification_service.dart';
 import '../services/ui_debug_snapshot.dart';
 import '../widgets/chat/chat_bubble.dart';
 import '../widgets/chat/chat_input_dock.dart';
@@ -33,6 +34,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void initState() {
     super.initState();
     _chatScroll.addListener(_scrollListener);
+    messageNotificationTapEvents.addListener(_openMessagesAfterNotificationTap);
+  }
+
+  void _openMessagesAfterNotificationTap() {
+    if (!mounted || _tabIndex == 0) return;
+    setState(() => _tabIndex = 0);
   }
 
   void _scrollListener() {
@@ -49,6 +56,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   void dispose() {
+    messageNotificationTapEvents.removeListener(
+      _openMessagesAfterNotificationTap,
+    );
     _chatScroll.removeListener(_scrollListener);
     _chatScroll.dispose();
     super.dispose();

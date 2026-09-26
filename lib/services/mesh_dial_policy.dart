@@ -1,8 +1,79 @@
+import 'dart:typed_data';
+
 /// Chooses one side of a BLE peer pair to initiate a GATT connection.
 ///
 /// A single connection carries deltas in both directions. Electing one dialer
 /// avoids crossed connects when both devices notice the same divergence.
 class MeshDialPolicy {
+  static const int meshDialCapabilityMarker = 0xD1;
+
+  /// Reads the optional capability trailer after the fixed hash and node
+  /// prefix in an FFE0 payload. Older advertisements have no trailer.
+  static bool? extendedConnectableFromMeshPayload(Uint8List payload) {
+    if (payload.length < 14 || payload[12] != meshDialCapabilityMarker) {
+      return null;
+    }
+    final capabilityFlags = payload[13];
+    if ((capabilityFlags & 1) == 0) return null;
+    return (capabilityFlags & (1 << 1)) != 0;
+  }
+
+  /// Select a reconnect target after a held GATT write fails.
+  ///
+  /// A held link can fail while its peer is still advertising the same RPA.
+  /// Accept that address only after a newer scan observation than the one
+  /// used when the failed attempt started; otherwise require an alternate
+  /// address so an actually stale RPA is not retried.
+  static String? freshHeldLinkRetryTarget({
+    required String failedMac,
+    required String? scannedMac,
+    required DateTime? scanSeenAt,
+    required DateTime? scanSeenAtBeforeAttempt,
+  }) {
+    if (scannedMac == null || scannedMac.isEmpty || scanSeenAt == null) {
+      return null;
+    }
+    if (scanSeenAtBeforeAttempt != null &&
+        !scanSeenAt.isAfter(scanSeenAtBeforeAttempt)) {
+      return null;
+    }
+    if (scannedMac == failedMac && scanSeenAtBeforeAttempt == null) {
+      return null;
+    }
+    return scannedMac;
+  }
+
+  /// Selects scan-fresh peers this node may serve, plus a peer whose outbound
+  /// GATT link is already held. An active connection remains a valid route
+  /// after its advertising address ages out of the scan-fresh window.
+  static List<String> urgentCandidates({
+    required String localNodeId,
+    required Iterable<String> freshPeerIds,
+    String? heldClientPeerId,
+    bool? localExtendedConnectable,
+    Map<String, bool> remoteExtendedConnectableByPeer = const {},
+    bool Function(String peerId)? shouldInitiatePeer,
+  }) {
+    final candidates = <String>[...freshPeerIds];
+    if (heldClientPeerId != null && !candidates.contains(heldClientPeerId)) {
+      candidates.add(heldClientPeerId);
+    }
+    return candidates
+        .where(
+          (peerId) =>
+              peerId == heldClientPeerId ||
+              (shouldInitiatePeer?.call(peerId) ??
+                  shouldInitiate(
+                    localNodeId: localNodeId,
+                    remoteNodeId: peerId,
+                    localExtendedConnectable: localExtendedConnectable,
+                    remoteExtendedConnectable:
+                        remoteExtendedConnectableByPeer[peerId],
+                  )),
+        )
+        .toList(growable: false);
+  }
+
   /// Elects one initiator when only a 16-bit database-hash fragment is
   /// available. Equal or missing fragments are ambiguous, so callers wait for
   /// the full hash and node-ID prefix.
@@ -21,7 +92,22 @@ class MeshDialPolicy {
     String? remoteNodeIdPrefix,
     int? localHash,
     int? remoteHash,
+    bool? localExtendedConnectable,
+    bool? remoteExtendedConnectable,
   }) {
+    // If both peers report this capability and only one uses connectable
+    // extended advertising, let that side initiate. The opposite direction
+    // has repeatedly timed out on Android 9 -> Android 15 despite strong RSSI.
+    if (remoteExtendedConnectable == true && localExtendedConnectable != true) {
+      // If local capability is temporarily unavailable, yield to a peer that
+      // explicitly reports extended connectable advertising.
+      return false;
+    }
+    if (localExtendedConnectable == true &&
+        remoteExtendedConnectable == false) {
+      return true;
+    }
+
     if (remoteNodeId != null && remoteNodeId.isNotEmpty) {
       if (remoteNodeId == localNodeId) return false;
       return localNodeId.compareTo(remoteNodeId) < 0;

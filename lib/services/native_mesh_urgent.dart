@@ -15,14 +15,6 @@ extension NativeMeshUrgent on NativeMeshService {
     }
   }
 
-  Future<void> setUrgentHold(bool active) async {
-    try {
-      await _ch.invokeMethod<void>('set_urgent_hold', {'active': active});
-    } on PlatformException catch (e) {
-      debugPrint('🔥 Native set_urgent_hold failed: ${e.message}');
-    }
-  }
-
   Future<void> setHeldLinkLease({
     required Duration idle,
     required Duration maximum,

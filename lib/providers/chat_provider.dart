@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/generated/mesh_data.pb.dart';
 import '../models/text_message_with_author.dart';
+import '../services/benchmark_trace.dart';
 import '../services/local_write_hook.dart';
 import 'database_provider.dart';
 import 'identity_provider.dart';
@@ -26,29 +27,36 @@ class ChatActions extends StateNotifier<int> {
 
   final Ref _ref;
 
-  Future<void> sendMessage(String text) async {
+  Future<String?> sendMessage(String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
+    if (trimmed.isEmpty) return null;
 
-    final nodeId =
-        await _ref.read(identityServiceProvider).getOrCreateMyNodeId();
+    final nodeId = await _ref
+        .read(identityServiceProvider)
+        .getOrCreateMyNodeId();
     final db = await _ref.read(databaseProvider.future);
 
+    final messageId = const Uuid().v4();
     final message = TextMessage(
-      msgId: const Uuid().v4(),
+      msgId: messageId,
       originNodeId: nodeId,
       textContent: trimmed,
       timestamp: Int64(DateTime.now().millisecondsSinceEpoch),
     );
     debugPrint('📤 SAVING LOCAL MESSAGE: ${message.msgId}');
-    debugPrint('[BENCHMARK] MSG_ID:${message.msgId} | EVENT:CREATED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}');
+    traceBenchmarkMessage(message.msgId, 'CREATED');
     await db.upsertTextMessage(message);
+    traceBenchmarkMessage(message.msgId, 'STORED');
     // Push to known BLE neighbors immediately — don't wait for scan/ADV.
-    debugPrint('🚀 [CHAT] local write done — invoking sync hook '
-        '(hook=${onLocalCrdtWrite != null})');
-    onLocalCrdtWrite?.call();
+    debugPrint(
+      '🚀 [CHAT] local write done — invoking sync hook '
+      '(hook=${onLocalCrdtWrite != null})',
+    );
+    onLocalCrdtWrite?.call(message.msgId);
+    return message.msgId;
   }
 }
 
-final chatActionsProvider =
-    StateNotifierProvider<ChatActions, int>((ref) => ChatActions(ref));
+final chatActionsProvider = StateNotifierProvider<ChatActions, int>(
+  (ref) => ChatActions(ref),
+);

@@ -1,3 +1,4 @@
+import time
 import unittest
 from unittest.mock import patch
 
@@ -41,6 +42,51 @@ class BenchmarkProfileSettingsTests(unittest.TestCase):
         ):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 stress_test.resolve_profile_settings(*args)
+
+
+class MeshPeerPreflightTests(unittest.TestCase):
+    def test_two_selected_phones_form_mesh_when_each_sees_the_other_recently(self):
+        node_ids_by_port = {18081: "node-a", 18082: "node-b"}
+        port_to_device = {18081: "pixel-3", 18082: "pixel-9"}
+        now_ms = int(time.time() * 1000)
+
+        def requester(port, _path):
+            peer_id = node_ids_by_port[18082 if port == 18081 else 18081]
+            return {
+                "peers": [
+                    {
+                        "id": peer_id,
+                        "status": "direct",
+                        "lastSeenMs": now_ms,
+                        "rssiDbm": -50,
+                        "rssiSeenMs": now_ms,
+                    }
+                ]
+            }
+
+        result = stress_test.wait_for_mesh_peer_visibility(
+            requester,
+            [18081, 18082],
+            port_to_device,
+            node_ids_by_port,
+        )
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["reason"], "selected_nodes_form_connected_mesh")
+        self.assertEqual(result["connected_component_count"], 1)
+
+    def test_reports_scanner_error_before_starting_message_run(self):
+        result = stress_test.wait_for_mesh_peer_visibility(
+            lambda _port, _path: {"peers": []},
+            [18081, 18082],
+            {18081: "pixel-3", 18082: "pixel-9"},
+            {18081: "node-a", 18082: "node-b"},
+            scanner_errors=lambda: [{"device": "pixel-3", "message": "scanner failed"}],
+        )
+
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["reason"], "scanner_error")
+        self.assertEqual(result["scanner_errors"][0]["device"], "pixel-3")
 
     def test_rejects_nonfinite_message_timeout_before_device_access(self):
         for timeout in (float("nan"), float("inf")):

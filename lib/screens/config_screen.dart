@@ -8,6 +8,7 @@ import '../providers/database_provider.dart';
 import '../providers/identity_provider.dart';
 import '../widgets/config/diagnostic_tile.dart';
 import '../widgets/config/diagnostics_action_button.dart';
+import '../widgets/config/message_notification_settings.dart';
 
 final localDisplayNameProvider = FutureProvider<String?>((ref) async {
   final myId = await ref.watch(myNodeIdProvider.future);
@@ -97,6 +98,13 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
             },
           ),
           const SizedBox(height: 32),
+          Text(
+            'Message Notifications',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 10),
+          const MessageNotificationSettings(),
+          const SizedBox(height: 24),
           Text(
             'Connectivity Diagnostics',
             style: Theme.of(context).textTheme.titleMedium,

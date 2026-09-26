@@ -123,6 +123,225 @@ def latency_stage_stats(sent_messages, completed_at, receipt_windows):
     }
 
 
+def message_trace_events_for_id(message_id, message_events, ble_trace_events):
+    """Join message breadcrumbs to only the GATT transfer that carried them."""
+    if not message_id:
+        return []
+
+    selected = []
+    selected_keys = set()
+
+    def add(event):
+        key = (
+            event.get("device", ""),
+            event.get("source", "ble"),
+            event.get("event", ""),
+            event.get("timestamp_ms", event.get("wall_ms")),
+            event.get("mono_ms"),
+            event.get("attempt_id", ""),
+            event.get("connection_id", ""),
+            event.get("host_observed_at"),
+        )
+        if key in selected_keys:
+            return
+        selected_keys.add(key)
+        selected.append(event)
+
+    for event in message_events:
+        if event.get("msg_id") == message_id or message_id in event.get("message_ids", []):
+            add(event)
+
+    raw_by_device = {}
+    for event in ble_trace_events:
+        raw_by_device.setdefault(event.get("device", ""), []).append(event)
+    for rows in raw_by_device.values():
+        rows.sort(key=lambda event: _trace_phone_timestamp(event) or 0)
+
+    # A client attempt can carry several messages in one offer. Its native trace
+    # is bounded by that attempt's first completion, before a held link is reused.
+    for event in list(selected):
+        if event.get("event", "").lower() != "client_attempt_started":
+            continue
+        device = event.get("device", "")
+        attempt_id = event.get("attempt_id") or _trace_field(event, "attempt_id")
+        start_ms = _trace_phone_timestamp(event)
+        if not attempt_id:
+            continue
+        rows = [
+            candidate
+            for candidate in raw_by_device.get(device, [])
+            if candidate.get("attempt_id") == attempt_id
+            and (start_ms is None or (_trace_phone_timestamp(candidate) or 0) >= start_ms)
+        ]
+        for candidate in rows:
+            add(candidate)
+            if candidate.get("event", "").lower() in {
+                "client_attempt_complete",
+                "client_attempt_failed",
+            }:
+                break
+
+    # Include only notifications belonging to a message-tagged server reply,
+    # ending at that payload's SERVER_REPLY_COMPLETE on the same connection.
+    for event in list(selected):
+        if event.get("event", "").lower() != "server_reply_started":
+            continue
+        device = event.get("device", "")
+        connection_id = event.get("connection_id") or _trace_field(event, "connection_id")
+        start_ms = _trace_phone_timestamp(event)
+        if not connection_id:
+            continue
+        rows = [
+            candidate
+            for candidate in raw_by_device.get(device, [])
+            if candidate.get("connection_id") == connection_id
+            and (start_ms is None or (_trace_phone_timestamp(candidate) or 0) >= start_ms)
+        ]
+        reply_end_ms = None
+        for candidate in rows:
+            add(candidate)
+            if candidate.get("event", "").lower() == "server_reply_complete":
+                reply_end_ms = _trace_phone_timestamp(candidate)
+                break
+        if reply_end_ms is not None:
+            disconnect = next(
+                (
+                    candidate
+                    for candidate in rows
+                    if candidate.get("event", "").lower() == "server_disconnected"
+                    and (_trace_phone_timestamp(candidate) or 0) >= reply_end_ms
+                    and _trace_phone_timestamp(candidate) - reply_end_ms <= 15000
+                ),
+                None,
+            )
+            if disconnect is not None:
+                add(disconnect)
+
+    # Payload decode occurs just after its EOF callback. Link that app event to
+    # the immediately preceding native transfer boundary, without pulling in
+    # later notifications carried on the same held GATT link.
+    for event in list(selected):
+        if event.get("event", "").lower() != "payload_decoded":
+            continue
+        device = event.get("device", "")
+        event_ms = _trace_phone_timestamp(event)
+        attempt_id = event.get("attempt_id") or _trace_field(event, "attempt_id")
+        connection_id = event.get("connection_id") or _trace_field(event, "connection_id")
+        rows = raw_by_device.get(device, [])
+        if attempt_id:
+            eof_rows = [
+                row for row in rows
+                if row.get("attempt_id") == attempt_id
+                and row.get("event", "").lower() == "client_delta_eof_received"
+                and event_ms is not None
+                and (_trace_phone_timestamp(row) or 0) <= event_ms
+            ]
+            if eof_rows:
+                eof = eof_rows[-1]
+                eof_ms = _trace_phone_timestamp(eof)
+                previous_eofs = [
+                    row for row in rows
+                    if row.get("attempt_id") == attempt_id
+                    and row.get("event", "").lower() == "client_delta_eof_received"
+                    and eof_ms is not None
+                    and (_trace_phone_timestamp(row) or 0) < eof_ms
+                ]
+                previous_ms = _trace_phone_timestamp(previous_eofs[-1]) if previous_eofs else None
+                for row in rows:
+                    row_ms = _trace_phone_timestamp(row)
+                    if (
+                        row.get("attempt_id") == attempt_id
+                        and row.get("event", "").lower()
+                        in {"client_delta_chunk_received", "client_delta_eof_received"}
+                        and row_ms is not None
+                        and (previous_ms is None or row_ms > previous_ms)
+                        and row_ms <= eof_ms
+                    ):
+                        add(row)
+        elif connection_id:
+            eof_rows = [
+                row for row in rows
+                if row.get("connection_id") == connection_id
+                and row.get("event", "").lower() == "server_write_chunk"
+                and str(_trace_field(row, "eof")).lower() == "true"
+                and event_ms is not None
+                and (_trace_phone_timestamp(row) or 0) <= event_ms
+            ]
+            if eof_rows:
+                eof = eof_rows[-1]
+                eof_ms = _trace_phone_timestamp(eof)
+                previous_eofs = [
+                    row for row in rows
+                    if row.get("connection_id") == connection_id
+                    and row.get("event", "").lower() == "server_write_chunk"
+                    and str(_trace_field(row, "eof")).lower() == "true"
+                    and eof_ms is not None
+                    and (_trace_phone_timestamp(row) or 0) < eof_ms
+                ]
+                previous_ms = _trace_phone_timestamp(previous_eofs[-1]) if previous_eofs else None
+                for row in rows:
+                    row_ms = _trace_phone_timestamp(row)
+                    if (
+                        row.get("connection_id") == connection_id
+                        and row.get("event", "").lower() == "server_write_chunk"
+                        and row_ms is not None
+                        and (previous_ms is None or row_ms > previous_ms)
+                        and row_ms <= eof_ms
+                    ):
+                        add(row)
+
+    return sorted(
+        selected,
+        key=lambda event: (
+            event.get("device", ""),
+            event.get("timestamp_ms") or event.get("wall_ms") or 0,
+            event.get("host_observed_at") or 0,
+        ),
+    )
+
+
+def _trace_field(event, name):
+    fields = event.get("fields") or {}
+    return fields.get(name.lower(), fields.get(name.upper()))
+
+
+def _trace_phone_timestamp(event):
+    timestamp = event.get("timestamp_ms") or event.get("wall_ms")
+    if timestamp is not None:
+        return timestamp
+    fields = event.get("fields") or {}
+    for key in ("wall_ms", "WALL_MS", "TIMESTAMP"):
+        try:
+            return int(fields[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
+
+
+def _trace_event_detail(event):
+    fields = event.get("fields") or {}
+    detail_keys = (
+        "target_mac", "TARGET_MAC", "attempt_id", "ATTEMPT_ID",
+        "connection_id", "CONNECTION_ID", "payload_type", "PAYLOAD_TYPE",
+        "merge_path", "MERGE_PATH", "payload_bytes", "PAYLOAD_BYTES",
+        "bytes", "BYTES", "offset", "OFFSET", "status", "STATUS",
+        "wait_ms", "WAIT_MS", "chunk_size", "CHUNK_SIZE",
+        "connect_to_ready_ms", "CONNECT_TO_READY_MS", "reason", "REASON",
+    )
+    values = []
+    seen = set()
+    for key in detail_keys:
+        normalized = key.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        value = fields.get(normalized, fields.get(normalized.upper()))
+        if value in (None, ""):
+            continue
+        values.append(f"{normalized}={value}")
+    return ", ".join(values)
+
+
 def _mtu_attempt_summary(events):
     """Classify each request by the callback or terminal event in its trace."""
     terminal_names = {"client_attempt_failed", "client_disconnected"}
@@ -736,6 +955,71 @@ def summarize_run(result):
     confidence = mean_latency_confidence(values) if len(values) == len(sent) else None
     poll_interval_s = result.get("poll_interval_s", 2.0)
     delivered = status.get("propagated", 0)
+    per_message_latency = []
+    for message in sent:
+        tag = message["tag"]
+        completed_at_host = completed.get(tag)
+        sender = message.get("sender_device", "")
+        receipts = []
+        for (receipt_sender, receiver, receipt_tag), observed_at in result.get(
+            "receipt_at", {}
+        ).items():
+            if receipt_sender != sender or receipt_tag != tag:
+                continue
+            window = result.get("receipt_windows", {}).get(
+                (receipt_sender, receiver, receipt_tag)
+            )
+            receipts.append(
+                {
+                    "receiver": receiver,
+                    "host_observed_at": observed_at,
+                    "observation_window": window,
+                }
+            )
+        per_message_latency.append(
+            {
+                "tag": tag,
+                "message_id": message.get("message_id"),
+                "sender_device": sender,
+                "send_started_at_host_monotonic_s": message.get("sent_at"),
+                "send_api_completed_at_host_monotonic_s": message.get(
+                    "send_api_completed_at"
+                ),
+                "completed_at_host_monotonic_s": completed_at_host,
+                "end_to_end_s": (
+                    completed_at_host - message["sent_at"]
+                    if completed_at_host is not None
+                    else None
+                ),
+                "send_api_submit_s": (
+                    message["send_api_completed_at"] - message["sent_at"]
+                    if message.get("send_api_completed_at") is not None
+                    else None
+                ),
+                "receipts": receipts,
+            }
+        )
+    slow_message_traces = []
+    if values:
+        threshold = max(5.0, statistics.mean(values) + 3 * statistics.pstdev(values))
+        for message_latency in per_message_latency:
+            latency = message_latency.get("end_to_end_s")
+            message_id = message_latency.get("message_id")
+            if latency is None or latency <= threshold or not message_id:
+                continue
+            slow_message_traces.append(
+                {
+                    "tag": message_latency["tag"],
+                    "message_id": message_id,
+                    "sender_device": message_latency["sender_device"],
+                    "latency_s": latency,
+                    "events": message_trace_events_for_id(
+                        message_id,
+                        result.get("message_trace_events", []),
+                        result.get("ble_trace_events", []),
+                    ),
+                }
+            )
     return {
         "success": result["success"],
         "profile": result.get("profile", "burst"),
@@ -769,12 +1053,27 @@ def summarize_run(result):
             result.get("receipt_at", {}),
             result.get("receipt_windows", {}),
         ),
+        "message_ids": [
+            {
+                "tag": message.get("tag"),
+                "message_id": message.get("message_id"),
+                "sender_device": message.get("sender_device"),
+            }
+            for message in sent
+        ],
+        "message_trace_events": result.get("message_trace_events", []),
+        "ble_trace_events": result.get("ble_trace_events", []),
+        "per_message_latency": per_message_latency,
+        "slow_message_traces": slow_message_traces,
         "latency_stages": latency_stage_stats(
             sent,
             completed,
             result.get("receipt_windows", {}),
         ),
         "preflight": result.get("preflight", {}),
+        "peer_preflight": result.get("peer_preflight", {}),
+        "scanner_errors": result.get("scanner_errors", []),
+        "advertiser_logs": result.get("advertiser_logs", []),
         "device_metadata": result.get("device_metadata", []),
         "latency_measurement": {
             "clock": "host-monotonic",
@@ -1122,6 +1421,62 @@ def print_run_summary(stream, result, details_path):
                     f"  {short_tag} {sender}→{receivers}: "
                     f"{latency:.2f}s — {reason}\n"
                 )
+                message_id = item.get("message_id")
+                trace_events = message_trace_events_for_id(
+                    message_id,
+                    result.get("message_trace_events", []),
+                    result.get("ble_trace_events", []),
+                )
+                if message_id and trace_events:
+                    stream.write(
+                        f"    Sync trace for {message_id} "
+                        "(phone deltas are device-local; host values are logcat arrival):\n"
+                    )
+                    by_device = {}
+                    for event in trace_events:
+                        by_device.setdefault(event.get("device", "?"), []).append(event)
+                    for device, device_events in sorted(by_device.items()):
+                        timestamps = [
+                            _trace_phone_timestamp(event)
+                            for event in device_events
+                        ]
+                        valid_timestamps = [value for value in timestamps if value is not None]
+                        first_phone_ms = min(valid_timestamps) if valid_timestamps else None
+                        if len(device_events) > 36:
+                            visible_events = device_events[:18] + device_events[-18:]
+                            omitted = len(device_events) - len(visible_events)
+                        else:
+                            visible_events = device_events
+                            omitted = 0
+                        for event in visible_events:
+                            phone_ms = _trace_phone_timestamp(event)
+                            phone_delta = (
+                                f"phone+{(phone_ms - first_phone_ms) / 1000:.3f}s "
+                                if phone_ms is not None and first_phone_ms is not None
+                                else "phone time unavailable "
+                            )
+                            host_at = event.get("host_observed_at")
+                            host_delta = (
+                                f"host+{host_at - item['sent_at']:.3f}s "
+                                if host_at is not None
+                                else ""
+                            )
+                            detail = _trace_event_detail(event)
+                            stream.write(
+                                f"      {device[-6:]} {phone_delta}{host_delta}"
+                                f"{event.get('event', 'unknown')}"
+                                f"{': ' + detail if detail else ''}\n"
+                            )
+                        if omitted:
+                            stream.write(
+                                f"      {device[-6:]} … {omitted} middle events omitted; "
+                                "all events are retained in the JSON trace.\n"
+                            )
+                elif message_id:
+                    stream.write(
+                        f"    Sync trace unavailable for message ID {message_id}; "
+                        "check send response and logcat capture.\n"
+                    )
             if len(outliers) > 10:
                 stream.write(f"  …and {len(outliers) - 10} more\n")
         else:

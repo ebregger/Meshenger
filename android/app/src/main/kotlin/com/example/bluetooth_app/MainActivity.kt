@@ -41,6 +41,7 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
@@ -48,6 +49,8 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+  private enum class HeldLinkWriteResult { NOT_AVAILABLE, COMPLETED, FAILED }
+
   private val TAG = "NativeMeshService"
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,11 +73,16 @@ class MainActivity : FlutterActivity() {
   private var currentAdvertisingSet: AdvertisingSet? = null
   private val MESH_MFG_ID = 0xFFE0
   private val MESH_MAGIC: ByteArray = byteArrayOf(0x4D, 0x45, 0x53, 0x48) // 'M''E''S''H'
+  private val MESH_DIAL_CAPABILITY_MARKER = 0xD1.toByte()
 
   private val gattExecutor = Executors.newSingleThreadExecutor()
   private val deadMacs = java.util.concurrent.ConcurrentHashMap<String, Long>()
   private val failureCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
   private var pendingHashUpdateHandler: Handler? = null
+  private val advertiserUpdateCallbackHandler = Handler(Looper.getMainLooper())
+  private var pendingScanResponseUpdateSet: AdvertisingSet? = null
+  private var pendingScanResponseUpdateHashHex: String? = null
+  private var pendingScanResponseUpdateTimeout: Runnable? = null
   // Tracks MACs that are currently connected to our GATT server.
   // Used to guard cancelConnection() — calling it on an already-disconnected
   // device triggers another onConnectionStateChange(DISCONNECTED) callback,
@@ -98,25 +106,50 @@ class MainActivity : FlutterActivity() {
   private val activeInboundServers = java.util.concurrent.atomic.AtomicInteger(0)
   private val maxInboundServerClients = 1
   // Dart sets this during push-on-write so we reject a second inbound (GATT 133).
-  @Volatile private var urgentHold = false
   @Volatile private var currentOutboundGatt: BluetoothGatt? = null
   @Volatile private var heldClientGatt: BluetoothGatt? = null
   @Volatile private var heldWriteChar: BluetoothGattCharacteristic? = null
   @Volatile private var heldClientTraceAttemptId: String? = null
   @Volatile private var heldChunkSize: Int = 20
   @Volatile private var heldClientLeaseStartedAtMs: Long = 0L
+  @Volatile private var heldClientReleaseReason: String? = null
   private val clientIoLock = Object()
   @Volatile private var clientIoOk: Boolean? = null
   @Volatile private var heldNotifyLatch: CountDownLatch? = null
-  private val outboundCancelRequested = AtomicBoolean(false)
+  private val heldWriteCallbackTimeoutMs = 1500L
+  private val outboundCancelGeneration = AtomicLong(0)
   // Reuse one Handler so removeCallbacks() can cancel the lease posted earlier.
   private val heldClientHandler = Handler(Looper.getMainLooper())
   private val heldClientRelease = Runnable {
     val g = heldClientGatt
+    if (g != null) {
+      val now = System.currentTimeMillis()
+      val leaseStartedAt = heldClientLeaseStartedAtMs
+      val heldMac = try { g.device.address } catch (_: Throwable) { null }
+      traceBle(
+        "CLIENT_HELD_LINK_RELEASED",
+        mac = heldMac,
+        attemptId = heldClientTraceAttemptId,
+        fields = mapOf(
+          "REASON" to (heldClientReleaseReason ?: "unknown"),
+          "LEASE_AGE_MS" to if (leaseStartedAt > 0L) now - leaseStartedAt else null,
+          "IDLE_MS" to heldClientIdleMs,
+          "MAX_LEASE_MS" to heldClientMaxLeaseMs,
+        ),
+      )
+      emitHeldLinkState("held_link_unavailable", heldMac)
+      requestClientConnectionPriority(
+        g,
+        BluetoothGatt.CONNECTION_PRIORITY_BALANCED,
+        "held_link_release",
+        heldClientTraceAttemptId,
+      )
+    }
     heldClientGatt = null
     heldWriteChar = null
     heldClientTraceAttemptId = null
     heldClientLeaseStartedAtMs = 0L
+    heldClientReleaseReason = null
     try { g?.disconnect() } catch (_: Throwable) {}
   }
   @Volatile private var heldClientIdleMs = 4000L
@@ -137,8 +170,34 @@ class MainActivity : FlutterActivity() {
   @Volatile private var lastNotifyOk: Boolean? = null
   @Volatile private var lastNotifyMac: String? = null
   @Volatile private var notifyStartedAtMs: Long = 0L
+  private data class PendingServerReplyAck(val token: ByteArray, val latch: CountDownLatch)
+  private data class PendingClientReplyAck(
+    val token: ByteArray,
+    val attemptId: String,
+    val timeout: Runnable,
+  )
+  private val pendingServerReplyAcks = java.util.concurrent.ConcurrentHashMap<String, PendingServerReplyAck>()
+  private val pendingClientReplyAcks = java.util.concurrent.ConcurrentHashMap<BluetoothGatt, PendingClientReplyAck>()
+  private val serverReplyEofPrefix = "||MESH_REPLY_EOF_V1||".toByteArray(Charsets.US_ASCII)
+  private val serverReplyAckPrefix = "||MESH_REPLY_ACK_V1||".toByteArray(Charsets.US_ASCII)
+  private val replyAckTimeoutMs = 2000L
   // Per-client MTU negotiated on the server side so we know the notify chunk size.
   private val serverMtuMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+  private fun buildControlFrame(prefix: ByteArray, token: ByteArray): ByteArray = prefix + token
+
+  private fun startsWith(bytes: ByteArray, prefix: ByteArray): Boolean =
+    bytes.size >= prefix.size && prefix.indices.all { bytes[it] == prefix[it] }
+
+  private fun controlFrameToken(bytes: ByteArray, prefix: ByteArray): ByteArray? =
+    if (bytes.size == prefix.size + 36 && startsWith(bytes, prefix)) {
+      bytes.copyOfRange(prefix.size, bytes.size)
+    } else {
+      null
+    }
+
+  private fun newReplyAckToken(): ByteArray =
+    UUID.randomUUID().toString().toByteArray(Charsets.US_ASCII)
 
   private val REQUEST_BLUETOOTH_PERMS = 4312
 
@@ -152,6 +211,7 @@ class MainActivity : FlutterActivity() {
     val values = mutableListOf(
       "EVENT:$event",
       "MONO_MS:${SystemClock.elapsedRealtime()}",
+      "WALL_MS:${System.currentTimeMillis()}",
     )
     if (!mac.isNullOrBlank()) values.add("TARGET_MAC:$mac")
     if (!attemptId.isNullOrBlank()) values.add("ATTEMPT_ID:$attemptId")
@@ -160,6 +220,21 @@ class MainActivity : FlutterActivity() {
       if (value != null) values.add("$key:$value")
     }
     Log.d(TAG, "[BLE_TRACE] ${values.joinToString(" | ")}")
+  }
+
+  private fun emitHeldLinkState(
+    event: String,
+    mac: String? = null,
+    releaseInMs: Long? = null,
+  ) {
+    Handler(Looper.getMainLooper()).post {
+      val payload = hashMapOf<String, Any?>(
+        "event" to event,
+        "mac" to (mac ?: ""),
+      )
+      if (releaseInMs != null) payload["releaseInMs"] = releaseInMs
+      eventSink?.success(payload)
+    }
   }
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -173,15 +248,29 @@ class MainActivity : FlutterActivity() {
     eventChannel.setStreamHandler(object : EventChannel.StreamHandler {
       override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         eventSink = events
+        MeshForegroundServiceEvents.setEventSink(events)
       }
 
       override fun onCancel(arguments: Any?) {
         eventSink = null
+        MeshForegroundServiceEvents.setEventSink(null)
       }
     })
 
     methodChannel.setMethodCallHandler { call, result ->
       when (call.method) {
+        "start_mesh_foreground_service" -> {
+          startMeshForegroundService(result)
+        }
+        "stop_mesh_foreground_service" -> {
+          Log.i(TAG, "Stopping mesh foreground service from Flutter")
+          stopService(Intent(this, MeshForegroundService::class.java))
+          result.success(null)
+        }
+        "set_mesh_foreground_service_active" -> {
+          val active = call.argument<Boolean>("active") ?: true
+          result.success(MeshForegroundService.setMeshRadioActive(active))
+        }
         "start_server" -> {
           startNativeServer(call, result)
         }
@@ -190,6 +279,9 @@ class MainActivity : FlutterActivity() {
         }
         "update_hash" -> {
           updateAdvertiserHash(call, result)
+        }
+        "uses_extended_connectable_advertising" -> {
+          result.success(usesExtendedConnectableAdvertising())
         }
         "force_toggle_bluetooth" -> {
           forceToggleBluetooth(result)
@@ -206,13 +298,41 @@ class MainActivity : FlutterActivity() {
         "active_server_macs" -> {
           result.success(ArrayList(connectedServerClients.keys))
         }
+        "inbound_server_state" -> {
+          result.success(
+            mapOf(
+              "active" to ArrayList(connectedServerClients.keys),
+              "ready" to ArrayList(
+                notifyReadyServerClients.keys.filter { notifyReadyServerClients[it] == true },
+              ),
+            ),
+          )
+        }
+        "has_held_client_for_mac" -> {
+          val macAddress = call.argument<String>("macAddress")
+          val held = heldClientGatt
+          result.success(
+            !isResettingServer &&
+              !isOutboundClientBusy.get() &&
+              !macAddress.isNullOrBlank() &&
+              held != null &&
+              held.device.address.equals(macAddress, ignoreCase = true) &&
+              heldWriteChar != null,
+          )
+        }
+        "get_reusable_held_client_mac" -> {
+          val held = heldClientGatt
+          result.success(
+            if (
+              !isResettingServer &&
+              !isOutboundClientBusy.get() &&
+              held != null &&
+              heldWriteChar != null
+            ) held.device.address else null,
+          )
+        }
         "has_inbound_clients" -> {
           result.success(connectedServerClients.isNotEmpty())
-        }
-        "set_urgent_hold" -> {
-          urgentHold = call.argument<Boolean>("active") ?: false
-          Log.d(TAG, "[SERVER] urgentHold=$urgentHold inbound=${activeInboundServers.get()}")
-          result.success(null)
         }
         "set_link_lease" -> {
           val requestedIdle = call.argument<Number>("idleMs")?.toLong() ?: 4000L
@@ -236,6 +356,32 @@ class MainActivity : FlutterActivity() {
         }
         else -> result.notImplemented()
       }
+    }
+  }
+
+  private fun startMeshForegroundService(result: MethodChannel.Result) {
+    if (MeshForegroundService.isRunning()) {
+      Log.i(TAG, "Mesh foreground service is already running")
+      MeshForegroundService.setMeshRadioActive(true)
+      result.success(true)
+      return
+    }
+    val serviceIntent = Intent(this, MeshForegroundService::class.java)
+      .setAction(MeshForegroundService.ACTION_START)
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        startForegroundService(serviceIntent)
+      } else {
+        startService(serviceIntent)
+      }
+      result.success(true)
+    } catch (error: Exception) {
+      Log.e(TAG, "Failed to start mesh foreground service", error)
+      result.error(
+        "FOREGROUND_SERVICE_START_FAILED",
+        error.message ?: "Android could not start the mesh foreground service",
+        null,
+      )
     }
   }
 
@@ -342,7 +488,6 @@ class MainActivity : FlutterActivity() {
           )
           serverServiceReady = true
           isResettingServer = false
-          outboundCancelRequested.set(false)
           try {
             // addService() only queues registration with Android. Advertising here,
             // before onServiceAdded(), lets peers connect while the GATT database is
@@ -356,9 +501,6 @@ class MainActivity : FlutterActivity() {
               return@post
             }
 
-            // API 26+: use exclusively the modern AdvertisingSet API so hash updates never
-            // restart the radio (bypasses Android's undocumented 5-restarts-in-30s ban).
-            // Pre-API 26: fall back to the classic legacy advertiser.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
               startModernAdvertising(currentAdvertiserHash)
             } else {
@@ -403,21 +545,47 @@ class MainActivity : FlutterActivity() {
             val bytes = value ?: ByteArray(0)
             val now = SystemClock.elapsedRealtime()
             serverClientLastActivityAtMs[device.address] = now
+            if (startsWith(bytes, serverReplyAckPrefix)) {
+              val suppliedToken = controlFrameToken(bytes, serverReplyAckPrefix)
+              val pendingAck = pendingServerReplyAcks[device.address]
+              val matched = suppliedToken != null &&
+                pendingAck != null &&
+                pendingAck.token.contentEquals(suppliedToken)
+              traceBle(
+                if (matched) "SERVER_REPLY_ACK_RECEIVED" else "SERVER_REPLY_ACK_REJECTED",
+                device.address,
+                connectionId = serverConnectionIds[device.address],
+                fields = mapOf(
+                  "BYTES" to bytes.size,
+                  "MATCHED" to matched,
+                  "HAS_PENDING_REPLY" to (pendingAck != null),
+                ),
+              )
+              if (matched) pendingAck?.latch?.countDown()
+              return
+            }
             traceBle(
               "SERVER_WRITE_CHUNK",
               device.address,
               connectionId = serverConnectionIds[device.address],
-              fields = mapOf("BYTES" to bytes.size, "OFFSET" to offset),
+              fields = mapOf(
+                "BYTES" to bytes.size,
+                "OFFSET" to offset,
+                "EOF" to bytes.contentEquals("||EOF||".toByteArray()),
+              ),
             )
             deadMacs.remove(device.address)
             failureCounts.remove(device.address)
             Handler(Looper.getMainLooper()).post {
               // Include sender MAC so Dart can reply even if scan routing isn't ready.
-              val payload: HashMap<String, Any> = hashMapOf(
-                "mac" to device.address,
-                "bytes" to bytes
-              )
-              eventSink?.success(payload)
+            val payload: HashMap<String, Any> = hashMapOf(
+              "mac" to device.address,
+              "bytes" to bytes
+            )
+            serverConnectionIds[device.address]?.let {
+              payload["connectionId"] = it
+            }
+            eventSink?.success(payload)
             }
           } catch (t: Throwable) {
             Log.e(TAG, "Failed pushing payload to Flutter", t)
@@ -493,7 +661,13 @@ class MainActivity : FlutterActivity() {
                 fields = mapOf("CONNECT_TO_READY_MS" to SystemClock.elapsedRealtime() - connectedAt),
               )
               Handler(Looper.getMainLooper()).post {
-                eventSink?.success(hashMapOf("event" to "server_ready", "mac" to device.address))
+                eventSink?.success(
+                  hashMapOf(
+                    "event" to "server_ready",
+                    "mac" to device.address,
+                    "connectionId" to (serverConnectionIds[device.address] ?: ""),
+                  )
+                )
               }
             } else {
               notifyReadyServerClients.remove(device.address)
@@ -502,6 +676,15 @@ class MainActivity : FlutterActivity() {
                 device.address,
                 connectionId = serverConnectionIds[device.address],
               )
+              Handler(Looper.getMainLooper()).post {
+                eventSink?.success(
+                  hashMapOf(
+                    "event" to "server_not_ready",
+                    "mac" to device.address,
+                    "connectionId" to (serverConnectionIds[device.address] ?: ""),
+                  ),
+                )
+              }
             }
           }
         }
@@ -642,6 +825,15 @@ class MainActivity : FlutterActivity() {
                 connectionId = connectionId,
                 fields = mapOf("STATUS" to status, "ACTIVE" to activeConnsAfter),
               )
+              Handler(Looper.getMainLooper()).post {
+                eventSink?.success(
+                  hashMapOf(
+                    "event" to "server_disconnect",
+                    "mac" to device.address,
+                    "connectionId" to (connectionId ?: ""),
+                  ),
+                )
+              }
               if (status != 0 && activeConnsBefore > 1) {
                 Log.e(TAG, "[DIAGNOSTIC] SERVER COLLISION ERROR! Disconnection with status=$status while having $activeConnsBefore active connections.")
               }
@@ -729,7 +921,7 @@ class MainActivity : FlutterActivity() {
     // by close() are silently swallowed instead of cascading into cancelConnection() calls.
     isResettingServer = true
     serverServiceReady = false
-    outboundCancelRequested.set(true)
+    outboundCancelGeneration.incrementAndGet()
     val outboundGatt = currentOutboundGatt
     currentOutboundGatt = null
     try { outboundGatt?.disconnect() } catch (_: Throwable) {}
@@ -764,6 +956,9 @@ class MainActivity : FlutterActivity() {
     deadMacs.clear()
     isOutboundClientBusy.set(false)
     activeInboundServers.set(0)
+    Handler(Looper.getMainLooper()).post {
+      eventSink?.success(hashMapOf("event" to "server_reset"))
+    }
     try {
       heldClientHandler.removeCallbacks(heldClientRelease)
     } catch (_: Throwable) {}
@@ -785,15 +980,72 @@ class MainActivity : FlutterActivity() {
   }
 
   @SuppressLint("MissingPermission")
-  private fun releaseHeldClientNow() {
+  private fun releaseHeldClientNow(reason: String = "explicit") {
     heldClientHandler.removeCallbacks(heldClientRelease)
     val g = heldClientGatt
+    if (g != null) {
+      val now = System.currentTimeMillis()
+      val leaseStartedAt = heldClientLeaseStartedAtMs
+      val heldMac = try { g.device.address } catch (_: Throwable) { null }
+      traceBle(
+        "CLIENT_HELD_LINK_RELEASED",
+        mac = heldMac,
+        attemptId = heldClientTraceAttemptId,
+        fields = mapOf(
+          "REASON" to reason,
+          "LEASE_AGE_MS" to if (leaseStartedAt > 0L) now - leaseStartedAt else null,
+          "IDLE_MS" to heldClientIdleMs,
+          "MAX_LEASE_MS" to heldClientMaxLeaseMs,
+        ),
+      )
+      emitHeldLinkState("held_link_unavailable", heldMac)
+    }
     heldClientGatt = null
     heldWriteChar = null
     heldClientTraceAttemptId = null
     heldClientLeaseStartedAtMs = 0L
+    heldClientReleaseReason = null
     try { g?.disconnect() } catch (_: Throwable) {}
     try { g?.close() } catch (_: Throwable) {}
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun requestClientConnectionPriority(
+    gatt: BluetoothGatt,
+    priority: Int,
+    reason: String,
+    attemptId: String? = null,
+  ) {
+    val priorityName = when (priority) {
+      BluetoothGatt.CONNECTION_PRIORITY_HIGH -> "high"
+      BluetoothGatt.CONNECTION_PRIORITY_BALANCED -> "balanced"
+      BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER -> "low_power"
+      else -> priority.toString()
+    }
+    try {
+      val started = gatt.requestConnectionPriority(priority)
+      traceBle(
+        "CLIENT_CONNECTION_PRIORITY_REQUESTED",
+        try { gatt.device.address } catch (_: Throwable) { null },
+        attemptId,
+        mapOf(
+          "PRIORITY" to priorityName,
+          "REASON" to reason,
+          "STARTED" to started,
+        ),
+      )
+    } catch (t: Throwable) {
+      traceBle(
+        "CLIENT_CONNECTION_PRIORITY_FAILED",
+        try { gatt.device.address } catch (_: Throwable) { null },
+        attemptId,
+        mapOf(
+          "PRIORITY" to priorityName,
+          "REASON" to reason,
+          "DETAIL" to t.javaClass.simpleName,
+        ),
+      )
+    }
   }
 
   private fun scheduleHeldClientRelease(g: BluetoothGatt) {
@@ -805,6 +1057,26 @@ class MainActivity : FlutterActivity() {
     val hardRemaining =
       (heldClientLeaseStartedAtMs + heldClientMaxLeaseMs - now).coerceAtLeast(0L)
     val delayMs = minOf(heldClientIdleMs, hardRemaining)
+    val releaseReason = if (hardRemaining <= heldClientIdleMs) "max_lease" else "idle_timeout"
+    heldClientReleaseReason = releaseReason
+    traceBle(
+      "CLIENT_HELD_LINK_LEASE_SCHEDULED",
+      mac = try { g.device.address } catch (_: Throwable) { null },
+      attemptId = heldClientTraceAttemptId,
+      fields = mapOf(
+        "IDLE_MS" to heldClientIdleMs,
+        "MAX_LEASE_MS" to heldClientMaxLeaseMs,
+        "LEASE_AGE_MS" to (now - heldClientLeaseStartedAtMs),
+        "HARD_REMAINING_MS" to hardRemaining,
+        "RELEASE_IN_MS" to delayMs,
+        "RELEASE_REASON" to releaseReason,
+      ),
+    )
+    emitHeldLinkState(
+      "held_link_ready",
+      try { g.device.address } catch (_: Throwable) { null },
+      delayMs,
+    )
     heldClientHandler.removeCallbacks(heldClientRelease)
     heldClientHandler.postDelayed(heldClientRelease, delayMs)
     Log.d(
@@ -815,22 +1087,43 @@ class MainActivity : FlutterActivity() {
 
   @SuppressLint("MissingPermission")
   private fun writeOnHeldClient(
+    requestedMac: String,
     payload: ByteArray,
     result: MethodChannel.Result,
     attemptId: String,
-  ): Boolean {
-    val g = heldClientGatt ?: return false
-    val characteristic = heldWriteChar ?: return false
+  ): HeldLinkWriteResult {
+    val g = heldClientGatt ?: return HeldLinkWriteResult.NOT_AVAILABLE
+    val characteristic = heldWriteChar ?: return HeldLinkWriteResult.NOT_AVAILABLE
+    val heldMac = try { g.device.address } catch (_: Throwable) { null }
+    if (!HeldLinkTargetPolicy.matches(heldMac, requestedMac)) {
+      traceBle(
+        "CLIENT_HELD_LINK_TARGET_MISMATCH",
+        heldMac,
+        attemptId,
+        mapOf("REQUESTED_MAC" to requestedMac),
+      )
+      return HeldLinkWriteResult.NOT_AVAILABLE
+    }
     if (!isOutboundClientBusy.compareAndSet(false, true)) {
+      emitHeldLinkState(
+        "held_link_busy",
+        try { g.device.address } catch (_: Throwable) { null },
+      )
       Handler(Looper.getMainLooper()).post {
         result.error("gatt_busy", "Held client write already in flight", null)
       }
-      return true
+      return HeldLinkWriteResult.COMPLETED
     }
+    emitHeldLinkState(
+      "held_link_busy",
+      try { g.device.address } catch (_: Throwable) { null },
+    )
     heldClientHandler.removeCallbacks(heldClientRelease)
     heldClientTraceAttemptId = attemptId
     val notifyLatch = CountDownLatch(1)
     heldNotifyLatch = notifyLatch
+    var writeFailureReason: String? = null
+    var writeFailureWaitMs = 0L
     try {
       fun writeBlocking(bytes: ByteArray): Boolean {
         synchronized(clientIoLock) { clientIoOk = null }
@@ -846,14 +1139,28 @@ class MainActivity : FlutterActivity() {
           @Suppress("DEPRECATION")
           g.writeCharacteristic(characteristic)
         }
-        if (!started) return false
-        val deadlineMs = System.currentTimeMillis() + 8000L
+        if (!started) {
+          writeFailureReason = "write_not_started"
+          return false
+        }
+        val startedAtMs = SystemClock.elapsedRealtime()
+        val deadlineMs = startedAtMs + heldWriteCallbackTimeoutMs
+        var writeSucceeded: Boolean
         synchronized(clientIoLock) {
-          while (clientIoOk == null && System.currentTimeMillis() < deadlineMs) {
+          while (clientIoOk == null && SystemClock.elapsedRealtime() < deadlineMs) {
             clientIoLock.wait(50L)
           }
-          return clientIoOk == true
+          writeSucceeded = clientIoOk == true
         }
+        writeFailureWaitMs = SystemClock.elapsedRealtime() - startedAtMs
+        if (!writeSucceeded) {
+          writeFailureReason = if (writeFailureWaitMs >= heldWriteCallbackTimeoutMs) {
+            "write_callback_timeout"
+          } else {
+            "write_callback_failed"
+          }
+        }
+        return writeSucceeded
       }
       val chunkSize = heldChunkSize.coerceIn(20, 512)
       var offset = 0
@@ -867,34 +1174,65 @@ class MainActivity : FlutterActivity() {
         val length = minOf(chunkSize, payload.size - offset)
         if (!writeBlocking(payload.copyOfRange(offset, offset + length))) {
           Log.w(TAG, "[GATT] Held-link write failed — releasing for reconnect")
-          releaseHeldClientNow()
-          return false
+          traceBle(
+            "CLIENT_HELD_LINK_WRITE_FAILED",
+            try { g.device.address } catch (_: Throwable) { null },
+            attemptId,
+            mapOf(
+              "REASON" to writeFailureReason,
+              "WAIT_MS" to writeFailureWaitMs,
+              "BYTES" to length,
+              "OFFSET" to offset,
+            ),
+          )
+          releaseHeldClientNow("held_write_failed")
+          return HeldLinkWriteResult.FAILED
         }
         offset += length
       }
       if (!writeBlocking("||EOF||".toByteArray())) {
         Log.w(TAG, "[GATT] Held-link EOF failed — releasing for reconnect")
-        releaseHeldClientNow()
-        return false
+        traceBle(
+          "CLIENT_HELD_LINK_WRITE_FAILED",
+          try { g.device.address } catch (_: Throwable) { null },
+          attemptId,
+          mapOf(
+            "REASON" to writeFailureReason,
+            "WAIT_MS" to writeFailureWaitMs,
+            "BYTES" to 7,
+            "OFFSET" to payload.size,
+          ),
+        )
+        releaseHeldClientNow("held_eof_write_failed")
+        return HeldLinkWriteResult.FAILED
       }
       if (!notifyLatch.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
         Log.w(TAG, "[GATT] Held-link notify timeout — releasing for reconnect")
-        releaseHeldClientNow()
-        return false
+        traceBle(
+          "CLIENT_HELD_LINK_WRITE_FAILED",
+          try { g.device.address } catch (_: Throwable) { null },
+          attemptId,
+          mapOf("REASON" to "notify_timeout", "WAIT_MS" to 3000L),
+        )
+        releaseHeldClientNow("held_notify_timeout")
+        return HeldLinkWriteResult.FAILED
       }
       Handler(Looper.getMainLooper()).post { result.success(null) }
       heldClientGatt = g
       traceBle("CLIENT_HELD_LINK_COMPLETE", attemptId = attemptId)
-      return true
+      return HeldLinkWriteResult.COMPLETED
     } catch (t: Throwable) {
       Log.e(TAG, "[GATT] Held-link exception ${t.message} — releasing")
       traceBle(
         "CLIENT_HELD_LINK_FAILED",
         attemptId = attemptId,
-        fields = mapOf("DETAIL" to t.javaClass.simpleName),
+        fields = mapOf(
+          "DETAIL" to t.javaClass.simpleName,
+          "REASON" to "exception",
+        ),
       )
-      releaseHeldClientNow()
-      return false
+      releaseHeldClientNow("held_write_exception")
+      return HeldLinkWriteResult.FAILED
     } finally {
       if (heldNotifyLatch === notifyLatch) heldNotifyLatch = null
       isOutboundClientBusy.set(false)
@@ -903,7 +1241,7 @@ class MainActivity : FlutterActivity() {
 
   @SuppressLint("MissingPermission")
   private fun cancelOutboundClient() {
-    outboundCancelRequested.set(true)
+    outboundCancelGeneration.incrementAndGet()
     val g = currentOutboundGatt
     currentOutboundGatt = null
     try { g?.disconnect() } catch (_: Throwable) {}
@@ -941,7 +1279,9 @@ class MainActivity : FlutterActivity() {
   private fun updateServerBusyState() {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && currentAdvertisingSet != null) {
           try {
-              currentAdvertisingSet?.setAdvertisingData(buildPrimaryAd(currentAdvertiserHash))
+              currentAdvertisingSet?.setAdvertisingData(
+                buildActivePrimaryAdvertisingData(currentAdvertiserHash),
+              )
           } catch (_: Throwable) {}
       }
   }
@@ -966,26 +1306,61 @@ class MainActivity : FlutterActivity() {
       return
     }
 
-    // Both Modern and Legacy APIs: use a debounced stop+restart to update the advertisement.
-    // setAdvertisingData/setScanResponseData are silently dropped by many Qualcomm/Samsung HALs
-    // in LegacyMode after the first call — the only reliable approach is to stop and restart.
-    // MAC rotation from restart is acceptable: scanner-side identity is keyed on the 64-bit DB
-    // hash in the scan response packet, not the random resolvable address.
+    // Keep legacy advertising on its proven stop/restart path. AdvertisingSet exposes a
+    // scan-response update callback, so try updating the changing hash without stopping the
+    // advertiser; some legacy-mode HALs have ignored repeat updates, so a missing/failed callback
+    // falls back to the restart path below.
     pendingHashUpdateHandler?.removeCallbacksAndMessages(null)
     val handler = Handler(Looper.getMainLooper())
     pendingHashUpdateHandler = handler
     handler.postDelayed({
       val hex = currentAdvertiserHash.joinToString("") { "%02x".format(it) }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && currentAdvertisingSet != null) {
-        Log.d(TAG, "[ADV] Restarting Modern AdvertisingSet for hash update hex=$hex...")
-        try {
-          advertiser?.stopAdvertisingSet(advertisingSetCallback!!)
-        } catch (e: Throwable) {
-          Log.e(TAG, "[ADV] stopAdvertisingSet error: ${e.message}")
+        val set = currentAdvertisingSet
+        if (set == null) {
+          restartModernAdvertisingForHash(hex, "advertising_set_missing")
+          return@postDelayed
         }
-        currentAdvertisingSet = null
-        startModernAdvertising(currentAdvertiserHash)
-        Log.d(TAG, "[ADV] (Modern) Restarted AdvertisingSet with hash=$hex")
+        if (pendingScanResponseUpdateSet != null) {
+          restartModernAdvertisingForHash(hex, "previous_update_still_pending")
+          return@postDelayed
+        }
+
+        if (usesExtendedConnectableAdvertising()) {
+          Log.d(TAG, "[ADV] Updating extended connectable advertising data hex=$hex")
+          try {
+            set.setAdvertisingData(
+              buildConnectableExtendedAd(currentAdvertiserHash),
+            )
+          } catch (e: Throwable) {
+            restartModernAdvertisingForHash(
+              hex,
+              "extended_advertising_update_exception:${e.javaClass.simpleName}",
+            )
+          }
+          return@postDelayed
+        }
+
+        Log.d(TAG, "[ADV] Updating Modern AdvertisingSet scan response in place hex=$hex...")
+        val timeout = Runnable {
+          if (pendingScanResponseUpdateSet === set &&
+              pendingScanResponseUpdateHashHex == hex) {
+            clearPendingScanResponseUpdate()
+            restartModernAdvertisingForHash(hex, "scan_response_callback_timeout")
+          }
+        }
+        pendingScanResponseUpdateSet = set
+        pendingScanResponseUpdateHashHex = hex
+        pendingScanResponseUpdateTimeout = timeout
+        advertiserUpdateCallbackHandler.postDelayed(timeout, 1200)
+        try {
+          set.setScanResponseData(
+            buildScanResponseData(currentAdvertiserHash, currentNodeIdPrefix),
+          )
+        } catch (e: Throwable) {
+          clearPendingScanResponseUpdate()
+          restartModernAdvertisingForHash(hex, "scan_response_update_exception:${e.javaClass.simpleName}")
+        }
       } else {
         val adv = advertiser ?: return@postDelayed
         val cb = advertiseCallback ?: return@postDelayed
@@ -1001,16 +1376,61 @@ class MainActivity : FlutterActivity() {
     result.success(null)
   }
 
+  private fun clearPendingScanResponseUpdate() {
+    pendingScanResponseUpdateTimeout?.let {
+      advertiserUpdateCallbackHandler.removeCallbacks(it)
+    }
+    pendingScanResponseUpdateTimeout = null
+    pendingScanResponseUpdateSet = null
+    pendingScanResponseUpdateHashHex = null
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun restartModernAdvertisingForHash(hex: String, reason: String) {
+    Log.w(TAG, "[ADV] Restarting Modern AdvertisingSet after in-place update $reason hex=$hex")
+    clearPendingScanResponseUpdate()
+    try {
+      val callback = advertisingSetCallback
+      if (callback != null) advertiser?.stopAdvertisingSet(callback)
+    } catch (e: Throwable) {
+      Log.e(TAG, "[ADV] stopAdvertisingSet error: ${e.message}")
+    }
+    currentAdvertisingSet = null
+    startModernAdvertising(currentAdvertiserHash)
+  }
+
   /** Primary Ad: Service UUID triggers hardware filter. Kept minimal to fit all OEM 31-byte budgets. */
   private fun buildPrimaryAd(hashPayload: ByteArray): AdvertiseData {
-    // REVISED: For Legacy mode (which we are forcing for compatibility),
-    // the manufacturer data MUST go into the scan response because
+    // For legacy mode, the hash goes into the scan response because
     // Flags (3) + 128-bit UUID (18) + Manufacturer Data (20) = 41 bytes (exceeds 31).
     return AdvertiseData.Builder()
       .setIncludeTxPowerLevel(false)
       .setIncludeDeviceName(false)
       .addServiceUuid(ParcelUuid(SERVICE_UUID))
       .addManufacturerData(0xFFE1, buildTelemetryBytes())
+      .build()
+  }
+
+  private fun usesExtendedConnectableAdvertising(): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+  private fun buildActivePrimaryAdvertisingData(hashPayload: ByteArray): AdvertiseData =
+    if (usesExtendedConnectableAdvertising()) {
+      buildConnectableExtendedAd(hashPayload)
+    } else {
+      buildPrimaryAd(hashPayload)
+    }
+
+  private fun buildConnectableExtendedAd(hashPayload: ByteArray): AdvertiseData {
+    return AdvertiseData.Builder()
+      .setIncludeTxPowerLevel(false)
+      .setIncludeDeviceName(false)
+      .addServiceUuid(ParcelUuid(SERVICE_UUID))
+      .addManufacturerData(0xFFE1, buildTelemetryBytes())
+      .addManufacturerData(
+        MESH_MFG_ID,
+        buildMeshManufacturerPayload(hashPayload, currentNodeIdPrefix),
+      )
       .build()
   }
 
@@ -1054,6 +1474,12 @@ class MainActivity : FlutterActivity() {
       
       val clampedHop = hopDistance.coerceIn(0, 3)
       flags = flags or (clampedHop shl 5)
+      // Bits 7 and 8 advertise that this build reports its GATT dial
+      // capability and whether its active advertiser uses extended
+      // connectable advertising. Peers that do not set bit 7 use the
+      // established node-ID election for backwards compatibility.
+      flags = flags or (1 shl 7)
+      if (usesExtendedConnectableAdvertising()) flags = flags or (1 shl 8)
       // Bit 15 marks bytes 0..1 as the compact node-ID prefix. Older builds
       // ignore this reserved flag bit and continue to read the busy flag.
       flags = flags or (1 shl 15)
@@ -1069,48 +1495,80 @@ class MainActivity : FlutterActivity() {
   }
 
   private fun buildScanResponseData(hash: ByteArray, prefix: ByteArray? = null): AdvertiseData {
-    val payloadSize = MESH_MAGIC.size + hash.size + (prefix?.size ?: 0)
+    // Dart's scanner reads the first 8 hash bytes and then the 4-byte node
+    // prefix. Keep this wire format fixed even when the database hash grows.
+    return AdvertiseData.Builder()
+      .addManufacturerData(
+        MESH_MFG_ID,
+        buildMeshManufacturerPayload(hash, prefix),
+      )
+      .build()
+  }
+
+  private fun buildMeshManufacturerPayload(
+    hash: ByteArray,
+    prefix: ByteArray?,
+  ): ByteArray {
+    val hashLength = minOf(hash.size, 8)
+    val prefixLength = prefix?.size ?: 0
+    // Android 9 receives this mesh manufacturer payload consistently even
+    // when it omits the separate FFE1 telemetry manufacturer field from
+    // extended advertising scan results. Append a versioned two-byte dial
+    // capability trailer; existing readers ignore bytes after the node prefix.
+    val capabilityTrailerSize = if (hashLength == 8 && prefixLength == 4) 2 else 0
+    val payloadSize = MESH_MAGIC.size + hashLength + prefixLength + capabilityTrailerSize
     val payload = ByteArray(payloadSize)
     System.arraycopy(MESH_MAGIC, 0, payload, 0, MESH_MAGIC.size)
-    System.arraycopy(hash, 0, payload, MESH_MAGIC.size, hash.size)
+    System.arraycopy(hash, 0, payload, MESH_MAGIC.size, hashLength)
     if (prefix != null) {
-      System.arraycopy(prefix, 0, payload, MESH_MAGIC.size + hash.size, prefix.size)
+      System.arraycopy(prefix, 0, payload, MESH_MAGIC.size + hashLength, prefix.size)
     }
-    return AdvertiseData.Builder()
-      .addManufacturerData(MESH_MFG_ID, payload)
-      .build()
+    if (capabilityTrailerSize > 0) {
+      val trailerOffset = MESH_MAGIC.size + hashLength + prefixLength
+      payload[trailerOffset] = MESH_DIAL_CAPABILITY_MARKER
+      var capabilityFlags = 1 // Bit 0 marks these capability flags as known.
+      if (usesExtendedConnectableAdvertising()) capabilityFlags = capabilityFlags or (1 shl 1)
+      payload[trailerOffset + 1] = capabilityFlags.toByte()
+    }
+    return payload
   }
 
   @SuppressLint("MissingPermission")
   @RequiresApi(Build.VERSION_CODES.O)
   private fun startModernAdvertising(hashPayload: ByteArray) {
-    // Use non-legacy (extended) mode on BLE 5 capable devices (all on API 26+).
-    // Non-legacy mode: no 31-byte constraint, connectable + scan response works without HAL conflicts.
-    // setLegacyMode(false) uses ADV_EXT_IND which is supported by all BLE 5 central devices.
-    // Legacy BLE 4.x-only centrals won't see this — they will see nothing. However all
-    // devices in this mesh are API 26+ (confirmed SDK 36) so this is acceptable.
     val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-    val isLegacyMode = !adapter.isLeExtendedAdvertisingSupported
+    val extendedConnectable = usesExtendedConnectableAdvertising()
     val parameters = AdvertisingSetParameters.Builder()
-      // We FORCE legacy mode (true) even on Extended-capable hardware.
-      // This ensures Device 2 (Android 9) and other older devices can see the packets,
-      // while still using the AdvertisingSet API to avoid the radio-restart ban.
-      .setLegacyMode(true) 
+      .setLegacyMode(!extendedConnectable)
       .setConnectable(true)
-      .setScannable(true) // Required for Legacy Mode if we want a Scan Response
+      .setScannable(!extendedConnectable)
       .setInterval(AdvertisingSetParameters.INTERVAL_LOW)
       .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH)
       .build()
 
-    // In Legacy Mode (forced), we MUST put the data in the scan response.
-    val scanResponse = buildScanResponseData(hashPayload, currentNodeIdPrefix)
-    val primaryAd = buildPrimaryAd(hashPayload)
+    val scanResponse = if (extendedConnectable) {
+      null
+    } else {
+      buildScanResponseData(hashPayload, currentNodeIdPrefix)
+    }
+    val primaryAd = buildActivePrimaryAdvertisingData(hashPayload)
+    Log.i(
+      TAG,
+      "[ADV] Starting AdvertisingSet legacy=${!extendedConnectable} " +
+        "connectable=${parameters.isConnectable} scannable=${parameters.isScannable} " +
+        "extendedSupported=${adapter.isLeExtendedAdvertisingSupported}",
+    )
 
     advertisingSetCallback = object : AdvertisingSetCallback() {
       override fun onAdvertisingSetStarted(advertisingSet: AdvertisingSet?, txPower: Int, status: Int) {
         if (status == ADVERTISE_SUCCESS) {
           currentAdvertisingSet = advertisingSet
-          Log.d(TAG, "[ADV] Modern AdvertisingSet (Legacy Format) started txPower=$txPower")
+          Log.i(
+            TAG,
+            "[ADV] AdvertisingSet started legacy=${!extendedConnectable} " +
+              "connectable=${parameters.isConnectable} scannable=${parameters.isScannable} " +
+              "txPower=$txPower",
+          )
         } else {
           Log.e(TAG, "[ADV] Modern AdvertisingSet FAILED status=$status — falling back to legacy advertiser")
           currentAdvertisingSet = null
@@ -1118,8 +1576,23 @@ class MainActivity : FlutterActivity() {
         }
       }
       override fun onAdvertisingSetStopped(advertisingSet: AdvertisingSet?) {
-        if (currentAdvertisingSet == advertisingSet) currentAdvertisingSet = null
+        if (currentAdvertisingSet == advertisingSet) {
+          currentAdvertisingSet = null
+        }
         Log.d(TAG, "[ADV] Modern AdvertisingSet stopped")
+      }
+      override fun onScanResponseDataSet(advertisingSet: AdvertisingSet?, status: Int) {
+        if (advertisingSet == null || advertisingSet !== pendingScanResponseUpdateSet) {
+          Log.d(TAG, "[ADV] Scan-response update callback status=$status without matching request")
+          return
+        }
+        val hex = pendingScanResponseUpdateHashHex ?: "unknown"
+        clearPendingScanResponseUpdate()
+        if (status == ADVERTISE_SUCCESS) {
+          Log.d(TAG, "[ADV] Modern AdvertisingSet scan response updated in place status=$status hex=$hex")
+        } else {
+          restartModernAdvertisingForHash(hex, "scan_response_status_$status")
+        }
       }
       override fun onAdvertisingEnabled(advertisingSet: AdvertisingSet?, enable: Boolean, status: Int) {
         Log.d(TAG, "[ADV] Modern advertising enabled=$enable status=$status")
@@ -1127,7 +1600,7 @@ class MainActivity : FlutterActivity() {
     }
 
     try {
-      // In non-legacy mode, put everything in the primary ad. Scan response is often ignored.
+      // Legacy mode stays connectable and scannable across the Android 9/15 pair.
       advertiser?.startAdvertisingSet(parameters, primaryAd, scanResponse, null, null, advertisingSetCallback)
     } catch (e: Throwable) {
       Log.e(TAG, "[ADV] startAdvertisingSet threw exception: ${e.message} — falling back to legacy advertiser")
@@ -1142,7 +1615,11 @@ class MainActivity : FlutterActivity() {
       .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
       .setConnectable(true)
       .build()
-    Log.d(TAG, "[ADV] Starting Legacy Advertiser with settings: $settings")
+    Log.i(
+      TAG,
+      "[ADV] Starting legacy Advertiser API sdk=${Build.VERSION.SDK_INT} " +
+        "connectable=true settings=$settings",
+    )
     advertiseSettings = settings
     advertiseCallback = object : AdvertiseCallback() {
       override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
@@ -1159,7 +1636,12 @@ class MainActivity : FlutterActivity() {
       val bm = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
       advertiser = bm?.adapter?.bluetoothLeAdvertiser
       try {
-        advertiser?.startAdvertising(settings, buildPrimaryAd(hashPayload), buildScanResponseData(hashPayload), advertiseCallback)
+        advertiser?.startAdvertising(
+          settings,
+          buildPrimaryAd(hashPayload),
+          buildScanResponseData(hashPayload, currentNodeIdPrefix),
+          advertiseCallback,
+        )
       } catch (e2: Throwable) {
         Log.e(TAG, "[ADV] Retry also failed: ${e2.message}")
       }
@@ -1177,6 +1659,8 @@ class MainActivity : FlutterActivity() {
     val macAddress = call.argument<String>("macAddress")
     val isRandom = call.argument<Boolean>("isRandom") ?: false
     val bypassDeadCache = call.argument<Boolean>("bypassDeadCache") ?: false
+    val benchmarkMessageIds = (call.argument<List<*>>("benchmarkMessageIds") ?: emptyList<Any?>())
+      .mapNotNull { it as? String }
     if (macAddress.isNullOrBlank()) {
       result.error("bad_args", "macAddress is required", null)
       return
@@ -1188,6 +1672,7 @@ class MainActivity : FlutterActivity() {
       return
     }
 
+    val requestCancelGeneration = outboundCancelGeneration.get()
     gattExecutor.submit {
       if (isResettingServer) {
         Handler(Looper.getMainLooper()).post {
@@ -1201,7 +1686,11 @@ class MainActivity : FlutterActivity() {
         "CLIENT_ATTEMPT_STARTED",
         macAddress,
         attemptId,
-        mapOf("PAYLOAD_BYTES" to payload.size, "BYPASS_CACHE" to bypassDeadCache),
+        mapOf(
+          "PAYLOAD_BYTES" to payload.size,
+          "BYPASS_CACHE" to bypassDeadCache,
+          "BENCH_MESSAGE_IDS" to benchmarkMessageIds.joinToString(","),
+        ),
       )
       val deadUntil = deadMacs[macAddress]
       if (!bypassDeadCache && deadUntil != null && SystemClock.elapsedRealtime() < deadUntil) {
@@ -1214,8 +1703,28 @@ class MainActivity : FlutterActivity() {
         Handler(Looper.getMainLooper()).post { result.error("timeout", "MAC $macAddress is in dead-cache", null) }
         return@submit
       }
-      if (writeOnHeldClient(payload, result, attemptId)) {
-        return@submit
+      when (writeOnHeldClient(macAddress, payload, result, attemptId)) {
+        HeldLinkWriteResult.COMPLETED -> return@submit
+        HeldLinkWriteResult.FAILED -> {
+          // This MAC belongs to the failed held link and may be a rotated RPA.
+          // Let Flutter refresh it from the scan stream before starting another
+          // GATT attempt; retrying the same address here creates a long timeout.
+          traceBle(
+            "CLIENT_HELD_LINK_RETRY_WITH_FRESH_ADDRESS",
+            macAddress,
+            attemptId,
+            mapOf("REASON" to "held_link_failed"),
+          )
+          Handler(Looper.getMainLooper()).post {
+            result.error(
+              "held_link_stale",
+              "Held GATT link failed; retry with a fresh scan address",
+              null,
+            )
+          }
+          return@submit
+        }
+        HeldLinkWriteResult.NOT_AVAILABLE -> Unit
       }
       if (bypassDeadCache) {
         deadMacs.remove(macAddress)
@@ -1256,6 +1765,71 @@ class MainActivity : FlutterActivity() {
           )
           Handler(Looper.getMainLooper()).post { result.success(null) }
           taskLatch.countDown()
+        }
+      }
+
+      fun finishNotifyReceipt(
+        receivedGatt: BluetoothGatt,
+        receiptAttemptId: String,
+        acknowledgementAccepted: Boolean?,
+      ) {
+        isOutboundClientBusy.set(false)
+        traceBle(
+          when (acknowledgementAccepted) {
+            true -> "CLIENT_DELTA_RECEIPT_CONFIRMED"
+            false -> "CLIENT_DELTA_ACK_WRITE_FAILED"
+            null -> "CLIENT_DELTA_RECEIPT_LEGACY"
+          },
+          macAddress,
+          receiptAttemptId,
+        )
+        if (acknowledgementAccepted != false) {
+          if (heldClientGatt === receivedGatt && heldClientLeaseStartedAtMs > 0L) {
+            val now = System.currentTimeMillis()
+            val previousLeaseAgeMs = now - heldClientLeaseStartedAtMs
+            heldClientLeaseStartedAtMs = now
+            traceBle(
+              "CLIENT_HELD_LINK_LEASE_REFRESHED",
+              macAddress,
+              receiptAttemptId,
+              mapOf(
+                "PREVIOUS_LEASE_AGE_MS" to previousLeaseAgeMs,
+                "MAX_LEASE_MS" to heldClientMaxLeaseMs,
+                "REASON" to "completed_transfer",
+              ),
+            )
+          }
+          heldClientGatt = receivedGatt
+          heldWriteChar = receivedGatt.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID)
+            ?: heldWriteChar
+          heldClientTraceAttemptId = receiptAttemptId
+          scheduleHeldClientRelease(receivedGatt)
+        } else if (heldClientGatt === receivedGatt) {
+          // The reply ACK failed on the same GATT link that may still be
+          // waiting for its final outbound write callback. That link is no
+          // longer usable for this round-trip, so release the held writer now
+          // instead of making it wait out heldWriteCallbackTimeoutMs.
+          synchronized(clientIoLock) {
+            if (clientIoOk == null) clientIoOk = false
+            clientIoLock.notifyAll()
+          }
+          emitHeldLinkState(
+            "held_link_unavailable",
+            try { receivedGatt.device.address } catch (_: Throwable) { null },
+          )
+          heldClientGatt = null
+          heldWriteChar = null
+          heldClientTraceAttemptId = null
+          heldClientLeaseStartedAtMs = 0L
+          heldClientReleaseReason = null
+          heldClientHandler.removeCallbacks(heldClientRelease)
+        }
+        heldNotifyLatch?.countDown()
+        heldNotifyLatch = null
+        completeSuccessOnMain()
+        if (acknowledgementAccepted == false) {
+          try { receivedGatt.disconnect() } catch (_: Throwable) {}
+          try { receivedGatt.close() } catch (_: Throwable) {}
         }
       }
 
@@ -1391,6 +1965,14 @@ class MainActivity : FlutterActivity() {
                 attemptId,
                 mapOf("CONNECT_MS" to SystemClock.elapsedRealtime() - attemptStartedAtMs),
               )
+              // Request a low-latency interval while this held client link is
+              // carrying chunked transfers. Release restores balanced priority.
+              requestClientConnectionPriority(
+                g,
+                BluetoothGatt.CONNECTION_PRIORITY_HIGH,
+                "connected_for_transfer",
+                attemptId,
+              )
               mainHandler.removeCallbacks(connectionWatchdog)
               // Offer round-trips should finish in a few seconds. A 60s transfer
               // watchdog left urgent push-on-write blocked behind a dead peer.
@@ -1429,6 +2011,12 @@ class MainActivity : FlutterActivity() {
                 }
               }, 50)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+              if (heldClientGatt === g) {
+                synchronized(clientIoLock) {
+                  if (clientIoOk == null) clientIoOk = false
+                  clientIoLock.notifyAll()
+                }
+              }
               Log.d(TAG, "[GATT] STATE_DISCONNECTED phase=$phase status=$status mac=$macAddress")
               traceBle(
                 "CLIENT_DISCONNECTED",
@@ -1450,6 +2038,10 @@ class MainActivity : FlutterActivity() {
                 // Already completed (e.g. after receiving EOF from server notify).
                 try { g.close() } catch (_: Throwable) {}
                 if (heldClientGatt === g) {
+                  emitHeldLinkState(
+                    "held_link_unavailable",
+                    try { g.device.address } catch (_: Throwable) { null },
+                  )
                   heldClientGatt = null
                   heldClientTraceAttemptId = null
                 }
@@ -1714,6 +2306,21 @@ class MainActivity : FlutterActivity() {
           ) {
             super.onCharacteristicWrite(g, characteristic, status)
             Log.d(TAG, "[GATT] onCharacteristicWrite status=$status mac=$macAddress")
+            if (g != null) {
+              val replyAck = pendingClientReplyAcks.remove(g)
+              if (replyAck != null) {
+                mainHandler.removeCallbacks(replyAck.timeout)
+                val accepted = status == BluetoothGatt.GATT_SUCCESS
+                traceBle(
+                  "CLIENT_REPLY_ACK_WRITE_CALLBACK",
+                  macAddress,
+                  replyAck.attemptId,
+                  mapOf("STATUS" to status, "SUCCESS" to accepted),
+                )
+                finishNotifyReceipt(g, replyAck.attemptId, accepted)
+                return
+              }
+            }
             val writeContext = synchronized(lock) {
               lastWriteOk = status == BluetoothGatt.GATT_SUCCESS
               lock.notifyAll()
@@ -1766,29 +2373,99 @@ class MainActivity : FlutterActivity() {
             } else {
               attemptId
             }
+            val hasReplyEofPrefix = startsWith(value, serverReplyEofPrefix)
+            val replyEofToken = controlFrameToken(value, serverReplyEofPrefix)
+            if (hasReplyEofPrefix && replyEofToken == null) {
+              traceBle(
+                "CLIENT_DELTA_EOF_FRAME_INVALID",
+                macAddress,
+                traceAttemptId,
+                mapOf("BYTES" to value.size),
+              )
+              return
+            }
+            val legacyEof = value.contentEquals("||EOF||".toByteArray())
+            val isEof = replyEofToken != null || legacyEof
+            val eventBytes = if (replyEofToken != null) "||EOF||".toByteArray() else value
             traceBle(
-              if (value.contentEquals("||EOF||".toByteArray())) "CLIENT_DELTA_EOF_RECEIVED" else "CLIENT_DELTA_CHUNK_RECEIVED",
+              if (isEof) "CLIENT_DELTA_EOF_RECEIVED" else "CLIENT_DELTA_CHUNK_RECEIVED",
               macAddress,
               traceAttemptId,
-              mapOf("BYTES" to value.size),
+              mapOf("BYTES" to value.size, "ACK_REQUIRED" to (replyEofToken != null)),
             )
             // Forward the chunk to Flutter exactly as if a write came in from the other direction.
             Handler(Looper.getMainLooper()).post {
-              val payload: HashMap<String, Any> = hashMapOf("mac" to macAddress, "bytes" to value)
+              val payload: HashMap<String, Any> = hashMapOf(
+                "mac" to macAddress,
+                "bytes" to eventBytes,
+                "attemptId" to traceAttemptId,
+              )
               eventSink?.success(payload)
             }
-            if (value.contentEquals("||EOF||".toByteArray())) {
-              Log.d(TAG, "[GATT-NOTIFY] EOF received — holding client link mac=$macAddress")
+            if (isEof) {
+              Log.d(TAG, "[GATT-NOTIFY] EOF received — acknowledging reply from mac=$macAddress")
               mainHandler.removeCallbacks(transferWatchdog)
-              isOutboundClientBusy.set(false)
-              completeSuccessOnMain()
-              heldNotifyLatch?.countDown()
-              heldNotifyLatch = null
-              // Reuse this link for immediate newest + old-page catch-up, but cap
-              // the lease so another mesh peer gets the single inbound slot.
-              heldClientGatt = g
-              heldClientTraceAttemptId = traceAttemptId
-              scheduleHeldClientRelease(g)
+              if (replyEofToken == null) {
+                finishNotifyReceipt(g, traceAttemptId, null)
+                return
+              }
+
+              val writeChar = heldWriteChar
+                ?: g.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID)
+              if (writeChar == null) {
+                traceBle("CLIENT_REPLY_ACK_CHAR_MISSING", macAddress, traceAttemptId)
+                finishNotifyReceipt(g, traceAttemptId, false)
+                return
+              }
+              val ackFrame = buildControlFrame(serverReplyAckPrefix, replyEofToken)
+              lateinit var pendingAck: PendingClientReplyAck
+              val timeout = Runnable {
+                if (pendingClientReplyAcks.remove(g, pendingAck)) {
+                  traceBle(
+                    "CLIENT_REPLY_ACK_WRITE_TIMEOUT",
+                    macAddress,
+                    traceAttemptId,
+                    mapOf("TIMEOUT_MS" to replyAckTimeoutMs),
+                  )
+                  finishNotifyReceipt(g, traceAttemptId, false)
+                }
+              }
+              pendingAck = PendingClientReplyAck(replyEofToken, traceAttemptId, timeout)
+              if (pendingClientReplyAcks.putIfAbsent(g, pendingAck) != null) {
+                traceBle("CLIENT_REPLY_ACK_ALREADY_PENDING", macAddress, traceAttemptId)
+                finishNotifyReceipt(g, traceAttemptId, false)
+                return
+              }
+              val started = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                  g.writeCharacteristic(
+                    writeChar,
+                    ackFrame,
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+                  ) == BluetoothGatt.GATT_SUCCESS
+                } else {
+                  @Suppress("DEPRECATION")
+                  writeChar.value = ackFrame
+                  @Suppress("DEPRECATION")
+                  g.writeCharacteristic(writeChar)
+                }
+              } catch (t: Throwable) {
+                Log.w(TAG, "[GATT-NOTIFY] Reply ACK write threw: ${t.message}")
+                false
+              }
+              if (!started) {
+                pendingClientReplyAcks.remove(g, pendingAck)
+                traceBle("CLIENT_REPLY_ACK_WRITE_REJECTED", macAddress, traceAttemptId)
+                finishNotifyReceipt(g, traceAttemptId, false)
+              } else {
+                traceBle(
+                  "CLIENT_REPLY_ACK_WRITE_STARTED",
+                  macAddress,
+                  traceAttemptId,
+                  mapOf("BYTES" to ackFrame.size),
+                )
+                mainHandler.postDelayed(timeout, replyAckTimeoutMs)
+              }
             }
           }
         }
@@ -1805,7 +2482,11 @@ class MainActivity : FlutterActivity() {
         // watchdog and making live catch-up miss the few-second budget.
         val jitterMs = (50..250).random().toLong()
         Handler(Looper.getMainLooper()).postDelayed({
-          if (isCompleted.get() || outboundCancelRequested.get() || isResettingServer) {
+          if (
+            isCompleted.get() ||
+            outboundCancelGeneration.get() != requestCancelGeneration ||
+            isResettingServer
+          ) {
             isOutboundClientBusy.set(false)
             if (!isCompleted.get()) {
               completeErrorOnMain("cancelled", "Outbound cancelled or GATT service resetting")
@@ -1817,7 +2498,7 @@ class MainActivity : FlutterActivity() {
             completeErrorOnMain("already_connected", "Already connected as Server to this MAC")
             return@postDelayed
           }
-          releaseHeldClientNow()
+          releaseHeldClientNow("new_outbound_attempt")
           // Keep the fast path unchanged for peers that connect promptly while
           // giving slower/farther links enough time to finish the LE handshake.
           val connectTimeoutMs = if (bypassDeadCache) 3500L else 5000L
@@ -1826,9 +2507,17 @@ class MainActivity : FlutterActivity() {
             "CLIENT_CONNECT_STARTED",
             macAddress,
             attemptId,
-            mapOf("TIMEOUT_MS" to connectTimeoutMs, "ADDRESS_TYPE" to addressType),
+            mapOf(
+              "TIMEOUT_MS" to connectTimeoutMs,
+              "ADDRESS_TYPE" to addressType,
+            ),
           )
-          gatt = device.connectGatt(this@MainActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+          gatt = device.connectGatt(
+            this@MainActivity,
+            false,
+            gattCallback,
+            BluetoothDevice.TRANSPORT_LE,
+          )
           currentOutboundGatt = gatt
           if (gatt == null) {
             mainHandler.removeCallbacks(connectionWatchdog)
@@ -1858,6 +2547,8 @@ class MainActivity : FlutterActivity() {
     val macAddress = call.argument<String>("macAddress")
       ?: return result.error("no_mac", "macAddress is required", null)
     val payload = coercePayloadBytes(call.argument<Any?>("payload")) ?: ByteArray(0)
+    val benchmarkMessageIds = (call.argument<List<*>>("benchmarkMessageIds") ?: emptyList<Any?>())
+      .mapNotNull { it as? String }
 
     val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     // getRemoteDevice is safe here: we have an active server connection to this address.
@@ -1943,7 +2634,11 @@ class MainActivity : FlutterActivity() {
           "SERVER_REPLY_STARTED",
           macAddress,
           connectionId = serverConnectionIds[macAddress],
-          fields = mapOf("BYTES" to payload.size, "CHUNK_SIZE" to chunkSize),
+          fields = mapOf(
+            "BYTES" to payload.size,
+            "CHUNK_SIZE" to chunkSize,
+            "BENCH_MESSAGE_IDS" to benchmarkMessageIds.joinToString(","),
+          ),
         )
         var offset = 0
         while (offset < payload.size) {
@@ -1957,20 +2652,60 @@ class MainActivity : FlutterActivity() {
           offset += length
         }
 
-        val eof = "||EOF||".toByteArray()
-        if (!notifyBlocking(eof, payload.size, isEof = true)) {
-          Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify EOF failed", null) }
+        val replyToken = newReplyAckToken()
+        val pendingAck = PendingServerReplyAck(replyToken, CountDownLatch(1))
+        if (pendingServerReplyAcks.putIfAbsent(macAddress, pendingAck) != null) {
+          traceBle(
+            "SERVER_REPLY_ACK_BUSY",
+            macAddress,
+            connectionId = serverConnectionIds[macAddress],
+          )
+          Handler(Looper.getMainLooper()).post {
+            result.error("NOTIFY_BUSY", "Another reply is awaiting receipt from this peer", null)
+          }
           return@submit
         }
+        try {
+          traceBle(
+            "SERVER_REPLY_ACK_WAIT_STARTED",
+            macAddress,
+            connectionId = serverConnectionIds[macAddress],
+            fields = mapOf("TIMEOUT_MS" to replyAckTimeoutMs),
+          )
+          val eof = buildControlFrame(serverReplyEofPrefix, replyToken)
+          if (!notifyBlocking(eof, payload.size, isEof = true)) {
+            Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify EOF failed", null) }
+            return@submit
+          }
 
-        Log.d(TAG, "[GATT-NOTIFY] Delta fully sent to mac=$macAddress")
-        traceBle(
-          "SERVER_REPLY_COMPLETE",
-          macAddress,
-          connectionId = serverConnectionIds[macAddress],
-          fields = mapOf("BYTES" to payload.size),
-        )
-        Handler(Looper.getMainLooper()).post { result.success(null) }
+          val ackReceived = pendingAck.latch.await(
+            replyAckTimeoutMs,
+            java.util.concurrent.TimeUnit.MILLISECONDS,
+          )
+          if (!ackReceived) {
+            traceBle(
+              "SERVER_REPLY_ACK_TIMEOUT",
+              macAddress,
+              connectionId = serverConnectionIds[macAddress],
+              fields = mapOf("TIMEOUT_MS" to replyAckTimeoutMs),
+            )
+            Handler(Looper.getMainLooper()).post {
+              result.error("NOTIFY_UNCONFIRMED", "Peer did not acknowledge the complete notification", null)
+            }
+            return@submit
+          }
+
+          Log.d(TAG, "[GATT-NOTIFY] Delta received and acknowledged by mac=$macAddress")
+          traceBle(
+            "SERVER_REPLY_COMPLETE",
+            macAddress,
+            connectionId = serverConnectionIds[macAddress],
+            fields = mapOf("BYTES" to payload.size, "ACKNOWLEDGED" to true),
+          )
+          Handler(Looper.getMainLooper()).post { result.success(null) }
+        } finally {
+          pendingServerReplyAcks.remove(macAddress, pendingAck)
+        }
       } catch (t: Throwable) {
         Log.e(TAG, "[GATT-NOTIFY] Exception during reply", t)
         Handler(Looper.getMainLooper()).post { result.error("NOTIFY_EXCEPTION", t.message ?: "Unknown", null) }

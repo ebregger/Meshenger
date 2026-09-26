@@ -9,6 +9,7 @@ import '../providers/database_provider.dart';
 import '../providers/identity_provider.dart';
 import '../providers/ble_network_provider.dart';
 import '../services/native_mesh_service.dart';
+import '../services/local_write_hook.dart';
 import '../services/ui_debug_snapshot.dart';
 
 class ApiService {
@@ -83,11 +84,24 @@ class ApiService {
                 body['text']?.toString() ?? 'Stress Test Message Ping!';
 
             final chatActions = container.read(chatActionsProvider.notifier);
-            await chatActions.sendMessage(text);
-            // Belt-and-suspenders: chat hook can be drowned by scan log throttle.
-            container.read(bleNetworkProvider.notifier).onLocalDatabaseWrite();
+            final hasChatSyncHook = onLocalCrdtWrite != null;
+            final messageId = await chatActions.sendMessage(text);
+            // ChatActions invokes this hook after storing; the API fallback
+            // covers sends made before the mesh provider installs the hook.
+            if (!hasChatSyncHook && messageId != null) {
+              container
+                  .read(bleNetworkProvider.notifier)
+                  .onLocalDatabaseWrite(
+                    messageId: messageId,
+                    source: 'api_fallback',
+                  );
+            }
 
-            _respond(request, 200, {'status': 'sent', 'text': text});
+            _respond(request, 200, {
+              'status': 'sent',
+              'text': text,
+              'msgId': messageId,
+            });
           } else if (path == '/config' && request.method == 'POST') {
             final bodyStr = await utf8.decoder.bind(request).join();
             var body = <String, dynamic>{};

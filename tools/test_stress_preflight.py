@@ -1,10 +1,121 @@
 import unittest
+import time
 from unittest.mock import patch
 
 import stress_test
 
 
 class StressPreflightTests(unittest.TestCase):
+    def test_mesh_preflight_accepts_a_connected_chain_without_all_to_all_rssi(self):
+        now_ms = int(time.time() * 1000)
+        node_ids = {18081: "node-a", 18082: "node-b", 18083: "node-c"}
+        peers_by_port = {
+            18081: [
+                {
+                    "id": "node-b",
+                    "status": "direct",
+                    "lastSeenMs": now_ms,
+                    "rssiDbm": None,
+                    "rssiSeenMs": None,
+                }
+            ],
+            18082: [
+                {
+                    "id": "node-a",
+                    "status": "direct",
+                    "lastSeenMs": now_ms,
+                    "rssiDbm": -60,
+                    "rssiSeenMs": now_ms,
+                },
+                {
+                    "id": "node-c",
+                    "status": "direct",
+                    "lastSeenMs": now_ms,
+                    "rssiDbm": None,
+                    "rssiSeenMs": None,
+                },
+            ],
+            18083: [
+                {
+                    "id": "node-b",
+                    "status": "direct",
+                    "lastSeenMs": now_ms,
+                    "rssiDbm": None,
+                    "rssiSeenMs": None,
+                }
+            ],
+        }
+
+        result = stress_test.wait_for_mesh_peer_visibility(
+            lambda port, _path: {"peers": peers_by_port[port]},
+            [18081, 18082, 18083],
+            {port: f"device-{port}" for port in peers_by_port},
+            node_ids,
+            timeout_s=0,
+            scanner_errors=lambda: [],
+        )
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(
+            result["reason"],
+            "selected_nodes_form_connected_mesh",
+        )
+        self.assertEqual(result["connected_component_count"], 1)
+        self.assertFalse(result["all_peer_signals_fresh"])
+
+    def test_mesh_preflight_rejects_a_recently_disconnected_island(self):
+        now_ms = int(time.time() * 1000)
+        node_ids = {18081: "node-a", 18082: "node-b", 18083: "node-c"}
+        peers_by_port = {
+            18081: [
+                {
+                    "id": "node-b",
+                    "status": "direct",
+                    "lastSeenMs": now_ms,
+                    "rssiDbm": -60,
+                    "rssiSeenMs": now_ms,
+                }
+            ],
+            18082: [
+                {
+                    "id": "node-a",
+                    "status": "direct",
+                    "lastSeenMs": now_ms,
+                    "rssiDbm": -60,
+                    "rssiSeenMs": now_ms,
+                },
+                {
+                    "id": "node-c",
+                    "status": "indirect",
+                    "lastSeenMs": now_ms,
+                    "rssiDbm": None,
+                    "rssiSeenMs": None,
+                },
+            ],
+            18083: [
+                {
+                    "id": "node-b",
+                    "status": "disconnected",
+                    "lastSeenMs": now_ms - 60_000,
+                    "rssiDbm": None,
+                    "rssiSeenMs": None,
+                }
+            ],
+        }
+
+        result = stress_test.wait_for_mesh_peer_visibility(
+            lambda port, _path: {"peers": peers_by_port[port]},
+            [18081, 18082, 18083],
+            {port: f"device-{port}" for port in peers_by_port},
+            node_ids,
+            timeout_s=0,
+            scanner_errors=lambda: [],
+        )
+
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["reason"], "mesh_connectivity_timeout")
+        self.assertEqual(result["connected_component_count"], 2)
+
     def test_pauses_all_scans_before_reset_and_resumes_after(self):
         calls = []
 
