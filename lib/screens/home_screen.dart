@@ -196,6 +196,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 body: tm.textContent,
                                 authorName: tm.authorName,
                                 isSent: isSent,
+                                timestamp: DateTime.fromMillisecondsSinceEpoch(
+                                  tm.timestamp.toInt(),
+                                ),
                               );
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 10),
