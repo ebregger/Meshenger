@@ -18,6 +18,30 @@ class MeshDialPolicy {
     return (capabilityFlags & (1 << 1)) != 0;
   }
 
+  /// Reads the optional busy bit mirrored into the FFE0 capability trailer.
+  /// Null means the advertiser predates this field or reports unknown flags.
+  static bool? busyFromMeshPayload(Uint8List payload) {
+    if (payload.length < 14 || payload[12] != meshDialCapabilityMarker) {
+      return null;
+    }
+    final capabilityFlags = payload[13];
+    if ((capabilityFlags & 1) == 0) return null;
+    return (capabilityFlags & (1 << 2)) != 0;
+  }
+
+  /// Selects one extended-connectable node ID or prefix when several newer
+  /// peers can reach the same legacy advertiser with a single inbound GATT slot.
+  /// The highest prefix owns the cold dial; others use its mesh relay and may
+  /// fall back if it does not connect.
+  static String? preferredLegacyPeerInitiator(
+    Iterable<String> extendedConnectableNodeIds,
+  ) {
+    final candidates =
+        extendedConnectableNodeIds.where((id) => id.isNotEmpty).toSet().toList()
+          ..sort();
+    return candidates.isEmpty ? null : candidates.last;
+  }
+
   /// Select a reconnect target after a held GATT write fails.
   ///
   /// A held link can fail while its peer is still advertising the same RPA.

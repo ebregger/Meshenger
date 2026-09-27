@@ -597,6 +597,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         return;
       }
       if (incoming.isServerConnect) {
+        // A previous transfer may have lost its EOF when this MAC disconnected.
+        // Its compressed bytes cannot be part of the new connection's offer.
+        _incomingBuffersByMac.remove(incoming.macAddress);
+        _incomingTransferByMac.remove(incoming.macAddress);
         _discovery.onServerClientConnected(incoming.macAddress);
         return;
       }
@@ -610,8 +614,18 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       }
       if (incoming.isServerDisconnect) {
         if (incoming.macAddress.isEmpty) {
+          _incomingBuffersByMac.clear();
+          _incomingTransferByMac.clear();
           _discovery.clearInboundServerState();
         } else {
+          final activeConnectionId =
+              _incomingTransferByMac[incoming.macAddress]?['CONNECTION_ID'];
+          if (incoming.connectionId == null ||
+              activeConnectionId == null ||
+              activeConnectionId == incoming.connectionId) {
+            _incomingBuffersByMac.remove(incoming.macAddress);
+            _incomingTransferByMac.remove(incoming.macAddress);
+          }
           _discovery.onServerClientDisconnected(incoming.macAddress);
         }
         return;
@@ -619,6 +633,14 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       final eofMarker = utf8.encode('||EOF||');
       final senderMac = incoming.macAddress;
       final chunk = incoming.bytes;
+      final existingConnectionId =
+          _incomingTransferByMac[senderMac]?['CONNECTION_ID'];
+      if (existingConnectionId != null &&
+          incoming.connectionId != null &&
+          existingConnectionId != incoming.connectionId) {
+        _incomingBuffersByMac.remove(senderMac);
+        _incomingTransferByMac.remove(senderMac);
+      }
       final transfer = _incomingTransferByMac.putIfAbsent(
         senderMac,
         () => <String, String>{},
@@ -660,6 +682,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           _incomingTransferByMac.remove(senderMac);
           return;
         }
+        // Detach the complete frame now. A new transfer on the same MAC can
+        // arrive while the asynchronous merge below is still running.
+        final payloadBytes = List<int>.from(buffer);
+        _incomingBuffersByMac.remove(senderMac);
+        _incomingTransferByMac.remove(senderMac);
 
         Future<void>.microtask(() async {
           final serverSyncTotal = Stopwatch()..start();
@@ -702,10 +729,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
           try {
             debugPrint(
-              '🔄 [SYNC] Decompressing payload from $senderMac (${buffer.length} bytes)...',
+              '🔄 [SYNC] Decompressing payload from $senderMac (${payloadBytes.length} bytes)...',
             );
             final decodeTimer = Stopwatch()..start();
-            final decompressed = zlib.decode(buffer);
+            final decompressed = zlib.decode(payloadBytes);
             final String jsonStr = utf8.decode(decompressed);
             final decodedJson = jsonDecode(jsonStr);
             traceServerSyncStage(
@@ -813,13 +840,15 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   if (entry.value != null)
                     entry.key.toString(): entry.value.toString(),
               };
-              // Prefer direct MAC from native GATT callback (more reliable than scan routing).
-              final targetMac = senderMac != '<unknown>'
+              // A database hash can be shared by converged peers, so it cannot
+              // identify the active GATT connection. Reply only to the exact
+              // address reported by the native connection callback.
+              final targetMac = senderMac.isNotEmpty && senderMac != '<unknown>'
                   ? senderMac
-                  : BleDiscoveryService.hashToMac[senderHash];
+                  : null;
               if (targetMac == null) {
                 debugPrint(
-                  '⚠️ Offer: no hash route for sender_hash=$senderHash',
+                  '⚠️ Offer: no direct GATT address for sender_id=$senderId',
                 );
                 return;
               }
@@ -1001,6 +1030,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   'slice tables=${delta.keys.toList()}',
                 );
               }
+              delta = BleDiscoveryService.prioritizeNewestMessages(
+                delta,
+                await db.getNewestRowsChangeset(maxRows: 8),
+              );
               var selectedDeltaRows = 0;
               var selectedDeltaTombstones = 0;
               for (final rows in delta.values) {
@@ -1318,11 +1351,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               '❌ [SYNC] Mesh processing error from $senderMac: $e\n$st',
             );
           } finally {
-            buffer.clear();
-            if (buffer.isEmpty) {
-              _incomingBuffersByMac.remove(senderMac);
-            }
-            _incomingTransferByMac.remove(senderMac);
             if (remoteMessageIdsToRelay.isNotEmpty) {
               final sourceNodeId =
                   remoteMessageSourceNodeId ??

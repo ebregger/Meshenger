@@ -57,6 +57,9 @@ void main() {
       final extendedPayload = Uint8List(14)
         ..[12] = MeshDialPolicy.meshDialCapabilityMarker
         ..[13] = 3;
+      final busyPayload = Uint8List(14)
+        ..[12] = MeshDialPolicy.meshDialCapabilityMarker
+        ..[13] = 5;
       final unknownPayload = Uint8List(14)
         ..[12] = MeshDialPolicy.meshDialCapabilityMarker
         ..[13] = 0;
@@ -77,7 +80,26 @@ void main() {
         MeshDialPolicy.extendedConnectableFromMeshPayload(unknownPayload),
         isNull,
       );
+      expect(MeshDialPolicy.busyFromMeshPayload(nonExtendedPayload), isFalse);
+      expect(MeshDialPolicy.busyFromMeshPayload(busyPayload), isTrue);
+      expect(MeshDialPolicy.busyFromMeshPayload(legacyPayload), isNull);
+      expect(MeshDialPolicy.busyFromMeshPayload(unknownPayload), isNull);
     });
+
+    test(
+      'assigns one stable initiator across modern peers for a legacy target',
+      () {
+        expect(
+          MeshDialPolicy.preferredLegacyPeerInitiator(const [
+            '69ce',
+            '336e',
+            '336e',
+          ]),
+          '69ce',
+        );
+        expect(MeshDialPolicy.preferredLegacyPeerInitiator(const []), isNull);
+      },
+    );
 
     test('retries a held-link address after a newer scan sees it again', () {
       final beforeAttempt = DateTime.utc(2026, 9, 26, 12);

@@ -34,11 +34,14 @@ class _UrgentInboundLinkStillActive implements Exception {
 
 /// Mesh discovery: central scanning via [FlutterBluePlus]; GAP advertise lives in native Android.
 class BleDiscoveryService {
-  /// Advertised DB hash (uint32 int) → last seen BLE [BluetoothDevice.remoteId] for offer replies.
-  static final Map<int, String> hashToMac = {};
-
-  /// Advertised DB hash (uint32 int) → stable CRDT `nodeId` (used for neighbor tables).
+  /// Advertised database hash → stable node ID only when that hash currently
+  /// belongs to exactly one known peer. Database hashes are state fingerprints,
+  /// not unique peer identities, so never use them as an address route.
   static final Map<int, String> hashToNodeId = {};
+
+  /// Latest advertised hash owner(s), used to keep [hashToNodeId] unambiguous.
+  static final Map<int, Set<String>> hashOwners = {};
+  static final Map<String, int> latestHashByNodeId = {};
 
   /// Stable nodeId -> last time we saw it directly via scan (presence window).
   static final Map<String, DateTime> localSeenNodes = {};
@@ -49,6 +52,16 @@ class BleDiscoveryService {
   /// When [nodeIdToMac] was last refreshed from a *scan* (not GATT bind).
   /// Urgent dials must use scan-fresh RPAs — GATT/bind MACs go stale under Android RPA.
   static final Map<String, DateTime> nodeIdMacSeenAt = {};
+
+  /// Latest advertised single-client server state per known peer. A busy
+  /// advertisement suppresses new cold dials briefly; an existing held link
+  /// can still be used by the urgent path.
+  static final Map<String, bool> peerBusyStateByNodeId = {};
+  static final Map<String, DateTime> peerBusySeenAtByNodeId = {};
+  static final Set<String> _urgentLegacyDialFallbacks = <String>{};
+  static final Map<String, Timer> _urgentLegacyFallbackTimers =
+      <String, Timer>{};
+  static const Duration peerBusyFreshnessWindow = Duration(seconds: 2);
 
   /// Latest local scanner RSSI sample for each stable peer identity.
   static final Map<String, int> nodeIdRssiDbm = {};
@@ -155,6 +168,26 @@ class BleDiscoveryService {
     return out;
   }
 
+  /// Put recent chat rows ahead of bucket repair so a capped offer cannot
+  /// omit a newly written message after an earlier connection failed.
+  static Map<String, dynamic> prioritizeNewestMessages(
+    Map<String, dynamic> changeset,
+    Map<String, dynamic> newest,
+  ) {
+    final latest = newest['messages'];
+    if (latest is! List || latest.isEmpty) return changeset;
+    final combined = <dynamic>[];
+    final seenIds = <String>{};
+    for (final row in [...latest, ...?changeset['messages'] as List?]) {
+      if (row is Map) {
+        final id = row['msg_id']?.toString();
+        if (id != null && !seenIds.add(id)) continue;
+      }
+      combined.add(row);
+    }
+    return <String, dynamic>{...changeset, 'messages': combined};
+  }
+
   /// MAC -> suppress presence until this time (failed/uncallable peer).
   static final Map<String, DateTime> deadMacUntil = {};
 
@@ -170,6 +203,7 @@ class BleDiscoveryService {
   /// Advertised peer dial capabilities keyed by stable node-ID prefix.
   /// Values are only recorded when the advertisement marks them as known.
   final Map<String, bool> _peerExtendedConnectableByPrefix = {};
+  final Map<String, DateTime> _peerExtendedConnectableSeenAtByPrefix = {};
   final Set<String> _loggedPeerCapabilities = {};
   final Set<String> _loggedDialElections = {};
 
@@ -251,6 +285,7 @@ class BleDiscoveryService {
       hash: hash,
       observedAtMs: at,
     );
+    _rememberHashOwner(peerNodeId, hash);
   }
 
   /// Compare an observed remote hash to [localHash] and update catch-up UI state.
@@ -275,6 +310,7 @@ class BleDiscoveryService {
       hash: remoteHash,
       observedAtMs: at,
     );
+    _rememberHashOwner(peerNodeId, remoteHash);
     if (remoteHash == localHash) {
       peerCaughtUp[peerNodeId] = true;
     } else {
@@ -302,6 +338,30 @@ class BleDiscoveryService {
         localHash: localHash,
         observedAtMs: parsed.observedAtMs,
       );
+    }
+  }
+
+  static void _rememberHashOwner(String nodeId, int hash) {
+    if (nodeId.isEmpty) return;
+    final previousHash = latestHashByNodeId[nodeId];
+    if (previousHash != null && previousHash != hash) {
+      hashOwners[previousHash]?.remove(nodeId);
+      _refreshUniqueHashOwner(previousHash);
+    }
+    latestHashByNodeId[nodeId] = hash;
+    hashOwners.putIfAbsent(hash, () => <String>{}).add(nodeId);
+    _refreshUniqueHashOwner(hash);
+  }
+
+  static void _refreshUniqueHashOwner(int hash) {
+    final owners = hashOwners[hash];
+    if (owners == null || owners.isEmpty) {
+      hashOwners.remove(hash);
+      hashToNodeId.remove(hash);
+    } else if (owners.length == 1) {
+      hashToNodeId[hash] = owners.single;
+    } else {
+      hashToNodeId.remove(hash);
     }
   }
 
@@ -395,9 +455,10 @@ class BleDiscoveryService {
 
   /// Bind a stable nodeId to a BLE MAC (and optional advertised hash).
   ///
-  /// Identity maps (mac→nodeId, hash→nodeId) always update. Dial MAC
-  /// ([nodeIdToMac]) is owned by [rememberScanMac] — GATT connection MACs are
-  /// often not valid reconnect targets under Android RPA.
+  /// GATT MACs bind only that exact address to the peer. The advertised hash
+  /// is tracked as an identity hint only while it remains unique; dial MAC
+  /// ([nodeIdToMac]) is owned by [rememberScanMac] because GATT MACs may be
+  /// stale under Android RPA.
   static void bindPeerIdentity({
     required String nodeId,
     String? mac,
@@ -411,12 +472,7 @@ class BleDiscoveryService {
       nodeIdPrefixToNodeId[nodeId.substring(0, 4)] = nodeId;
     }
 
-    if (hash != null) {
-      hashToNodeId[hash] = nodeId;
-      if (resolvedMac != null) {
-        hashToMac[hash] = resolvedMac;
-      }
-    }
+    if (hash != null) rememberPeerHash(nodeId, hash);
     if (resolvedMac != null) {
       macToNodeId[resolvedMac] = nodeId;
       // Only seed dial MAC if scan has never seen this peer.
@@ -425,14 +481,28 @@ class BleDiscoveryService {
       }
       // Drop any leftover MAC-keyed presence once identity is known.
       localSeenNodes.remove(resolvedMac);
-    } else if (hash != null) {
-      final scanned = hashToMac[hash];
-      if (scanned != null) {
-        macToNodeId[scanned] = nodeId;
-        if (!nodeIdToMac.containsKey(nodeId)) {
-          nodeIdToMac[nodeId] = scanned;
-        }
-        localSeenNodes.remove(scanned);
+    }
+  }
+
+  /// Rebuild stable advertisement-prefix lookup after a fresh mesh session.
+  /// A saved profile gives us the full node ID even before the first GATT
+  /// handshake; ambiguous four-character prefixes must wait for that bind.
+  static void seedKnownPeerPrefixes(
+    Iterable<String> nodeIds, {
+    required String localNodeId,
+  }) {
+    final owners = <String, Set<String>>{};
+    for (final id in nodeIds) {
+      if (id == localNodeId || id.length < 4) continue;
+      owners
+          .putIfAbsent(id.substring(0, 4).toLowerCase(), () => <String>{})
+          .add(id);
+    }
+    for (final entry in owners.entries) {
+      if (entry.value.length == 1) {
+        nodeIdPrefixToNodeId[entry.key] = entry.value.single;
+      } else {
+        nodeIdPrefixToNodeId.remove(entry.key);
       }
     }
   }
@@ -464,6 +534,33 @@ class BleDiscoveryService {
     deadMacUntil.remove(mac);
   }
 
+  static void rememberPeerBusy(String nodeId, bool isBusy, {DateTime? seenAt}) {
+    if (nodeId.isEmpty) return;
+    final at = seenAt ?? DateTime.now();
+    final previousAt = peerBusySeenAtByNodeId[nodeId];
+    if (previousAt != null && at.isBefore(previousAt)) return;
+    peerBusyStateByNodeId[nodeId] = isBusy;
+    peerBusySeenAtByNodeId[nodeId] = at;
+    if (isBusy) {
+      _urgentLegacyDialFallbacks.remove(nodeId);
+      _urgentLegacyFallbackTimers.remove(nodeId)?.cancel();
+    }
+  }
+
+  static bool isPeerRecentlyBusy(String nodeId, {DateTime? now}) {
+    if (peerBusyStateByNodeId[nodeId] != true) return false;
+    final seenAt = peerBusySeenAtByNodeId[nodeId];
+    if (seenAt == null) return false;
+    final age = (now ?? DateTime.now()).difference(seenAt);
+    return !age.isNegative && age <= peerBusyFreshnessWindow;
+  }
+
+  static int? peerBusyAgeMs(String nodeId, {DateTime? now}) {
+    final seenAt = peerBusySeenAtByNodeId[nodeId];
+    if (seenAt == null) return null;
+    return (now ?? DateTime.now()).difference(seenAt).inMilliseconds;
+  }
+
   static void rememberScanRssi(String nodeId, int rssi, {DateTime? seenAt}) {
     if (nodeId.isEmpty) return;
     final at = seenAt ?? DateTime.now();
@@ -484,6 +581,8 @@ class BleDiscoveryService {
     final mac = nodeIdToMac[nodeId];
     final seenAt = nodeIdMacSeenAt[nodeId];
     if (mac == null || seenAt == null) return null;
+    final mappedOwner = macToNodeId[mac];
+    if (mappedOwner != null && mappedOwner != nodeId) return null;
     final age = (now ?? DateTime.now()).difference(seenAt);
     if (age > dialMacFreshnessWindow) return null;
     return mac;
@@ -512,6 +611,8 @@ class BleDiscoveryService {
 
     void add(String? mac, {DateTime? at}) {
       if (mac == null || mac.isEmpty || mac == '<unknown>') return;
+      final mappedOwner = macToNodeId[mac];
+      if (mappedOwner != null && mappedOwner != nodeId) return;
       ranked.putIfAbsent(
         mac,
         () => at ?? seenAt ?? DateTime.fromMillisecondsSinceEpoch(0),
@@ -523,10 +624,6 @@ class BleDiscoveryService {
     for (final e in macToNodeId.entries) {
       if (e.value == nodeId) add(e.key, at: seenAt);
     }
-    for (final e in hashToNodeId.entries) {
-      if (e.value == nodeId) add(hashToMac[e.key], at: seenAt);
-    }
-
     final list = ranked.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     return [for (final e in list) e.key];
@@ -537,12 +634,6 @@ class BleDiscoveryService {
     if (nodeIdToMac[nodeId] == mac) sources.add('nodeIdToMac');
     if (lastGoodDialMac[nodeId] == mac) sources.add('lastGoodDialMac');
     if (macToNodeId[mac] == nodeId) sources.add('macToNodeId');
-    for (final entry in hashToNodeId.entries) {
-      if (entry.value == nodeId && hashToMac[entry.key] == mac) {
-        sources.add('hashToMac');
-        break;
-      }
-    }
     return sources.isEmpty ? const ['unknown'] : sources;
   }
 
@@ -794,16 +885,20 @@ class BleDiscoveryService {
       _pendingQueue.clear();
       _hashCooldowns.clear();
       _lastRssiTraceAt.clear();
-      hashToMac.clear();
       hashToNodeId.clear();
+      hashOwners.clear();
+      latestHashByNodeId.clear();
       macToNodeId.clear();
       nodeIdPrefixToNodeId.clear();
       _peerExtendedConnectableByPrefix.clear();
+      _peerExtendedConnectableSeenAtByPrefix.clear();
       _loggedPeerCapabilities.clear();
       _loggedDialElections.clear();
       localSeenNodes.clear();
       nodeIdToMac.clear();
       nodeIdMacSeenAt.clear();
+      peerBusyStateByNodeId.clear();
+      peerBusySeenAtByNodeId.clear();
       nodeIdRssiDbm.clear();
       nodeIdRssiSeenAt.clear();
       lastGoodDialMac.clear();
@@ -817,11 +912,20 @@ class BleDiscoveryService {
       _lastBluetoothActivityAt = null;
       _lastUrgentAttemptAt.clear();
       _urgentExcludedPeerIds.clear();
+      _urgentLegacyDialFallbacks.clear();
+      for (final timer in _urgentLegacyFallbackTimers.values) {
+        timer.cancel();
+      }
+      _urgentLegacyFallbackTimers.clear();
       _scanHandshakeThrottle.clear();
       _lastLocalWriteAt = null;
       _localWriteRateEwma = 0;
       deadMacUntil.clear();
       deadHashUntil.clear();
+    }
+    if (wipeMaps) {
+      final db = await _ref.read(databaseProvider.future);
+      seedKnownPeerPrefixes(await db.getAllUserIds(), localNodeId: myNodeId);
     }
     _notifyConnectionPhase();
 
@@ -945,8 +1049,11 @@ class BleDiscoveryService {
                   .join();
               if (remoteExtendedConnectable != null) {
                 final normalizedPrefix = telemetryNodeIdPrefix.toLowerCase();
-                _peerExtendedConnectableByPrefix[normalizedPrefix] =
-                    remoteExtendedConnectable;
+                _rememberPeerExtendedConnectable(
+                  normalizedPrefix,
+                  remoteExtendedConnectable,
+                  r.timeStamp,
+                );
                 if (_loggedPeerCapabilities.add(
                   '$normalizedPrefix:$remoteExtendedConnectable',
                 )) {
@@ -966,6 +1073,12 @@ class BleDiscoveryService {
               ? myNodeId.substring(0, 4).toLowerCase()
               : myNodeId.padRight(4, '0').toLowerCase();
           Uint8List? remotePayload = _tryGetRemoteHash(r);
+          if (remotePayload != null) {
+            final payloadBusy = MeshDialPolicy.busyFromMeshPayload(
+              remotePayload,
+            );
+            if (payloadBusy != null) targetBusy = payloadBusy;
+          }
           if (remoteExtendedConnectable == null && remotePayload != null) {
             remoteExtendedConnectable =
                 MeshDialPolicy.extendedConnectableFromMeshPayload(
@@ -983,9 +1096,11 @@ class BleDiscoveryService {
           }
           if (remoteExtendedConnectable != null &&
               telemetryNodeIdPrefix != null) {
-            _peerExtendedConnectableByPrefix[telemetryNodeIdPrefix
-                    .toLowerCase()] =
-                remoteExtendedConnectable;
+            _rememberPeerExtendedConnectable(
+              telemetryNodeIdPrefix.toLowerCase(),
+              remoteExtendedConnectable,
+              r.timeStamp,
+            );
           }
           if (telemetryNodeIdPrefix == localNodeIdPrefix) {
             // The stable prefix catches our own advertiser even while Android
@@ -1028,6 +1143,7 @@ class BleDiscoveryService {
               localSeenNodes[known] = DateTime.now();
               rememberScanMac(known, mac, seenAt: r.timeStamp);
               rememberScanRssi(known, r.rssi, seenAt: r.timeStamp);
+              rememberPeerBusy(known, targetBusy, seenAt: r.timeStamp);
             }
             final coolKey = mac.hashCode | 0x100000000;
             if (targetBusy) {
@@ -1148,8 +1264,6 @@ class BleDiscoveryService {
             continue;
           }
 
-          hashToMac[remoteHashInt] = mac;
-
           // Resolve identity + refresh UI presence BEFORE connect cooldowns/deadlists.
           // A peer in the penalty box is still "nearby" if we keep hearing its ads.
           String? prefix;
@@ -1161,21 +1275,27 @@ class BleDiscoveryService {
               );
             } catch (_) {}
           }
+          // The node-ID prefix and exact scan address identify the advertiser.
+          // Its DB hash can match another peer after the mesh converges, so only
+          // use a hash as a last resort while it has one known owner.
           final stableNodeId =
-              hashToNodeId[remoteHashInt] ??
+              (prefix != null ? nodeIdPrefixToNodeId[prefix] : null) ??
               macToNodeId[mac] ??
-              (prefix != null ? nodeIdPrefixToNodeId[prefix] : null);
+              hashToNodeId[remoteHashInt];
 
           if (stableNodeId != null) {
-            hashToNodeId[remoteHashInt] = stableNodeId;
             rememberScanMac(stableNodeId, mac, seenAt: r.timeStamp);
             rememberScanRssi(stableNodeId, r.rssi, seenAt: r.timeStamp);
+            rememberPeerBusy(stableNodeId, targetBusy, seenAt: r.timeStamp);
             localSeenNodes[stableNodeId] = DateTime.now();
             if (prefix != null && prefix.isNotEmpty) {
               nodeIdPrefixToNodeId[prefix] = stableNodeId;
               if (remoteExtendedConnectable != null) {
-                _peerExtendedConnectableByPrefix[prefix.toLowerCase()] =
-                    remoteExtendedConnectable;
+                _rememberPeerExtendedConnectable(
+                  prefix.toLowerCase(),
+                  remoteExtendedConnectable,
+                  r.timeStamp,
+                );
               }
             }
           }
@@ -1183,7 +1303,9 @@ class BleDiscoveryService {
           // The peer advertises busy when its single inbound GATT slot is in
           // use. Let that exchange finish instead of starting another connect.
           if (targetBusy) {
-            _hashCooldowns[remoteHashInt] = DateTime.now();
+            // Busy is peer state, not hash state. Multiple peers can advertise
+            // the same converged database hash, so do not cool down that hash
+            // and accidentally throttle another node.
             continue;
           }
 
@@ -1340,18 +1462,34 @@ class BleDiscoveryService {
     final remoteCapability =
         remoteExtendedConnectable ??
         _remoteExtendedConnectableForPeer(peerIdentity);
-    final elected = MeshDialPolicy.shouldInitiate(
-      localNodeId: localNodeId,
-      remoteNodeId: remoteNodeId,
-      remoteNodeIdPrefix: remoteNodeIdPrefix,
-      localHash: localHash,
-      remoteHash: remoteHash,
-      localExtendedConnectable: _localExtendedConnectable,
-      remoteExtendedConnectable: remoteCapability,
-    );
     final localPrefix = localNodeId.length >= 4
-        ? localNodeId.substring(0, 4)
-        : localNodeId;
+        ? localNodeId.substring(0, 4).toLowerCase()
+        : localNodeId.toLowerCase();
+    final preferredLegacyInitiatorPrefix = remoteCapability == false
+        ? _preferredLegacyPeerInitiatorPrefix(
+            localNodeId,
+            legacyPeerIdentity: peerIdentity,
+          )
+        : null;
+    final isLegacySecondary =
+        _localExtendedConnectable == true &&
+        remoteCapability == false &&
+        preferredLegacyInitiatorPrefix != null &&
+        preferredLegacyInitiatorPrefix != localPrefix;
+    final legacyFallbackActive =
+        remoteNodeId != null &&
+        _urgentLegacyDialFallbacks.contains(remoteNodeId);
+    final elected = isLegacySecondary
+        ? legacyFallbackActive
+        : MeshDialPolicy.shouldInitiate(
+            localNodeId: localNodeId,
+            remoteNodeId: remoteNodeId,
+            remoteNodeIdPrefix: remoteNodeIdPrefix,
+            localHash: localHash,
+            remoteHash: remoteHash,
+            localExtendedConnectable: _localExtendedConnectable,
+            remoteExtendedConnectable: remoteCapability,
+          );
     final peerLabel = peerIdentity ?? 'unknown';
     final decisionKey =
         '$localPrefix:$peerLabel:$_localExtendedConnectable:$remoteCapability:$elected';
@@ -1361,10 +1499,122 @@ class BleDiscoveryService {
         'LOCAL_PREFIX:$localPrefix | PEER:$peerLabel | '
         'LOCAL_EXTENDED_CONNECTABLE:${_localExtendedConnectable ?? 'unknown'} | '
         'REMOTE_EXTENDED_CONNECTABLE:${remoteCapability ?? 'unknown'} | '
+        'PREFERRED_LEGACY_INITIATOR_PREFIX:${preferredLegacyInitiatorPrefix ?? 'none'} | '
+        'LEGACY_FALLBACK:$legacyFallbackActive | '
         'INITIATE:$elected | WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
       );
     }
     return elected;
+  }
+
+  bool _shouldInitiateUrgentPeer(String localNodeId, String peerNodeId) {
+    return _shouldInitiatePeer(
+      localNodeId: localNodeId,
+      remoteNodeId: peerNodeId,
+    );
+  }
+
+  void _rememberPeerExtendedConnectable(
+    String prefix,
+    bool extendedConnectable,
+    DateTime seenAt,
+  ) {
+    final normalizedPrefix = prefix.toLowerCase();
+    final previousAt = _peerExtendedConnectableSeenAtByPrefix[normalizedPrefix];
+    if (previousAt != null && seenAt.isBefore(previousAt)) return;
+    _peerExtendedConnectableByPrefix[normalizedPrefix] = extendedConnectable;
+    _peerExtendedConnectableSeenAtByPrefix[normalizedPrefix] = seenAt;
+  }
+
+  String? _preferredLegacyPeerInitiatorPrefix(
+    String localNodeId, {
+    String? legacyPeerIdentity,
+  }) {
+    if (_localExtendedConnectable != true) return null;
+    final now = DateTime.now();
+    final localPrefix = localNodeId.length >= 4
+        ? localNodeId.substring(0, 4).toLowerCase()
+        : localNodeId.toLowerCase();
+    final legacyPrefix = legacyPeerIdentity == null
+        ? null
+        : (legacyPeerIdentity.length >= 4
+              ? legacyPeerIdentity.substring(0, 4).toLowerCase()
+              : legacyPeerIdentity.toLowerCase());
+    if (localPrefix.isEmpty) return null;
+    final candidates = <String>{localPrefix};
+    // A peer can be directly reachable before its capability trailer is
+    // observed. Include such peers unless they are known legacy, so two
+    // modern nodes do not both elect themselves during initial discovery.
+    for (final entry in localSeenNodes.entries) {
+      final nodeId = entry.key;
+      if (nodeId.length < 8 || !nodeId.contains('-')) continue;
+      final prefix = nodeId.substring(0, 4).toLowerCase();
+      if (prefix == legacyPrefix ||
+          _peerExtendedConnectableByPrefix[prefix] == false) {
+        continue;
+      }
+      final age = now.difference(entry.value);
+      if (age > const Duration(seconds: 15) ||
+          age < const Duration(seconds: -5)) {
+        continue;
+      }
+      candidates.add(prefix);
+    }
+    for (final entry in _peerExtendedConnectableByPrefix.entries) {
+      if (entry.value != true) continue;
+      if (entry.key == legacyPrefix) continue;
+      final seenAt = _peerExtendedConnectableSeenAtByPrefix[entry.key];
+      if (seenAt == null) continue;
+      final age = now.difference(seenAt);
+      if (age > const Duration(seconds: 15) ||
+          age < const Duration(seconds: -5)) {
+        continue;
+      }
+      candidates.add(entry.key.toLowerCase());
+    }
+    return MeshDialPolicy.preferredLegacyPeerInitiator(candidates);
+  }
+
+  bool _isLegacyFallbackCandidate(String localNodeId, String peerNodeId) {
+    if (_localExtendedConnectable != true ||
+        _remoteExtendedConnectableForPeer(peerNodeId) != false) {
+      return false;
+    }
+    final preferred = _preferredLegacyPeerInitiatorPrefix(
+      localNodeId,
+      legacyPeerIdentity: peerNodeId,
+    );
+    final localPrefix = localNodeId.length >= 4
+        ? localNodeId.substring(0, 4).toLowerCase()
+        : localNodeId.toLowerCase();
+    return preferred != null && preferred != localPrefix;
+  }
+
+  void _scheduleLegacyInitiatorFallback(String myNodeId, String peerId) {
+    if (_urgentLegacyFallbackTimers[peerId]?.isActive == true) return;
+    const delay = Duration(milliseconds: 1600);
+    _traceUrgentFlow(
+      'URGENT_LEGACY_DIAL_FALLBACK_SCHEDULED',
+      fields: {'PEER_NODE_ID': peerId, 'DELAY_MS': delay.inMilliseconds},
+    );
+    late final Timer timer;
+    timer = Timer(delay, () {
+      if (identical(_urgentLegacyFallbackTimers[peerId], timer)) {
+        _urgentLegacyFallbackTimers.remove(peerId);
+      }
+      if (isPeerRecentlyBusy(peerId)) return;
+      _urgentLegacyDialFallbacks.add(peerId);
+      _traceUrgentFlow(
+        'URGENT_LEGACY_DIAL_FALLBACK_READY',
+        fields: {'PEER_NODE_ID': peerId},
+      );
+      if (_urgentSyncRunning) {
+        _urgentSyncDirty = true;
+      } else {
+        unawaited(_runUrgentSync(myNodeId));
+      }
+    });
+    _urgentLegacyFallbackTimers[peerId] = timer;
   }
 
   bool? _remoteExtendedConnectableForPeer(String? peerIdentity) {
@@ -1703,6 +1953,12 @@ class BleDiscoveryService {
       }
       if (ourChangeset.isEmpty) {
         ourChangeset = await db.getNewestRowsChangeset(maxRows: 8);
+      }
+      if (!forceNewestPush) {
+        ourChangeset = prioritizeNewestMessages(
+          ourChangeset,
+          await db.getNewestRowsChangeset(maxRows: 8),
+        );
       }
       // Only currently reachable peers consume a turn. nodeIdToMac retains
       // historical rotating addresses, so including its keys shrinks a live
@@ -2671,10 +2927,7 @@ class BleDiscoveryService {
       );
       if (await inboundProbe) return true;
 
-      final electedToInitiate = _shouldInitiatePeer(
-        localNodeId: myNodeId,
-        remoteNodeId: peerId,
-      );
+      final electedToInitiate = _shouldInitiateUrgentPeer(myNodeId, peerId);
       final heldClientAddress = await heldClientLookup;
       _traceUrgentFlow(
         'URGENT_HELD_CLIENT_LOOKUP_COMPLETE',
@@ -3045,7 +3298,7 @@ class BleDiscoveryService {
 
   /// Last-resort outbound dial after the urgent pipeline exhausts.
   Future<bool> _urgentScanFallbackDial(String myNodeId, String peerId) async {
-    if (!_shouldInitiatePeer(localNodeId: myNodeId, remoteNodeId: peerId)) {
+    if (!_shouldInitiateUrgentPeer(myNodeId, peerId)) {
       return false;
     }
     final mac = scanFreshDialMac(peerId);
@@ -3122,6 +3375,17 @@ class BleDiscoveryService {
           final liveNeighbor = currentNeighborIds.contains(id);
           final mac = scanFreshDialMac(id, now: now);
           if (mac == null) return false;
+          if (isPeerRecentlyBusy(id, now: now)) {
+            _traceUrgentFlow(
+              'URGENT_PEER_SKIPPED_BUSY',
+              fields: {
+                'PEER_NODE_ID': id,
+                'BUSY_AGE_MS': peerBusyAgeMs(id, now: now),
+                'BUSY_FRESHNESS_MS': peerBusyFreshnessWindow.inMilliseconds,
+              },
+            );
+            return false;
+          }
           final dead = deadMacUntil[mac];
           return liveNeighbor || dead == null || now.isAfter(dead);
         }
@@ -3134,7 +3398,7 @@ class BleDiscoveryService {
         // held link itself, so avoid a duplicate MethodChannel query when all
         // fresh peers are elected to this device.
         final hasNonElectedFreshPeer = freshKnownPeers.any(
-          (id) => !_shouldInitiatePeer(localNodeId: myNodeId, remoteNodeId: id),
+          (id) => !_shouldInitiateUrgentPeer(myNodeId, id),
         );
         // Check a held client link when scan freshness alone would leave us
         // without a route. An active GATT link is still addressable after the
@@ -3160,15 +3424,11 @@ class BleDiscoveryService {
           localNodeId: myNodeId,
           freshPeerIds: freshKnownPeers,
           heldClientPeerId: heldClientPeer,
-          shouldInitiatePeer: (id) =>
-              _shouldInitiatePeer(localNodeId: myNodeId, remoteNodeId: id),
+          shouldInitiatePeer: (id) => _shouldInitiateUrgentPeer(myNodeId, id),
         );
         final heldPeerIsNonElected =
             heldClientPeer != null &&
-            !_shouldInitiatePeer(
-              localNodeId: myNodeId,
-              remoteNodeId: heldClientPeer,
-            );
+            !_shouldInitiateUrgentPeer(myNodeId, heldClientPeer);
         if (heldClientPeer != null &&
             (heldPeerIsNonElected ||
                 !freshKnownPeers.contains(heldClientPeer))) {
@@ -3226,7 +3486,9 @@ class BleDiscoveryService {
             );
             if (urgentPushHandled) {
               unawaited(_tryInboundCatchupPush(myNodeId, peerId));
-              return;
+              // Another peer may still need this row. In a three-node mesh,
+              // returning here can discard the only retry for a busy peer.
+              continue;
             }
 
             final inboundCatchupTimer = Stopwatch()..start();
@@ -3238,11 +3500,28 @@ class BleDiscoveryService {
                   'ELAPSED_US': inboundCatchupTimer.elapsedMicroseconds,
                 },
               );
-              return;
+              continue;
             }
           }
         }
         if (freshPeers.isEmpty) {
+          final recentlyBusyPeers = peerIds
+              .where((id) => isPeerRecentlyBusy(id, now: now))
+              .toList(growable: false);
+          if (freshKnownPeers.isEmpty && recentlyBusyPeers.isNotEmpty) {
+            _traceUrgentFlow(
+              'URGENT_WAITING_FOR_BUSY_PEER',
+              fields: {
+                'PEER_NODE_IDS': recentlyBusyPeers.join(','),
+                'RETRY_IN_MS': 600,
+              },
+            );
+            _urgentSyncDebounce?.cancel();
+            _urgentSyncDebounce = Timer(const Duration(milliseconds: 600), () {
+              unawaited(_runUrgentSync(myNodeId));
+            });
+            return;
+          }
           _traceUrgentFlow(
             'URGENT_SYNC_STAGE',
             fields: {
@@ -3257,6 +3536,11 @@ class BleDiscoveryService {
               '(known=${freshKnownPeers.length})',
             );
             debugPrint('URGENT_SYNC peers= waiting-for-elected-peer');
+            for (final peerId in freshKnownPeers) {
+              if (_isLegacyFallbackCandidate(myNodeId, peerId)) {
+                _scheduleLegacyInitiatorFallback(myNodeId, peerId);
+              }
+            }
             return;
           }
           debugPrint(
@@ -3319,7 +3603,7 @@ class BleDiscoveryService {
           return ta.compareTo(tb);
         });
         final live = focusPeers.where(currentNeighborIds.contains).toList();
-        final pool = (live.isNotEmpty ? live : focusPeers).take(1).toList();
+        final pool = (live.isNotEmpty ? live : focusPeers).take(2).toList();
         _traceUrgentFlow(
           'URGENT_SYNC_STAGE',
           fields: {
@@ -3345,6 +3629,7 @@ class BleDiscoveryService {
         _pendingQueue.removeWhere((e) => !e.forceNewest);
 
         for (final pick in pool) {
+          if (urgentSw.elapsed >= urgentBudget) break;
           _lastUrgentAttemptAt[pick] = DateTime.now();
           lastFullSync.remove(pick);
           localSeenNodes[pick] = DateTime.now();
@@ -3390,6 +3675,12 @@ class BleDiscoveryService {
           }
           if (!dialed) {
             debugPrint('⚠️ [DISCOVERY] Urgent sync gave up on $pick');
+          }
+          if (_urgentLegacyDialFallbacks.remove(pick)) {
+            _traceUrgentFlow(
+              'URGENT_LEGACY_DIAL_FALLBACK_CONSUMED',
+              fields: {'PEER_NODE_ID': pick, 'DELIVERED_OR_QUEUED': dialed},
+            );
           }
           _traceUrgentFlow(
             'URGENT_PEER_DELIVERY_RESULT',

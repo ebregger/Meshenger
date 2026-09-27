@@ -1406,6 +1406,11 @@ def run_benchmark(
     port_to_device = {port: forward_map.get(port, f'port:{port}') for port in all_ports}
     device_to_port = {v: k for k, v in port_to_device.items()}
 
+    # Clear benchmark history before mesh readiness is evaluated. Otherwise
+    # old rows can drive catch-up traffic during the BLE reset and monopolize
+    # the older phone's single inbound GATT slot throughout preflight.
+    maybe_clear_chat_messages(all_ports, preserve_messages)
+
     def scanner_error_snapshot():
         with telemetry.lock:
             return list(telemetry.scanner_errors)
@@ -1415,7 +1420,7 @@ def run_benchmark(
         all_ports,
         port_to_device,
         infos,
-        timeout_s=20.0,
+        timeout_s=45.0,
         scanner_errors=scanner_error_snapshot,
     )
     preflight_record["mesh_peer_visibility"] = peer_preflight
@@ -1463,8 +1468,6 @@ def run_benchmark(
         )
     else:
         send_ports = all_ports
-
-    maybe_clear_chat_messages(sorted(infos.keys()), preserve_messages)
 
     # Ground-truth tracking: store (tag, sender_port) for each sent message
     sent_messages = []  # list of {'tag': str, 'sender_port': int, 'sender_device': str}

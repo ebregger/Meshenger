@@ -540,8 +540,17 @@ class MainActivity : FlutterActivity() {
           offset: Int,
           value: ByteArray?
         ) {
+          var responseStatus = BluetoothGatt.GATT_SUCCESS
           try {
             if (characteristic.uuid != CHARACTERISTIC_UUID) return
+            if (
+              isResettingServer || !serverServiceReady ||
+              connectedServerClients[device.address] != true
+            ) {
+              responseStatus = BluetoothGatt.GATT_FAILURE
+              traceBle("SERVER_WRITE_REJECTED_UNADMITTED", device.address)
+              return
+            }
             val bytes = value ?: ByteArray(0)
             val now = SystemClock.elapsedRealtime()
             serverClientLastActivityAtMs[device.address] = now
@@ -588,13 +597,14 @@ class MainActivity : FlutterActivity() {
             eventSink?.success(payload)
             }
           } catch (t: Throwable) {
+            responseStatus = BluetoothGatt.GATT_FAILURE
             Log.e(TAG, "Failed pushing payload to Flutter", t)
           } finally {
             if (responseNeeded && bluetoothGattServer != null) {
               bluetoothGattServer?.sendResponse(
                 device,
                 requestId,
-                BluetoothGatt.GATT_SUCCESS,
+                responseStatus,
                 offset,
                 value ?: ByteArray(0)
               )
@@ -604,6 +614,10 @@ class MainActivity : FlutterActivity() {
 
         override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
           super.onMtuChanged(device, mtu)
+          if (connectedServerClients[device.address] != true) {
+            traceBle("SERVER_MTU_IGNORED_UNADMITTED", device.address, fields = mapOf("MTU" to mtu))
+            return
+          }
           Log.d(TAG, "[SERVER] onMtuChanged: mtu=$mtu for device=${device.address}")
           serverMtuMap[device.address] = mtu
           serverClientLastActivityAtMs[device.address] = SystemClock.elapsedRealtime()
@@ -644,6 +658,16 @@ class MainActivity : FlutterActivity() {
           value: ByteArray?
         ) {
           super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value)
+          if (
+            isResettingServer || !serverServiceReady ||
+            connectedServerClients[device.address] != true
+          ) {
+            traceBle("SERVER_CCCD_REJECTED_UNADMITTED", device.address)
+            if (responseNeeded) {
+              bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, value ?: ByteArray(0))
+            }
+            return
+          }
           Log.d(TAG, "[SERVER] CCCD write from ${device.address} value=${value?.toList()}")
           if (responseNeeded) {
             bluetoothGattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value ?: ByteArray(0))
@@ -818,6 +842,10 @@ class MainActivity : FlutterActivity() {
               activeInboundServers.set(activeConnsAfter)
             }
             if (wasConnected) {
+              pendingServerReplyAcks.remove(device.address)?.let { pending ->
+                traceBle("SERVER_REPLY_ACK_CANCELLED_DISCONNECT", device.address, connectionId = connectionId)
+                pending.latch.countDown()
+              }
               Log.d(TAG, "[SERVER] Client disconnected: ${device.address} status=$status. Active inbound connections now: $activeConnsAfter")
               traceBle(
                 "SERVER_DISCONNECTED",
@@ -1528,6 +1556,12 @@ class MainActivity : FlutterActivity() {
       payload[trailerOffset] = MESH_DIAL_CAPABILITY_MARKER
       var capabilityFlags = 1 // Bit 0 marks these capability flags as known.
       if (usesExtendedConnectableAdvertising()) capabilityFlags = capabilityFlags or (1 shl 1)
+      // Some Android scanners omit FFE1 from extended advertising results.
+      // Mirror the single-client server state in the mesh payload so peers can
+      // avoid cold dials while this GATT server is occupied.
+      if (activeInboundServers.get() >= maxInboundServerClients) {
+        capabilityFlags = capabilityFlags or (1 shl 2)
+      }
       payload[trailerOffset + 1] = capabilityFlags.toByte()
     }
     return payload
@@ -2560,10 +2594,27 @@ class MainActivity : FlutterActivity() {
 
     serverReplyExecutor.submit {
       try {
+        if (
+          connectedServerClients[macAddress] != true ||
+          notifyReadyServerClients[macAddress] != true
+        ) {
+          traceBle("SERVER_REPLY_SKIPPED_LINK_GONE", macAddress)
+          Handler(Looper.getMainLooper()).post {
+            result.error("peer_disconnected", "GATT server link is no longer ready", null)
+          }
+          return@submit
+        }
         val mtu = serverMtuMap[macAddress] ?: 23
         val chunkSize = (mtu - 3).coerceIn(20, 512)
 
         fun notifyBlocking(chunk: ByteArray, offset: Int, isEof: Boolean = false): Boolean {
+          if (
+            connectedServerClients[macAddress] != true ||
+            notifyReadyServerClients[macAddress] != true
+          ) {
+            traceBle("SERVER_NOTIFY_ABORTED_LINK_GONE", macAddress, fields = mapOf("OFFSET" to offset))
+            return false
+          }
           val startedAt = SystemClock.elapsedRealtime()
           synchronized(serverNotifyLock) {
             lastNotifyOk = null
@@ -2597,10 +2648,13 @@ class MainActivity : FlutterActivity() {
             fields = mapOf("BYTES" to chunk.size, "OFFSET" to offset, "EOF" to isEof),
           )
 
-          // Older Android releases may omit this callback for unconfirmed NOTIFY.
-          // Keep the timeout fallback, but record callback latency and outcomes so
-          // it can be tuned from measurements without hiding stack rejects.
-          val deadlineMs = startedAt + 400L
+          // Android 9 often omits onNotificationSent for unconfirmed NOTIFY.
+          // The immediate return code checks admission and the reply EOF has
+          // an application-level ACK, so pacing every missing callback at
+          // 400 ms needlessly stalls 20-byte MTU replies past the watchdog.
+          val callbackFallbackMs =
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) 50L else 400L
+          val deadlineMs = startedAt + callbackFallbackMs
           var callbackResult: Boolean? = null
           synchronized(serverNotifyLock) {
             while (
@@ -2621,6 +2675,7 @@ class MainActivity : FlutterActivity() {
               "RESULT" to accepted,
               "CALLBACK" to callbackResult,
               "WAIT_MS" to waitedMs,
+              "FALLBACK_TIMEOUT_MS" to callbackFallbackMs,
               "BYTES" to chunk.size,
               "OFFSET" to offset,
               "EOF" to isEof,
@@ -2681,7 +2736,8 @@ class MainActivity : FlutterActivity() {
           val ackReceived = pendingAck.latch.await(
             replyAckTimeoutMs,
             java.util.concurrent.TimeUnit.MILLISECONDS,
-          )
+          ) && pendingServerReplyAcks[macAddress] === pendingAck &&
+            connectedServerClients[macAddress] == true
           if (!ackReceived) {
             traceBle(
               "SERVER_REPLY_ACK_TIMEOUT",
