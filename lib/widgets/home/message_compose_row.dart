@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../models/conversation.dart';
 import '../../providers/chat_provider.dart';
+import '../../providers/conversation_provider.dart';
+import '../../providers/identity_provider.dart';
 import '../../providers/message_draft_provider.dart';
 
 /// Multiline composer + Send; styled for a bottom chat bar.
@@ -14,6 +17,7 @@ class MessageComposeRow extends ConsumerStatefulWidget {
 
 class _MessageComposeRowState extends ConsumerState<MessageComposeRow> {
   late final TextEditingController _controller;
+  bool _sending = false;
 
   @override
   void initState() {
@@ -32,6 +36,8 @@ class _MessageComposeRowState extends ConsumerState<MessageComposeRow> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final draft = ref.watch(messageDraftProvider);
+    final conversationId = ref.watch(selectedConversationIdProvider);
+    final privateChat = ConversationIds.isDirect(conversationId);
 
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.65),
@@ -51,7 +57,7 @@ class _MessageComposeRowState extends ConsumerState<MessageComposeRow> {
                 textInputAction: TextInputAction.send,
                 textCapitalization: TextCapitalization.sentences,
                 decoration: InputDecoration(
-                  hintText: 'Message',
+                  hintText: privateChat ? 'Private message' : 'Message',
                   filled: true,
                   fillColor: scheme.surface.withValues(alpha: 0.55),
                   border: OutlineInputBorder(
@@ -77,13 +83,22 @@ class _MessageComposeRowState extends ConsumerState<MessageComposeRow> {
               padding: const EdgeInsets.only(bottom: 4),
               child: FilledButton(
                 key: const Key('send_button'),
-                onPressed: draft.trim().isEmpty ? null : () => _onSend(draft),
+                onPressed: _sending || draft.trim().isEmpty
+                    ? null
+                    : () => _onSend(draft),
                 style: FilledButton.styleFrom(
                   minimumSize: const Size(52, 44),
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   shape: const StadiumBorder(),
                 ),
-                child: const Text('Send'),
+                child: _sending
+                    ? const SizedBox(
+                        key: Key('send_progress'),
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Send'),
               ),
             ),
           ],
@@ -94,9 +109,35 @@ class _MessageComposeRowState extends ConsumerState<MessageComposeRow> {
 
   Future<void> _onSend(String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
-    await ref.read(chatActionsProvider.notifier).sendMessage(trimmed);
-    ref.read(messageDraftProvider.notifier).clear();
-    _controller.clear();
+    if (trimmed.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    try {
+      final conversationId = ref.read(selectedConversationIdProvider);
+      String? recipient;
+      if (ConversationIds.isDirect(conversationId)) {
+        final myId = await ref.read(myNodeIdProvider.future);
+        recipient = ConversationIds.otherParty(conversationId, myId);
+      }
+      final messageId = await ref
+          .read(chatActionsProvider.notifier)
+          .sendMessage(
+            trimmed,
+            conversationId: conversationId,
+            recipientNodeId: recipient,
+          );
+      if (messageId == null) {
+        final error = ref.read(chatActionsProvider.notifier).lastSendError;
+        if (error != null && mounted) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(SnackBar(content: Text(error)));
+        }
+        return;
+      }
+      ref.read(messageDraftProvider.notifier).clear();
+      _controller.clear();
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 }

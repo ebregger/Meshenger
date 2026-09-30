@@ -47,7 +47,8 @@ class DatabaseService {
       CREATE TABLE IF NOT EXISTS users (
         mesh_node_id TEXT PRIMARY KEY,
         display_name TEXT,
-        timestamp INTEGER
+        timestamp INTEGER,
+        public_key TEXT
       )
     ''');
 
@@ -56,7 +57,10 @@ class DatabaseService {
         msg_id TEXT PRIMARY KEY,
         origin_node_id TEXT,
         text_content TEXT,
-        timestamp INTEGER
+        timestamp INTEGER,
+        conversation_id TEXT,
+        recipient_node_id TEXT,
+        content_encoding TEXT
       )
     ''');
 
@@ -98,6 +102,29 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_bitmap_chunks_node_hlc
       ON bitmap_chunks (node_id, hlc)
     ''');
+
+    await _ensureColumn(
+      'ALTER TABLE users ADD COLUMN public_key TEXT NOT NULL DEFAULT \'\'',
+    );
+    await _ensureColumn(
+      'ALTER TABLE messages ADD COLUMN conversation_id TEXT NOT NULL DEFAULT \'\'',
+    );
+    await _ensureColumn(
+      'ALTER TABLE messages ADD COLUMN recipient_node_id TEXT NOT NULL DEFAULT \'\'',
+    );
+    await _ensureColumn(
+      'ALTER TABLE messages ADD COLUMN content_encoding TEXT NOT NULL DEFAULT \'plain\'',
+    );
+  }
+
+  Future<void> _ensureColumn(String sql) async {
+    try {
+      await _crdt.execute(sql);
+    } catch (error) {
+      final message = error.toString().toLowerCase();
+      if (message.contains('duplicate column')) return;
+      rethrow;
+    }
   }
 
   SqliteCrdt get _crdt {
@@ -813,52 +840,168 @@ class DatabaseService {
     _recordLocalWriteHlc(writeHlc);
   }
 
+  /// Publishes this install's X25519 public key. The private seed never enters
+  /// the CRDT. An unchanged key does not write a new row.
+  Future<void> setLocalPublicKey(String nodeId, String publicKey) async {
+    await init();
+    final trimmedKey = publicKey.trim();
+    final trimmedNodeId = nodeId.trim();
+    if (trimmedNodeId.isEmpty || trimmedKey.isEmpty) return;
+    if (await fetchPublicKey(trimmedNodeId) == trimmedKey) return;
+
+    _markDatabaseHashDirty();
+    final writeHlc = _crdt.canonicalTime.increment().toString();
+    await _crdt.execute(
+      '''
+      INSERT INTO users (mesh_node_id, display_name, timestamp, public_key)
+      VALUES (?1, '', ?2, ?3)
+      ON CONFLICT(mesh_node_id) DO UPDATE SET
+        public_key = excluded.public_key
+      ''',
+      [trimmedNodeId, DateTime.now().millisecondsSinceEpoch, trimmedKey],
+    );
+    _recordLocalWriteHlc(writeHlc);
+  }
+
+  Future<String?> fetchPublicKey(String nodeId) async {
+    await init();
+    final rows = await _crdt.query(
+      '''
+      SELECT public_key FROM users
+      WHERE is_deleted = 0 AND mesh_node_id = ?1
+      LIMIT 1
+      ''',
+      [nodeId],
+    );
+    if (rows.isEmpty) return null;
+    final value = rows.first['public_key']?.toString() ?? '';
+    return value.isEmpty ? null : value;
+  }
+
+  Future<Map<String, String>> fetchPublicKeys() async {
+    await init();
+    final rows = await _crdt.query(
+      '''
+      SELECT mesh_node_id, public_key FROM users
+      WHERE is_deleted = 0 AND public_key IS NOT NULL AND public_key != ''
+      ''',
+    );
+    return {
+      for (final row in rows)
+        if ((row['mesh_node_id']?.toString() ?? '').isNotEmpty)
+          row['mesh_node_id'].toString(): row['public_key'].toString(),
+    };
+  }
+
   /// Uses [_crdt.execute] so sql_crdt injects `hlc` / `modified` and advances the clock.
-  Future<void> upsertTextMessage(TextMessage value) async {
+  Future<void> upsertTextMessage(
+    TextMessage value, {
+    String conversationId = '',
+    String recipientNodeId = '',
+    String contentEncoding = 'plain',
+  }) async {
     await init();
     _markDatabaseHashDirty();
     final writeHlc = _crdt.canonicalTime.increment().toString();
     await _crdt.execute(
       '''
-      INSERT INTO messages (msg_id, origin_node_id, text_content, timestamp)
-      VALUES (?1, ?2, ?3, ?4)
+      INSERT INTO messages (
+        msg_id,
+        origin_node_id,
+        text_content,
+        timestamp,
+        conversation_id,
+        recipient_node_id,
+        content_encoding
+      )
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
       ON CONFLICT(msg_id) DO UPDATE SET
         origin_node_id = excluded.origin_node_id,
         text_content = excluded.text_content,
-        timestamp = excluded.timestamp
+        timestamp = excluded.timestamp,
+        conversation_id = excluded.conversation_id,
+        recipient_node_id = excluded.recipient_node_id,
+        content_encoding = excluded.content_encoding
       ''',
       [
         value.msgId,
         value.originNodeId,
         value.textContent,
         value.timestamp.toInt(),
+        conversationId,
+        recipientNodeId,
+        contentEncoding,
       ],
     );
     _recordLocalWriteHlc(writeHlc);
   }
 
-  /// Stress-test reset: drop chat rows only; keep [users] display names.
-  Future<int> clearTextMessages() async {
+  /// Tombstones live chat rows. Each delete gets its own HLC so catch-up pages
+  /// do not treat one bulk delete as a single frontier.
+  ///
+  /// [conversationId] limits the delete to one thread. [olderThanTimestampMs]
+  /// keeps newer rows. [participantNodeId] skips sealed relays this phone is
+  /// only forwarding.
+  Future<int> deleteTextMessages({
+    String? conversationId,
+    int? olderThanTimestampMs,
+    String? participantNodeId,
+  }) async {
     await init();
     _markDatabaseHashDirty();
     _invalidateVersionVectorCache();
     final liveRows = await _crdt.query(
-      'SELECT msg_id FROM messages WHERE is_deleted = 0 ORDER BY msg_id ASC',
+      '''
+      SELECT msg_id, timestamp, conversation_id, origin_node_id, recipient_node_id
+      FROM messages
+      WHERE is_deleted = 0
+      ORDER BY msg_id ASC
+      ''',
     );
-    // Each delete gets its own HLC. A single bulk DELETE gives every row the
-    // same frontier, which makes a 25-row catch-up page appear to cover every
-    // remaining row from that delete operation.
+    final messageIds = <String>[];
     for (final row in liveRows) {
-      final messageId = row['msg_id']?.toString();
-      if (messageId == null || messageId.isEmpty) continue;
+      final messageId = row['msg_id']?.toString() ?? '';
+      if (messageId.isEmpty) continue;
+      final rowConversation = row['conversation_id']?.toString() ?? '';
+      if (conversationId != null && rowConversation != conversationId) {
+        continue;
+      }
+      if (olderThanTimestampMs != null) {
+        final timestamp = _timestampMillis(row['timestamp']);
+        if (timestamp >= olderThanTimestampMs) continue;
+      }
+      if (participantNodeId != null && rowConversation.isNotEmpty) {
+        final origin = row['origin_node_id']?.toString() ?? '';
+        final recipient = row['recipient_node_id']?.toString() ?? '';
+        if (origin != participantNodeId && recipient != participantNodeId) {
+          continue;
+        }
+      }
+      messageIds.add(messageId);
+    }
+    for (final messageId in messageIds) {
       await _crdt.execute('DELETE FROM messages WHERE msg_id = ?1', [
         messageId,
       ]);
     }
+    _markDatabaseHashDirty();
+    _invalidateVersionVectorCache();
+    return messageIds.length;
+  }
+
+  /// Stress-test reset: drop chat rows only; keep [users] display names.
+  Future<int> clearTextMessages() async {
+    final removed = await deleteTextMessages();
     await _crdt.execute('DELETE FROM bitmap_chunks');
     _markDatabaseHashDirty();
     _invalidateVersionVectorCache();
-    return liveRows.length;
+    return removed;
+  }
+
+  static int _timestampMillis(Object? value) {
+    if (value is int) return value;
+    if (value is Int64) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
   Future<List<TextMessage>> fetchTextMessages() async {
@@ -885,7 +1028,13 @@ class DatabaseService {
 
   /// Same as [watchTextMessages], but joins `messages` + `users` to include
   /// the author's display name.
-  Stream<List<TextMessageWithAuthor>> watchTextMessagesWithAuthors() async* {
+  ///
+  /// [conversationId] is empty for the shared room. Direct threads are limited
+  /// to rows where [viewerNodeId] is a participant.
+  Stream<List<TextMessageWithAuthor>> watchTextMessagesWithAuthors({
+    String conversationId = '',
+    String viewerNodeId = '',
+  }) async* {
     await init();
     const sql = '''
       SELECT
@@ -893,13 +1042,22 @@ class DatabaseService {
         m.origin_node_id,
         m.text_content,
         m.timestamp,
+        COALESCE(m.conversation_id, '') AS conversation_id,
+        COALESCE(m.recipient_node_id, '') AS recipient_node_id,
+        COALESCE(NULLIF(m.content_encoding, ''), 'plain') AS content_encoding,
         COALESCE(NULLIF(TRIM(u.display_name), ''), SUBSTR(m.origin_node_id, 1, 8)) AS author_name
       FROM messages m
       LEFT JOIN users u ON m.origin_node_id = u.mesh_node_id
       WHERE m.is_deleted = 0
+        AND COALESCE(m.conversation_id, '') = ?1
+        AND (
+          ?1 = ''
+          OR m.origin_node_id = ?2
+          OR m.recipient_node_id = ?2
+        )
       ORDER BY m.timestamp ASC
     ''';
-    yield* _crdt.watch(sql).map((rows) {
+    yield* _crdt.watch(sql, () => [conversationId, viewerNodeId]).map((rows) {
       return rows
           .map((r) {
             final msgId = r['msg_id']?.toString() ?? '';
@@ -919,8 +1077,29 @@ class DatabaseService {
               textContent: textContent,
               timestamp: Int64(timestampMs),
               authorName: authorName.isNotEmpty ? authorName : shortId,
+              conversationId: r['conversation_id']?.toString() ?? '',
+              recipientNodeId: r['recipient_node_id']?.toString() ?? '',
+              contentEncoding: r['content_encoding']?.toString() ?? 'plain',
             );
           })
+          .toList(growable: false);
+    });
+  }
+
+  Stream<List<String>> watchDirectConversationIds(String viewerNodeId) async* {
+    await init();
+    const sql = '''
+      SELECT DISTINCT conversation_id
+      FROM messages
+      WHERE is_deleted = 0
+        AND COALESCE(conversation_id, '') != ''
+        AND (origin_node_id = ?1 OR recipient_node_id = ?1)
+      ORDER BY conversation_id ASC
+    ''';
+    yield* _crdt.watch(sql, () => [viewerNodeId]).map((rows) {
+      return rows
+          .map((row) => row['conversation_id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
           .toList(growable: false);
     });
   }

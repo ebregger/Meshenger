@@ -64,6 +64,31 @@ void main() {
     expect(find.byKey(const Key('message_timestamp_long')), findsOneWidget);
   });
 
+  testWidgets('shows sent and delivered progress on outgoing messages', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _appWithMessages([
+        _message(
+          id: 'outgoing',
+          timestamp: DateTime.now(),
+          isSent: true,
+          delivery: MessageDeliveryState.sent,
+        ),
+        _message(
+          id: 'arrived',
+          timestamp: DateTime.now(),
+          isSent: true,
+          delivery: MessageDeliveryState.delivered,
+          deliveredPeerCount: 2,
+        ),
+      ]),
+    );
+
+    expect(find.text('Sent'), findsOneWidget);
+    expect(find.text('Delivered to 2 peers'), findsOneWidget);
+  });
+
   for (final isSent in [false, true]) {
     final direction = isSent ? 'sent' : 'received';
 
@@ -138,6 +163,8 @@ ChatMessage _message({
   required DateTime timestamp,
   String body = 'Message body',
   bool isSent = false,
+  MessageDeliveryState delivery = MessageDeliveryState.none,
+  int deliveredPeerCount = 0,
 }) {
   return ChatMessage(
     id: id,
@@ -145,5 +172,7 @@ ChatMessage _message({
     authorName: isSent ? '' : 'Alex',
     isSent: isSent,
     timestamp: timestamp,
+    delivery: delivery,
+    deliveredPeerCount: deliveredPeerCount,
   );
 }

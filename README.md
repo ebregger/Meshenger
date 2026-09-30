@@ -24,7 +24,9 @@ Sync happens when nearby phones discover one another and have an opportunity to 
 
 ## Privacy
 
-Meshenger has no central server, but the current mesh traffic is **not encrypted**. Messages, user IDs, and display names are sent as readable data over Bluetooth. Nearby people with suitable BLE tools may be able to capture that traffic, even if they do not use Meshenger. Treat the shared chat as public to people within radio range. Do not send sensitive information.
+Meshenger has no central server. The shared room is still a public conversation: anyone running Meshenger nearby can read it, and those messages are stored in plaintext so every peer can show them. Do not put sensitive information in the shared room.
+
+Direct chats are encrypted. Each install keeps an X25519 private key on the phone and publishes only the public key. A private message is sealed with AES-GCM under a key derived from the two participants' keys. Relays store and forward the ciphertext, and the app shows them "Private message" instead of the contents. User IDs, timestamps, and the fact that a private chat exists still travel with the mesh record. A passive Bluetooth capture of a private message is not readable without one of the two private keys.
 
 ## Screenshots
 
@@ -39,12 +41,17 @@ Meshenger has no central server, but the current mesh traffic is **not encrypted
 3. Open Meshenger on each phone and keep the screens on and unlocked while trying the first sync. Debug builds request that the screen stay on while Meshenger is in the foreground; this does not wake a sleeping display or bypass the lock screen. Release builds follow the phone's normal screen timeout.
 4. Send a sample message. Nearby peers should appear as chips, and the message should arrive as the phones sync.
 
-The **Messages** tab contains the shared conversation and nearby peers. Tap a peer chip to see its details. The **Configuration** tab lets you set a display name, check permissions and radio diagnostics, and restart the mesh radio if discovery or syncing stalls. Debug Android builds also show a **Developer Testing** option to hold a partial CPU wake lock during screen-off BLE tests. It leaves the display and lock screen unchanged, and turns off when disabled or when the mesh foreground service stops.
+The **Messages** tab contains the shared conversation and nearby peers. **Everyone** is the shared room. Tap a peer chip, then **Private chat**, to open an encrypted one-to-one thread. Your own messages show **Sent** until a later sync finishes, then **Delivered**. The trash icon clears the open conversation and syncs that removal.
+
+The **Configuration** tab lets you set a display name, choose how long to keep messages, clear the shared room, check permissions and radio diagnostics, and restart the mesh radio if discovery or syncing stalls. Keeping messages for 1, 7, or 30 days removes older messages you sent or received and syncs those removals. Relayed private chats you are not part of stay on the phone so they can still reach their recipients. Debug Android builds also show a **Developer Testing** option to hold a partial CPU wake lock during screen-off BLE tests. It leaves the display and lock screen unchanged, and turns off when disabled or when the mesh foreground service stops.
 
 ## Current capabilities
 
 - Android app with BLE peer discovery and direct phone-to-phone data exchange.
 - Shared chat history that syncs and merges across peers, including through a phone that is in range of both sides.
+- Encrypted direct conversations relayed as ciphertext.
+- Chat clearing and retention controls that sync removals for conversations you participate in.
+- Sent and delivered progress on your own messages.
 - Display names, peer presence indicators, sync status, and basic radio diagnostics.
 
 Keep the app open and phones nearby while evaluating sync. Android background and battery limits can interrupt scanning or connections when the app is not in use.
@@ -60,11 +67,12 @@ Latency is measured from message submission until the message first appears in t
 
 The long two-peer run recorded one connection failure and no send failures. The three-peer run recorded no connection failures, nine connection rejections, zero penalty entries, and no send failures.
 
-## Planned work
+## Release signing
 
-- Expand fake BLE peer coverage through discovery, sync, and notification paths without physical Bluetooth hardware.
-- Decide and implement a stronger privacy model, including encryption if private conversations are needed.
-- Add chat history clearing and retention controls.
-- Support direct one-to-one conversations.
-- Improve message delivery progress indicators.
-- Configure release signing with a consistent release keystore.
+Release builds use one upload keystore, not the debug key. Create it once and keep the same files for later releases:
+
+```powershell
+powershell -File tools/create_release_keystore.ps1
+```
+
+That writes `android/key.properties` and `android/app/upload-keystore.jks`. Both are gitignored. Running the script again leaves the existing key in place. `assembleRelease` and `bundleRelease` fail with setup instructions when those files are missing. Debug builds still install without them.

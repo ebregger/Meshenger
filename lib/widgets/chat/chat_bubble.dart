@@ -8,6 +8,16 @@ class ChatBubble extends StatelessWidget {
 
   final ChatMessage message;
 
+  String _deliveryLabel(ChatMessage message) {
+    if (message.delivery == MessageDeliveryState.delivered) {
+      if (message.deliveredPeerCount > 1) {
+        return 'Delivered to ${message.deliveredPeerCount} peers';
+      }
+      return 'Delivered';
+    }
+    return 'Sent';
+  }
+
   String _formatTimestamp(BuildContext context) {
     final localizations = MaterialLocalizations.of(context);
     final timestamp = message.timestamp.toLocal();
@@ -109,6 +119,14 @@ class ChatBubble extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                     ],
+                    if (message.locked) ...[
+                      Icon(
+                        Icons.lock_outline,
+                        size: 14,
+                        color: textColor.withValues(alpha: 0.8),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
                     Text(
                       message.body,
                       style: theme.textTheme.bodyMedium?.copyWith(
@@ -125,6 +143,18 @@ class ChatBubble extends StatelessWidget {
                         height: 1.1,
                       ),
                     ),
+                    if (isSent &&
+                        message.delivery != MessageDeliveryState.none) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        _deliveryLabel(message),
+                        key: Key('message_delivery_${message.id}'),
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: textColor.withValues(alpha: 0.72),
+                          height: 1.1,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

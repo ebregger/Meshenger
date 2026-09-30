@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/ble_network_provider.dart';
 import '../providers/database_provider.dart';
 import '../providers/identity_provider.dart';
+import '../widgets/config/chat_history_settings.dart';
 import '../widgets/config/diagnostic_tile.dart';
 import '../widgets/config/diagnostics_action_button.dart';
 import '../widgets/config/message_notification_settings.dart';
@@ -97,6 +98,10 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
               });
             },
           ),
+          const SizedBox(height: 32),
+          Text('Chat History', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 10),
+          const ChatHistorySettings(),
           const SizedBox(height: 32),
           Text(
             'Message Notifications',

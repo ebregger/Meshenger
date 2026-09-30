@@ -5,16 +5,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/app_themes.dart';
 import '../models/chat_message.dart';
+import '../models/conversation.dart';
 import '../providers/ble_network_provider.dart';
 import '../providers/chat_provider.dart';
+import '../providers/conversation_provider.dart';
 import '../providers/identity_provider.dart';
 import '../providers/node_profiles_provider.dart';
 import '../screens/config_screen.dart';
 import '../services/local_message_notification_service.dart';
+import '../services/mesh_key_store.dart';
+import '../services/message_delivery_hook.dart';
+import '../services/message_delivery_tracker.dart';
 import '../services/ui_debug_snapshot.dart';
 import '../widgets/chat/chat_bubble.dart';
 import '../widgets/chat/chat_input_dock.dart';
+import '../widgets/chat/conversation_bar.dart';
 import '../widgets/chat/device_chip.dart';
+import '../widgets/config/chat_history_settings.dart';
 import '../widgets/home/liquid_glass_app_bar.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -98,6 +105,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          const ConversationBar(),
           SizedBox(
             height: 52,
             child: SingleChildScrollView(
@@ -170,13 +178,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                   'originNodeId': m.originNodeId,
                                 },
                             ]);
+                            final viewerId = myIdAsync.value;
+                            if (viewerId == null) return;
+                            for (final message in messages) {
+                              if (message.originNodeId == viewerId) {
+                                messageDeliveryTracker.observeStored(
+                                  message.msgId,
+                                );
+                              }
+                            }
                           });
 
                           final myId = myIdAsync.value;
+                          final privateChat = ConversationIds.isDirect(
+                            ref.watch(selectedConversationIdProvider),
+                          );
                           if (messages.isEmpty) {
                             return Center(
                               child: Text(
-                                'No messages yet',
+                                privateChat
+                                    ? 'No private messages yet'
+                                    : 'No messages yet',
                                 style: Theme.of(context).textTheme.bodyLarge
                                     ?.copyWith(
                                       color: Theme.of(
@@ -200,6 +222,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               final tm = messages[messageIndex];
                               final isSent =
                                   myId != null && tm.originNodeId == myId;
+                              final deliveryState = isSent
+                                  ? ref
+                                        .watch(messageDeliveryProvider)
+                                        .stateFor(tm.msgId)
+                                  : MessageDeliveryState.none;
+                              final delivery =
+                                  !isSent
+                                  ? MessageDeliveryState.none
+                                  : deliveryState ==
+                                        MessageDeliveryState.delivered
+                                  ? MessageDeliveryState.delivered
+                                  : MessageDeliveryState.sent;
 
                               final bubble = ChatMessage(
                                 id: tm.msgId,
@@ -209,6 +243,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 timestamp: DateTime.fromMillisecondsSinceEpoch(
                                   tm.timestamp.toInt(),
                                 ),
+                                delivery: delivery,
+                                deliveredPeerCount: isSent
+                                    ? ref
+                                          .watch(messageDeliveryProvider)
+                                          .peerCount(tm.msgId)
+                                    : 0,
+                                locked: tm.locked,
                               );
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 10),
@@ -272,10 +313,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
     });
 
+    ref.watch(publishMeshIdentityProvider);
+    final conversationTitle = _conversationTitle();
+    final clearConversation = IconButton(
+      key: const Key('clear_conversation'),
+      tooltip: 'Clear conversation',
+      onPressed: () => confirmAndClearConversation(
+        context,
+        ref,
+        conversationId: ref.read(selectedConversationIdProvider),
+      ),
+      icon: const Icon(Icons.delete_outline),
+    );
     final appBar = _tabIndex == 0
         ? (useLiquidBar
-              ? LiquidGlassAppBar(title: 'Messages', statusBarHeight: topInset)
-              : AppBar(title: const Text('Messages'), centerTitle: true))
+              ? LiquidGlassAppBar(
+                  title: conversationTitle,
+                  statusBarHeight: topInset,
+                  trailing: clearConversation,
+                )
+              : AppBar(
+                  title: Text(conversationTitle),
+                  centerTitle: true,
+                  actions: [clearConversation],
+                ))
         : AppBar(title: const Text('Configuration'), centerTitle: true);
 
     return Scaffold(
@@ -305,6 +366,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         children: [_messagesTab(context), const ConfigurationScreen()],
       ),
     );
+  }
+
+  String _conversationTitle() {
+    final conversationId = ref.watch(selectedConversationIdProvider);
+    if (conversationId.isEmpty) return 'Messages';
+    final myId = ref.watch(myNodeIdProvider).asData?.value;
+    final other = myId == null
+        ? null
+        : ConversationIds.otherParty(conversationId, myId);
+    if (other == null || other.isEmpty) return 'Private chat';
+    final profiles = ref.watch(nodeProfilesProvider).asData?.value ?? const [];
+    for (final profile in profiles) {
+      final name = profile.displayName.trim();
+      if (profile.nodeId == other && name.isNotEmpty) return name;
+    }
+    return other.length <= 8 ? other : other.substring(0, 8);
   }
 
   void _showNodeDetailsDialog(BuildContext context, MeshNodeState state) {
@@ -556,6 +633,32 @@ class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
           },
         ),
         actions: [
+          Consumer(
+            builder: (context, ref, _) {
+              final myId = ref.watch(myNodeIdProvider).asData?.value;
+              if (myId == null || myId == widget.initialState.id) {
+                return const SizedBox.shrink();
+              }
+              return TextButton(
+                key: const Key('private_chat_button'),
+                onPressed: () {
+                  final conversationId = ConversationIds.direct(
+                    myId,
+                    widget.initialState.id,
+                  );
+                  ref
+                      .read(pinnedDirectConversationIdsProvider.notifier)
+                      .pin(conversationId);
+                  ref
+                      .read(selectedConversationIdProvider.notifier)
+                      .select(conversationId);
+                  _timer?.cancel();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Private chat'),
+              );
+            },
+          ),
           TextButton(
             onPressed: () {
               _timer?.cancel();
