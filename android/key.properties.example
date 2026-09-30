@@ -1,0 +1,6 @@
+# Copy to android/key.properties. storeFile is relative to android/app.
+# Create both files with: powershell -File tools/create_release_keystore.ps1
+storePassword=replace-me
+keyPassword=replace-me
+keyAlias=upload
+storeFile=upload-keystore.jks
