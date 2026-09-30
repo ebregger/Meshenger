@@ -7,6 +7,7 @@ import '../models/text_message_with_author.dart';
 import '../providers/chat_provider.dart';
 import '../providers/identity_provider.dart';
 import '../services/debug_incoming_message_test.dart';
+import '../services/incoming_notification_planner.dart';
 import '../services/local_message_notification_service.dart';
 
 /// Watches the shared message stream and notifies only for new remote messages
@@ -27,12 +28,9 @@ class _IncomingMessageNotificationListenerState
   late final LocalMessageNotificationService _notifications;
   late final StreamSubscription<TextMessageWithAuthor>
   _debugMessageSubscription;
-  final Set<String> _seenMessageIds = {};
-  final List<TextMessageWithAuthor> _awaitingIdentity = [];
+  final IncomingNotificationPlanner _planner = IncomingNotificationPlanner();
 
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
-  String? _myNodeId;
-  bool _hasSeededHistory = false;
 
   bool get _isBackgrounded =>
       _lifecycleState == AppLifecycleState.hidden ||
@@ -43,6 +41,7 @@ class _IncomingMessageNotificationListenerState
     super.initState();
     _lifecycleState =
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
+    _planner.backgrounded = _isBackgrounded;
     WidgetsBinding.instance.addObserver(this);
     _notifications = ref.read(localMessageNotificationServiceProvider);
     unawaited(_notifications.initialize());
@@ -61,7 +60,7 @@ class _IncomingMessageNotificationListenerState
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lifecycleState = state;
-    if (!_isBackgrounded) _awaitingIdentity.clear();
+    _planner.backgrounded = _isBackgrounded;
   }
 
   @override
@@ -97,47 +96,20 @@ class _IncomingMessageNotificationListenerState
   }
 
   void _acceptMyNodeId(String nodeId) {
-    _myNodeId = nodeId;
-    if (!_isBackgrounded || _awaitingIdentity.isEmpty) return;
-
-    final pending = List<TextMessageWithAuthor>.of(_awaitingIdentity);
-    _awaitingIdentity.clear();
-    for (final message in pending) {
-      if (message.originNodeId != nodeId) _notify(message);
-    }
+    _notifyIds(_planner.acceptIdentity(nodeId));
   }
 
   void _acceptMessageSnapshot(List<TextMessageWithAuthor> messages) {
-    if (!_hasSeededHistory) {
-      _seenMessageIds.addAll(messages.map((message) => message.msgId));
-      _hasSeededHistory = true;
-      return;
-    }
-
-    _acceptNewMessages(messages);
+    _notifyIds(_planner.acceptSnapshot(messages));
   }
 
   void _acceptDebugMessage(TextMessageWithAuthor message) {
-    if (_hasSeededHistory) _acceptNewMessages([message]);
+    _notifyIds(_planner.acceptDebug(message));
   }
 
-  void _acceptNewMessages(Iterable<TextMessageWithAuthor> messages) {
-    for (final message in messages) {
-      if (message.msgId.isEmpty || !_seenMessageIds.add(message.msgId)) {
-        continue;
-      }
-      if (!_isBackgrounded) continue;
-
-      final myNodeId = _myNodeId;
-      if (myNodeId == null) {
-        _awaitingIdentity.add(message);
-      } else if (message.originNodeId != myNodeId) {
-        _notify(message);
-      }
+  void _notifyIds(List<String> messageIds) {
+    for (final messageId in messageIds) {
+      unawaited(_notifications.showIncomingMessage(messageId));
     }
-  }
-
-  void _notify(TextMessageWithAuthor message) {
-    unawaited(_notifications.showIncomingMessage(message.msgId));
   }
 }

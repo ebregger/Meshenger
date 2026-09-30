@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../constants/ble_constants.dart';
 import '../providers/database_provider.dart';
 import 'benchmark_trace.dart';
+import 'mesh_advertisement.dart';
 import 'mesh_catchup.dart';
 import 'mesh_dial_policy.dart';
 import 'native_mesh_service.dart';
@@ -207,11 +208,26 @@ class BleDiscoveryService {
   final Set<String> _loggedPeerCapabilities = {};
   final Set<String> _loggedDialElections = {};
 
+  static final List<void Function(String peerNodeId)> _syncCompletedListeners =
+      <void Function(String peerNodeId)>[];
+
+  /// Notified after [markSyncComplete] records a finished bidirectional sync.
+  static void addSyncCompletedListener(
+    void Function(String peerNodeId) listener,
+  ) {
+    _syncCompletedListeners.add(listener);
+  }
+
   /// Record a completed bidirectional sync with [peerNodeId].
   static void markSyncComplete(String peerNodeId) {
     if (peerNodeId.isEmpty) return;
     lastFullSync[peerNodeId] = DateTime.now();
     peerCaughtUp[peerNodeId] = true;
+    for (final listener in List<void Function(String)>.of(
+      _syncCompletedListeners,
+    )) {
+      listener(peerNodeId);
+    }
   }
 
   /// Advertised or post-transfer hash no longer matches ours.
@@ -813,25 +829,17 @@ class BleDiscoveryService {
     );
   }
 
+  /// Identity fields the scanner uses when it sees [result].
+  static MeshAdvertisement inspectAdvertisement(ScanResult result) {
+    return MeshAdvertisement.fromScanResult(result);
+  }
+
   void setLocalHash(Uint8List value) {
     _localHash = value;
   }
 
   Uint8List? _tryGetRemoteHash(ScanResult r) {
-    final raw = r.advertisementData.manufacturerData[meshManufacturerId];
-    if (raw == null || raw.isEmpty) return null;
-    final bytes = Uint8List.fromList(raw);
-    // Manufacturer payload format:
-    // [0..3]="MESH", [4..7]=uint32 hash (big endian)
-    if (bytes.length < 8) return null;
-    if (bytes[0] != 0x4D || // M
-        bytes[1] != 0x45 || // E
-        bytes[2] != 0x53 || // S
-        bytes[3] != 0x48) {
-      // H
-      return null;
-    }
-    return bytes.sublist(4);
+    return MeshAdvertisement.fromScanResult(r).payload;
   }
 
   bool _isLikelyNativeMeshAdvert(ScanResult r) {
@@ -1085,14 +1093,9 @@ class BleDiscoveryService {
                   remotePayload,
                 );
           }
-          if (telemetryNodeIdPrefix == null &&
-              remotePayload != null &&
-              remotePayload.length >= 12) {
-            try {
-              telemetryNodeIdPrefix = utf8
-                  .decode(remotePayload.sublist(8, 12), allowMalformed: true)
-                  .toLowerCase();
-            } catch (_) {}
+          if (telemetryNodeIdPrefix == null && remotePayload != null) {
+            telemetryNodeIdPrefix =
+                MeshAdvertisement.readNodeIdPrefix(remotePayload)?.toLowerCase();
           }
           if (remoteExtendedConnectable != null &&
               telemetryNodeIdPrefix != null) {
@@ -1233,48 +1236,28 @@ class BleDiscoveryService {
 
           // CRITICAL: Extract 4-byte node ID prefix (at bytes 8-11) and skip if it's our own advertisement!
           // Payload layout: [8 bytes hash][4 bytes nodeId prefix]
-          if (remotePayload.length >= 12) {
-            try {
-              final remoteNodeIdStr = utf8.decode(
-                remotePayload.sublist(8, 12),
-                allowMalformed: true,
-              );
-              final localNodeIdPrefix = myNodeId.length >= 4
-                  ? myNodeId.substring(0, 4)
-                  : myNodeId.padRight(4, '0');
-              if (remoteNodeIdStr == localNodeIdPrefix) {
-                continue; // Drop self-advertisement completely
-              }
-            } catch (e) {
-              debugPrint(
-                '⚠️ [SCAN] Failed to decode node ID prefix from $mac: $e',
-              );
+          final remoteNodeIdStr = MeshAdvertisement.readNodeIdPrefix(
+            remotePayload,
+          );
+          if (remoteNodeIdStr != null) {
+            final localNodeIdPrefix = myNodeId.length >= 4
+                ? myNodeId.substring(0, 4)
+                : myNodeId.padRight(4, '0');
+            if (remoteNodeIdStr == localNodeIdPrefix) {
+              continue; // Drop self-advertisement completely
             }
           }
-          final int remoteHashInt;
-
-          try {
-            // Read 64-bit hash as two big-endian uint32 words (Dart ByteData has no getUint64).
-            final bd = ByteData.sublistView(remotePayload);
-            final hashHigh = bd.getUint32(0, Endian.big);
-            final hashLow = bd.getUint32(4, Endian.big);
-            remoteHashInt = (hashHigh << 32) | hashLow;
-          } catch (e) {
-            debugPrint('⚠️ [SCAN] Failed to parse 64-bit hash from $mac: $e');
+          final remoteHashInt = MeshAdvertisement.databaseHashFromPayload(
+            remotePayload,
+          );
+          if (remoteHashInt == null) {
+            debugPrint('⚠️ [SCAN] Failed to parse 64-bit hash from $mac');
             continue;
           }
 
           // Resolve identity + refresh UI presence BEFORE connect cooldowns/deadlists.
           // A peer in the penalty box is still "nearby" if we keep hearing its ads.
-          String? prefix;
-          if (remotePayload.length >= 12) {
-            try {
-              prefix = utf8.decode(
-                remotePayload.sublist(8, 12),
-                allowMalformed: true,
-              );
-            } catch (_) {}
-          }
+          final prefix = MeshAdvertisement.readNodeIdPrefix(remotePayload);
           // The node-ID prefix and exact scan address identify the advertiser.
           // Its DB hash can match another peer after the mesh converges, so only
           // use a hash as a last resort while it has one known owner.
