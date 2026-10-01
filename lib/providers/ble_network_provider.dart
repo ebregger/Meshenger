@@ -14,6 +14,8 @@ import '../services/api_service.dart';
 import '../services/ble_discovery_service.dart';
 import '../services/database_service.dart';
 import '../services/benchmark_trace.dart';
+import '../services/deep_catchup.dart';
+import '../services/framed_reply_retry_state.dart';
 import '../services/local_write_hook.dart';
 import '../services/native_mesh_service.dart';
 import '../utils/ble_permission_result.dart';
@@ -22,9 +24,34 @@ import 'ble_network_state.dart';
 import 'database_provider.dart';
 import 'identity_provider.dart';
 
+class _IncomingFramedReply {
+  final Map<int, Uint8List> chunks = <int, Uint8List>{};
+  int? transferId;
+  int? chunkCount;
+  int? totalBytes;
+  int? crc32;
+  String? attemptId;
+  String? connectionId;
+  final FramedReplyRetryState feedbackState = FramedReplyRetryState();
+}
+
+int _blePayloadCrc32(List<int> bytes) {
+  var crc = 0xFFFFFFFF;
+  for (final byte in bytes) {
+    crc ^= byte & 0xFF;
+    for (var bit = 0; bit < 8; bit++) {
+      crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320 : crc >> 1;
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF;
+}
+
 /// BLE adapter, permissions, and Phase 3 mesh discovery (scan + advertise).
 class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   BleNetworkNotifier(this._ref) : super(BleNetworkState.initial) {
+    _localWriteHook = (messageId) =>
+        onLocalDatabaseWrite(messageId: messageId, source: 'chat_hook');
+    onLocalCrdtWrite = _localWriteHook;
     _discovery = BleDiscoveryService(
       _ref,
       onConnectionPhaseChanged: _handleMeshConnectionPhaseChanged,
@@ -43,10 +70,17 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   StreamSubscription<List<TextMessage>>? _localMessagesSub;
   StreamSubscription<List<NodeProfile>>? _localProfilesSub;
   StreamSubscription<IncomingBleChunk>? _nativePayloadSub;
+  late final void Function(String messageId) _localWriteHook;
   final Map<String, List<int>> _incomingBuffersByMac = <String, List<int>>{};
   final Map<String, Map<String, String>> _incomingTransferByMac =
       <String, Map<String, String>>{};
+  final Map<String, _IncomingFramedReply> _incomingFramedRepliesByMac =
+      <String, _IncomingFramedReply>{};
   bool _meshSessionActive = false;
+  bool _meshSessionReady = false;
+  bool _pendingLocalDatabaseWrite = false;
+  String? _pendingLocalWriteMessageId;
+  String? _pendingLocalWriteSource;
   bool _scannerRecovering = false;
   String? _localNodeId;
   String? _ownBleMac;
@@ -56,6 +90,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   /// Refresh the whole-database hash after writes settle, not during each send.
   static const Duration _advertHashQuietPeriod = Duration(seconds: 1);
+  static const int _maxReplyMissingIndices = 7;
 
   int? _lastLocalProfileTimestampMs;
   final Map<String, String> _nameById = <String, String>{};
@@ -502,10 +537,65 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     });
   }
 
+  /// Our whole-history digest just finished recomputing in the background:
+  /// resume older-history catch-up with any neighbor that still differs.
+  void _onDeepDigestReady(String myId) {
+    if (!_meshSessionActive || _localNodeId != myId) return;
+    for (final peerId in List<String>.of(_discovery.currentNeighborIds)) {
+      _continueDeepCatchup(peerId);
+    }
+  }
+
+  /// Neighbors we have already offered our deep digest to this session.
+  final Set<String> _deepProbed = <String>{};
+
+  /// Older-history catch-up with [peerId], once our recent windows agree.
+  ///
+  /// Runs after the new messages have been exchanged, never before, and only
+  /// with a digest that is already computed, so it adds no latency to live
+  /// traffic. Stops on its own when a round changes nothing.
+  void _continueDeepCatchup(String peerId, [int? remoteTailHash]) {
+    final myId = _localNodeId;
+    if (!_meshSessionActive || myId == null) return;
+    unawaited(() async {
+      final db = await _ref.read(databaseProvider.future);
+      // A stale digest is already being rebuilt; its completion calls back.
+      final ours = db.freshDeepDigest;
+      if (ours == null) return;
+      final theirTail =
+          remoteTailHash ?? BleDiscoveryService.peerObservedHash[peerId]?.hash;
+      if (theirTail == null) return;
+      // Recent messages always come first.
+      if (theirTail != await db.getDatabaseHash()) return;
+      final peer = DeepCatchup.peer(peerId);
+      if (peer == null) {
+        // Matching recent windows never trigger a handshake by themselves, so
+        // offer our digest once per neighbor and learn theirs in the reply.
+        if (_deepProbed.add(peerId)) {
+          debugPrint('🗄️ [SYNC] Deep catch-up probe to $peerId');
+          _discovery.requestHashRepair(myId, peerId, theirTail);
+        }
+        return;
+      }
+      if (!DeepCatchup.differs(ours, peer)) return;
+      if (!DeepCatchup.claimRound(
+        peerId,
+        ourHash: ours.hash,
+        theirHash: peer.hash,
+      )) {
+        return;
+      }
+      debugPrint('🗄️ [SYNC] Older-history catch-up round with $peerId');
+      _discovery.requestHashRepair(myId, peerId, theirTail);
+    }());
+  }
+
   Future<void> _attachLocalMessageQuickScanTrigger(String myId) async {
     await _localMessagesSub?.cancel();
     _primeMessageListLength = true;
     final db = await _ref.read(databaseProvider.future);
+    db.onDeepDigestReady = () => _onDeepDigestReady(myId);
+    db.scheduleDeepDigest();
     _localMessagesSub = db.watchTextMessages().listen((messages) {
       if (!_meshSessionActive) return;
       final self = _localNodeId;
@@ -530,7 +620,29 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     String? excludePeerId,
   }) {
     final myId = _localNodeId;
-    if (!_meshSessionActive || myId == null) return;
+    if (!_meshSessionActive || !_meshSessionReady || myId == null) {
+      _pendingLocalDatabaseWrite = true;
+      if (messageId?.isNotEmpty == true) {
+        _pendingLocalWriteMessageId = messageId;
+        traceBenchmarkMessage(
+          messageId!,
+          'SYNC_DEFERRED',
+          fields: {
+            'SOURCE': source,
+            'MESH_SESSION_ACTIVE': _meshSessionActive,
+            'MESH_SESSION_READY': _meshSessionReady,
+            'LOCAL_NODE_ID_AVAILABLE': myId != null,
+          },
+        );
+      }
+      _pendingLocalWriteSource = source;
+      debugPrint(
+        '[MESH] Deferring local database sync '
+        '(active=$_meshSessionActive ready=$_meshSessionReady '
+        'nodeId=${myId != null} messageId=${messageId != null})',
+      );
+      return;
+    }
     if (messageId != null) {
       traceBenchmarkMessage(
         messageId,
@@ -550,6 +662,17 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       messageId: messageId,
       excludePeerId: excludePeerId,
     );
+  }
+
+  void _flushPendingLocalDatabaseWrite() {
+    if (!_pendingLocalDatabaseWrite) return;
+    final messageId = _pendingLocalWriteMessageId;
+    final source = _pendingLocalWriteSource ?? 'local_write';
+    _pendingLocalDatabaseWrite = false;
+    _pendingLocalWriteMessageId = null;
+    _pendingLocalWriteSource = null;
+    debugPrint('[MESH] Flushing deferred local database sync');
+    onLocalDatabaseWrite(messageId: messageId, source: 'deferred_$source');
   }
 
   Future<void> _attachLocalUserProfileHashUpdateTrigger(String myId) async {
@@ -601,6 +724,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         // Its compressed bytes cannot be part of the new connection's offer.
         _incomingBuffersByMac.remove(incoming.macAddress);
         _incomingTransferByMac.remove(incoming.macAddress);
+        _incomingFramedRepliesByMac.remove(incoming.macAddress);
         _discovery.onServerClientConnected(incoming.macAddress);
         return;
       }
@@ -616,6 +740,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         if (incoming.macAddress.isEmpty) {
           _incomingBuffersByMac.clear();
           _incomingTransferByMac.clear();
+          _incomingFramedRepliesByMac.clear();
           _discovery.clearInboundServerState();
         } else {
           final activeConnectionId =
@@ -625,6 +750,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               activeConnectionId == incoming.connectionId) {
             _incomingBuffersByMac.remove(incoming.macAddress);
             _incomingTransferByMac.remove(incoming.macAddress);
+            _incomingFramedRepliesByMac.remove(incoming.macAddress);
           }
           _discovery.onServerClientDisconnected(incoming.macAddress);
         }
@@ -632,7 +758,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       }
       final eofMarker = utf8.encode('||EOF||');
       final senderMac = incoming.macAddress;
-      final chunk = incoming.bytes;
+      var chunk = incoming.bytes;
       final existingConnectionId =
           _incomingTransferByMac[senderMac]?['CONNECTION_ID'];
       if (existingConnectionId != null &&
@@ -640,6 +766,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           existingConnectionId != incoming.connectionId) {
         _incomingBuffersByMac.remove(senderMac);
         _incomingTransferByMac.remove(senderMac);
+        _incomingFramedRepliesByMac.remove(senderMac);
       }
       final transfer = _incomingTransferByMac.putIfAbsent(
         senderMac,
@@ -658,6 +785,223 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       if (ApiService.dropRate > 0 &&
           Random().nextDouble() < ApiService.dropRate) {
         return; // Simulating packet drop
+      }
+
+      FramedReplyRetryState? replyFeedbackState;
+      int? replyFeedbackRound;
+      bool markReplyFeedbackSent() {
+        final state = replyFeedbackState;
+        final round = replyFeedbackRound;
+        return state != null &&
+            round != null &&
+            state.tryMarkFeedbackSent(round);
+      }
+
+      if (incoming.isReplyStart) {
+        final framedReply = _IncomingFramedReply()
+          ..transferId = incoming.replyTransferId
+          ..chunkCount = incoming.replyChunkCount
+          ..totalBytes = incoming.replyTotalBytes
+          ..crc32 = incoming.replyCrc32
+          ..attemptId = incoming.attemptId
+          ..connectionId = incoming.connectionId;
+        _incomingFramedRepliesByMac[senderMac] = framedReply;
+        debugPrint(
+          '[BLE_TRACE] EVENT:CLIENT_REPLY_TRANSFER_STARTED | '
+          'TARGET_MAC:$senderMac | TRANSFER_ID:${incoming.replyTransferId} | '
+          'CHUNKS:${incoming.replyChunkCount} | BYTES:${incoming.replyTotalBytes} | '
+          'CRC32:${incoming.replyCrc32}',
+        );
+        return;
+      }
+
+      if (incoming.isReplyData) {
+        final index = incoming.replyChunkIndex!;
+        var framedReply = _incomingFramedRepliesByMac[senderMac];
+        if (framedReply != null &&
+            framedReply.attemptId != null &&
+            incoming.attemptId != null &&
+            framedReply.attemptId != incoming.attemptId) {
+          framedReply = null;
+        }
+        framedReply ??= _IncomingFramedReply();
+        if (incoming.attemptId?.isNotEmpty == true) {
+          framedReply.attemptId = incoming.attemptId;
+        }
+        if (incoming.connectionId?.isNotEmpty == true) {
+          framedReply.connectionId = incoming.connectionId;
+        }
+        if (index <= 0xFFFF && framedReply.chunks.length <= 0xFFFF) {
+          framedReply.chunks[index] = incoming.bytes;
+          _incomingFramedRepliesByMac[senderMac] = framedReply;
+        }
+        debugPrint(
+          '[BLE_TRACE] EVENT:CLIENT_REPLY_CHUNK_BUFFERED | '
+          'TARGET_MAC:$senderMac | INDEX:$index | '
+          'BYTES:${incoming.bytes.length} | '
+          'BUFFERED:${framedReply.chunks.length} | '
+          'WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
+        );
+        return;
+      }
+
+      if (incoming.isReplyEnd) {
+        final transferId = incoming.replyTransferId!;
+        final chunkCount = incoming.replyChunkCount;
+        final totalBytes = incoming.replyTotalBytes;
+        final expectedCrc32 = incoming.replyCrc32;
+        var framedReply = _incomingFramedRepliesByMac[senderMac];
+        if (framedReply == null ||
+            (framedReply.attemptId != null &&
+                incoming.attemptId != null &&
+                framedReply.attemptId != incoming.attemptId)) {
+          framedReply = _IncomingFramedReply();
+          _incomingFramedRepliesByMac[senderMac] = framedReply;
+        }
+        if (incoming.attemptId?.isNotEmpty == true) {
+          framedReply.attemptId = incoming.attemptId;
+        }
+        if (incoming.connectionId?.isNotEmpty == true) {
+          framedReply.connectionId = incoming.connectionId;
+        }
+        replyFeedbackState = framedReply.feedbackState;
+        replyFeedbackRound = replyFeedbackState.beginRound();
+        if (chunkCount == null ||
+            chunkCount < 0 ||
+            chunkCount > 0xFFFF ||
+            totalBytes == null ||
+            totalBytes < 0 ||
+            expectedCrc32 == null) {
+          debugPrint(
+            '[BLE_TRACE] EVENT:CLIENT_REPLY_END_METADATA_INVALID | '
+            'TARGET_MAC:$senderMac | TRANSFER_ID:$transferId',
+          );
+          if (markReplyFeedbackSent()) {
+            unawaited(
+              _nativeMesh
+                  .sendReplyFeedback(
+                    senderMac,
+                    transferId: transferId,
+                    accepted: false,
+                    retryAll: true,
+                  )
+                  .catchError((Object error) {
+                    debugPrint('⚠️ Reply NACK failed for $senderMac: $error');
+                  }),
+            );
+          }
+          return;
+        }
+
+        final startMetadataMatches =
+            (framedReply.transferId == null ||
+                framedReply.transferId == transferId) &&
+            (framedReply.chunkCount == null ||
+                framedReply.chunkCount == chunkCount) &&
+            (framedReply.totalBytes == null ||
+                framedReply.totalBytes == totalBytes) &&
+            (framedReply.crc32 == null || framedReply.crc32 == expectedCrc32);
+        if (!startMetadataMatches) {
+          debugPrint(
+            '[BLE_TRACE] EVENT:CLIENT_REPLY_METADATA_MISMATCH | '
+            'TARGET_MAC:$senderMac | TRANSFER_ID:$transferId',
+          );
+          if (markReplyFeedbackSent()) {
+            unawaited(
+              _nativeMesh
+                  .sendReplyFeedback(
+                    senderMac,
+                    transferId: transferId,
+                    accepted: false,
+                    retryAll: true,
+                  )
+                  .catchError((Object error) {
+                    debugPrint('⚠️ Reply NACK failed for $senderMac: $error');
+                  }),
+            );
+          }
+          return;
+        }
+        framedReply
+          ..transferId = transferId
+          ..chunkCount = chunkCount
+          ..totalBytes = totalBytes
+          ..crc32 = expectedCrc32;
+
+        framedReply.chunks.removeWhere((index, _) => index >= chunkCount);
+        final missing = <int>[
+          for (var index = 0; index < chunkCount; index++)
+            if (!framedReply.chunks.containsKey(index)) index,
+        ];
+        final useRetryAll = missing.length > _maxReplyMissingIndices;
+        if (missing.isNotEmpty) {
+          debugPrint(
+            '[BLE_TRACE] EVENT:CLIENT_REPLY_CHUNKS_MISSING | '
+            'TARGET_MAC:$senderMac | TRANSFER_ID:$transferId | '
+            'MISSING:${missing.length} | RETRY_ALL:$useRetryAll',
+          );
+          if (markReplyFeedbackSent()) {
+            unawaited(
+              _nativeMesh
+                  .sendReplyFeedback(
+                    senderMac,
+                    transferId: transferId,
+                    accepted: false,
+                    missingIndices: useRetryAll ? const <int>[] : missing,
+                    retryAll: useRetryAll,
+                  )
+                  .catchError((Object error) {
+                    debugPrint('⚠️ Reply NACK failed for $senderMac: $error');
+                  }),
+            );
+          }
+          return;
+        }
+
+        final builder = BytesBuilder(copy: false);
+        for (var index = 0; index < chunkCount; index++) {
+          builder.add(framedReply.chunks[index]!);
+        }
+        final payloadBytes = builder.takeBytes();
+        final valid =
+            payloadBytes.length == totalBytes &&
+            _blePayloadCrc32(payloadBytes) == expectedCrc32;
+        if (!valid) {
+          debugPrint(
+            '[BLE_TRACE] EVENT:CLIENT_REPLY_CHECKSUM_FAILED | '
+            'TARGET_MAC:$senderMac | TRANSFER_ID:$transferId | '
+            'EXPECTED_BYTES:$totalBytes | ACTUAL_BYTES:${payloadBytes.length} | '
+            'EXPECTED_CRC32:$expectedCrc32 | ACTUAL_CRC32:${_blePayloadCrc32(payloadBytes)}',
+          );
+          if (markReplyFeedbackSent()) {
+            unawaited(
+              _nativeMesh
+                  .sendReplyFeedback(
+                    senderMac,
+                    transferId: transferId,
+                    accepted: false,
+                    retryAll: true,
+                  )
+                  .catchError((Object error) {
+                    debugPrint('⚠️ Reply NACK failed for $senderMac: $error');
+                  }),
+            );
+          }
+          return;
+        }
+
+        _incomingBuffersByMac[senderMac] = payloadBytes.toList(growable: true);
+        transfer['REPLY_TRANSFER_ID'] = transferId.toString();
+        transfer['REPLY_CHUNK_COUNT'] = chunkCount.toString();
+        transfer['REPLY_CRC32'] = expectedCrc32.toString();
+        chunk = eofMarker;
+        debugPrint(
+          '[BLE_TRACE] EVENT:CLIENT_REPLY_PAYLOAD_VALIDATED | '
+          'TARGET_MAC:$senderMac | TRANSFER_ID:$transferId | '
+          'CHUNKS:$chunkCount | BYTES:${payloadBytes.length} | '
+          'CRC32:$expectedCrc32 | '
+          'WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
+        );
       }
 
       final buffer = _incomingBuffersByMac.putIfAbsent(
@@ -690,6 +1034,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
         Future<void>.microtask(() async {
           final serverSyncTotal = Stopwatch()..start();
+          final replyTransferId = int.tryParse(
+            transferFields['REPLY_TRANSFER_ID']?.toString() ?? '',
+          );
+          var replyPayloadValidated = false;
           final remoteMessageIdsToRelay = <String>{};
           String? remoteMessageSourceNodeId;
           void traceServerSyncStage(
@@ -741,10 +1089,54 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
             );
             if (decodedJson is! Map) {
               debugPrint('❌ [SYNC] Decoded JSON is not a Map from $senderMac');
+              if (replyTransferId != null) {
+                if (markReplyFeedbackSent()) {
+                  await _nativeMesh.sendReplyFeedback(
+                    senderMac,
+                    transferId: replyTransferId,
+                    accepted: false,
+                    retryAll: true,
+                  );
+                }
+              }
               return;
             }
             final root = Map<String, dynamic>.from(decodedJson);
             final type = root['type'] as String?;
+            if (type != null && type != 'offer' && type != 'delta') {
+              debugPrint(
+                '❌ [SYNC] Unexpected payload type=$type from $senderMac',
+              );
+              if (replyTransferId != null) {
+                if (markReplyFeedbackSent()) {
+                  await _nativeMesh.sendReplyFeedback(
+                    senderMac,
+                    transferId: replyTransferId,
+                    accepted: false,
+                    retryAll: true,
+                  );
+                }
+              }
+              return;
+            }
+            replyPayloadValidated = true;
+            if (replyTransferId != null) {
+              await _nativeMesh.sendReplyFeedback(
+                senderMac,
+                transferId: replyTransferId,
+                accepted: true,
+              );
+              _incomingFramedRepliesByMac.remove(senderMac);
+              traceServerSyncStage(
+                'reply_payload_ack_sent',
+                serverSyncTotal.elapsedMicroseconds,
+                extraFields: {
+                  'TRANSFER_ID': replyTransferId,
+                  'PAYLOAD_BYTES': payloadBytes.length,
+                  'VALIDATION': 'length_crc_zlib_json_map',
+                },
+              );
+            }
             debugPrint('📦 [SYNC] Received type=$type from $senderMac');
 
             final traceChangesetRaw = type == 'offer'
@@ -976,6 +1368,44 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               var usedRepair = false;
               var fpsComplete = true;
 
+              // Whole-history digest. Never consulted on the urgent path, so it
+              // cannot slow live messages down. Elsewhere it is brought up to
+              // date first (about 80 ms on a Pixel 3, and only when something
+              // was just merged): a digest one merge out of date would make
+              // the peer re-send the very rows we just received.
+              final remoteDeep = DeepCatchup.parse(root);
+              if (senderId != null && remoteDeep != null) {
+                DeepCatchup.remember(senderId, remoteDeep);
+              }
+              final ourDeep = prioritizeNewestForLatency
+                  ? null
+                  : await db.computeDeepDigest();
+              final deepMismatch = DeepCatchup.differs(ourDeep, remoteDeep);
+              // The whole-history fingerprints have 1024 buckets, so they point
+              // at the missing rows far more precisely than the 32-bucket
+              // window fingerprints. Use them whenever both sides have them,
+              // whether the gap is recent or old.
+              if (delta.isEmpty && deepMismatch && remoteDeep!.hasBuckets) {
+                final older = await measureServerSyncStage(
+                  'offer_deep_repair',
+                  () => db.getRowsForDeepMismatch(
+                    remoteDeep.buckets,
+                    maxRows: BleDiscoveryService.repairPageRows,
+                    peerKey: senderId ?? '',
+                  ),
+                );
+                if (older.isNotEmpty) {
+                  delta = older;
+                  usedRepair = true;
+                  fpsComplete = false;
+                  debugPrint(
+                    '📥 [SYNC] Gap fill for $senderId — '
+                    '${older.values.whereType<List>().fold<int>(0, (a, b) => a + b.length)} '
+                    'row(s) from mismatched history buckets',
+                  );
+                }
+              }
+
               // Remember peer digests always; only scan for absent rows when the
               // version-vector delta is empty (avoids loading the full CRDT on
               // every live write — that stalled Pixel 3 replies for seconds).
@@ -998,7 +1428,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                         'offer_bucket_repair',
                         () => db.getRowsForMismatchedBuckets(
                           remoteBuckets,
-                          maxRows: 150,
+                          maxRows: BleDiscoveryService.repairPageRows,
+                          peerKey: senderId ?? '',
                         ),
                       );
                       if (absent.isNotEmpty) {
@@ -1007,7 +1438,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                         final absentCount = absent.values
                             .whereType<List>()
                             .fold<int>(0, (a, b) => a + b.length);
-                        fpsComplete = absentCount < 150;
+                        fpsComplete =
+                            absentCount < BleDiscoveryService.repairPageRows;
                         debugPrint(
                           '📥 [SYNC] Bucket gap-fill for $senderId — '
                           '$absentCount row(s) in mismatched buckets',
@@ -1030,10 +1462,15 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   'slice tables=${delta.keys.toList()}',
                 );
               }
-              delta = BleDiscoveryService.prioritizeNewestMessages(
-                delta,
-                await db.getNewestRowsChangeset(maxRows: 8),
-              );
+              // A repair reply only happens when the peer's frontier already
+              // covers our newest rows, so repeating them would waste a slice
+              // of every page.
+              if (!usedRepair) {
+                delta = BleDiscoveryService.prioritizeNewestMessages(
+                  delta,
+                  await db.getNewestRowsChangeset(maxRows: 8),
+                );
+              }
               var selectedDeltaRows = 0;
               var selectedDeltaTombstones = 0;
               for (final rows in delta.values) {
@@ -1072,7 +1509,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               delta = usedRepair
                   ? BleDiscoveryService.truncateChangesetForBle(
                       delta,
-                      maxRowsPerTable: 40,
+                      maxRowsPerTable: BleDiscoveryService.repairPageRows,
                     )
                   : BleDiscoveryService.truncateChangesetForBle(
                       delta,
@@ -1095,6 +1532,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 'neighbors': _discovery.currentNeighborIds,
                 'peer_hashes': _discovery.peerHashesForGossip(),
                 'fps_b': base64Encode(ourFpsBlob),
+                if (ourDeep != null) ...{
+                  DeepCatchup.hashKey: ourDeep.hash,
+                  // Fingerprints follow only once the hashes are known to differ.
+                  if (deepMismatch)
+                    DeepCatchup.bucketsKey: base64Encode(ourDeep.buckets),
+                },
                 'data': delta,
               };
               var outBytes = zlib.encode(
@@ -1102,6 +1545,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               );
               // Prefer keeping gap-fill rows over fingerprints when over budget.
               var replyComplete = true;
+              if (outBytes.length > BleDiscoveryService.maxOfferPushBytes) {
+                deltaEnvelope
+                  ..remove(DeepCatchup.hashKey)
+                  ..remove(DeepCatchup.bucketsKey);
+                outBytes = zlib.encode(utf8.encode(jsonEncode(deltaEnvelope)));
+              }
               if (outBytes.length > BleDiscoveryService.maxOfferPushBytes) {
                 deltaEnvelope.remove('fps_b');
                 outBytes = zlib.encode(utf8.encode(jsonEncode(deltaEnvelope)));
@@ -1166,6 +1615,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 );
                 if (replyComplete &&
                     fpsComplete &&
+                    !deepMismatch &&
                     senderHash == ourSenderHash) {
                   BleDiscoveryService.markSyncComplete(senderId);
                 } else if (senderHash != ourSenderHash) {
@@ -1306,6 +1756,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                     }
                   } catch (_) {}
                 }
+                final remoteDeep = DeepCatchup.parse(root);
+                if (remoteDeep != null) {
+                  DeepCatchup.remember(senderId, remoteDeep);
+                }
                 if (senderHash != null) {
                   BleDiscoveryService.notePeerHashObservation(
                     senderId,
@@ -1326,6 +1780,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   );
                 } else {
                   BleDiscoveryService.markSyncComplete(senderId);
+                  // Recent windows agree: keep reconciling older history until
+                  // the whole-history digests agree too. If ours is stale it
+                  // is recomputing and [_continueDeepCatchup] picks this up.
+                  if (senderHash != null) {
+                    _continueDeepCatchup(senderId, senderHash);
+                  }
                 }
               }
               _presenceBump.add(null);
@@ -1347,6 +1807,22 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               }
             }
           } catch (e, st) {
+            if (replyTransferId != null && !replyPayloadValidated) {
+              if (markReplyFeedbackSent()) {
+                try {
+                  await _nativeMesh.sendReplyFeedback(
+                    senderMac,
+                    transferId: replyTransferId,
+                    accepted: false,
+                    retryAll: true,
+                  );
+                } catch (feedbackError) {
+                  debugPrint(
+                    '⚠️ [SYNC] Reply NACK failed for $senderMac: $feedbackError',
+                  );
+                }
+              }
+            }
             debugPrint(
               '❌ [SYNC] Mesh processing error from $senderMac: $e\n$st',
             );
@@ -1400,6 +1876,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       return;
     }
     _meshSessionActive = true;
+    _meshSessionReady = false;
     _scannerRecoverAttempt = 0;
     _scannerPowerCycled = false;
     _meshTopology.clear();
@@ -1434,8 +1911,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       );
       await _attachLocalMessageQuickScanTrigger(myId);
       await _attachLocalUserProfileHashUpdateTrigger(myId);
-      onLocalCrdtWrite = (messageId) =>
-          onLocalDatabaseWrite(messageId: messageId, source: 'chat_hook');
       _publishRadioFlags();
       _refreshNeighborClassification();
       _neighborRefreshTimer?.cancel();
@@ -1443,9 +1918,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         const Duration(seconds: 2),
         (_) => _refreshNeighborClassification(),
       );
+      _meshSessionReady = true;
+      _flushPendingLocalDatabaseWrite();
     } catch (e, st) {
       debugPrint('🔥 [MESH] _startMeshSession FAILED: $e\n$st');
       _meshSessionActive = false;
+      _meshSessionReady = false;
       await _discovery.stopAll();
       await _nativeMesh.resetServer();
       await _nativeMesh.stopMeshForegroundService();
@@ -1487,7 +1965,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       '[MESH] Stopping mesh session stopForegroundService=$stopForegroundService',
     );
     _meshSessionActive = false;
-    onLocalCrdtWrite = null;
+    _meshSessionReady = false;
     _localNodeId = null;
     _neighborRefreshTimer?.cancel();
     _neighborRefreshTimer = null;
@@ -1555,6 +2033,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       await _localProfilesSub?.cancel();
       _localProfilesSub = null;
       _meshSessionActive = false;
+      _meshSessionReady = false;
       await _nativeMesh.resetServer();
       await _nativeMesh.stopMeshForegroundService();
       _publishRadioFlags();
@@ -1615,6 +2094,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   /// Stops scan + peripheral advertising.
   Future<void> stopNetwork() async {
     _meshSessionActive = false;
+    _meshSessionReady = false;
     await _nativePayloadSub?.cancel();
     _nativePayloadSub = null;
     await _localMessagesSub?.cancel();
@@ -1629,6 +2109,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   @override
   void dispose() {
+    _meshSessionActive = false;
+    _meshSessionReady = false;
+    if (identical(onLocalCrdtWrite, _localWriteHook)) {
+      onLocalCrdtWrite = null;
+    }
     _advertHashDebounce?.cancel();
     unawaited(_adapterSub?.cancel());
     unawaited(_nativePayloadSub?.cancel());

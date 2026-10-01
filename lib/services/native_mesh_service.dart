@@ -17,6 +17,12 @@ class IncomingBleChunk {
     this.heldClientReleaseInMs,
     this.attemptId,
     this.connectionId,
+    this.replyChunkIndex,
+    this.replyTransferId,
+    this.replyChunkCount,
+    this.replyTotalBytes,
+    this.replyCrc32,
+    this.isReplyStart = false,
   });
 
   final String macAddress;
@@ -31,6 +37,15 @@ class IncomingBleChunk {
   final int? heldClientReleaseInMs;
   final String? attemptId;
   final String? connectionId;
+  final int? replyChunkIndex;
+  final int? replyTransferId;
+  final int? replyChunkCount;
+  final int? replyTotalBytes;
+  final int? replyCrc32;
+  final bool isReplyStart;
+
+  bool get isReplyData => replyChunkIndex != null;
+  bool get isReplyEnd => replyTransferId != null && !isReplyStart;
 }
 
 class NativeMeshService {
@@ -77,6 +92,21 @@ class NativeMeshService {
         '🔥 Native mesh foreground service update failed: ${e.message}',
       );
     }
+  }
+
+  Future<bool> getDebugWakeLockState() async {
+    return await _bleMethodChannel.invokeMethod<bool>(
+          'get_debug_wake_lock_state',
+        ) ??
+        false;
+  }
+
+  Future<bool> setDebugWakeLockEnabled(bool enabled) async {
+    return await _bleMethodChannel.invokeMethod<bool>(
+          'set_debug_wake_lock',
+          <String, Object?>{'enabled': enabled},
+        ) ??
+        false;
   }
 
   Future<String?> startNativeServer(
@@ -266,11 +296,55 @@ class NativeMeshService {
     }
   }
 
+  Future<void> sendReplyFeedback(
+    String macAddress, {
+    required int transferId,
+    required bool accepted,
+    List<int> missingIndices = const <int>[],
+    bool retryAll = false,
+  }) async {
+    await _bleMethodChannel
+        .invokeMethod<void>('reply_feedback', <String, Object?>{
+          'macAddress': macAddress,
+          'transferId': transferId,
+          'action': accepted ? 'ack' : 'nack',
+          'missingIndices': missingIndices,
+          'retryAll': retryAll,
+        });
+  }
+
   static IncomingBleChunk _coerceToIncomingChunk(Object? event) {
     if (event is Map) {
       final map = Map<Object?, Object?>.from(event);
       final eventType = map['event']?.toString();
       final mac = map['mac']?.toString();
+      if (eventType == 'reply_data' && mac != null) {
+        final rawBytes = map['bytes'];
+        final bytes = rawBytes is Uint8List
+            ? rawBytes
+            : rawBytes is List
+            ? Uint8List.fromList(rawBytes.cast<int>())
+            : Uint8List(0);
+        return IncomingBleChunk(
+          macAddress: mac,
+          bytes: bytes,
+          attemptId: map['attemptId']?.toString(),
+          replyChunkIndex: (map['chunkIndex'] as num?)?.toInt(),
+        );
+      }
+      if ((eventType == 'reply_start' || eventType == 'reply_end') &&
+          mac != null) {
+        return IncomingBleChunk(
+          macAddress: mac,
+          bytes: Uint8List(0),
+          attemptId: map['attemptId']?.toString(),
+          replyTransferId: (map['transferId'] as num?)?.toInt(),
+          replyChunkCount: (map['chunkCount'] as num?)?.toInt(),
+          replyTotalBytes: (map['totalBytes'] as num?)?.toInt(),
+          replyCrc32: (map['crc32'] as num?)?.toInt(),
+          isReplyStart: eventType == 'reply_start',
+        );
+      }
       if (eventType == 'mesh_service_stop_requested') {
         return IncomingBleChunk(
           macAddress: '',

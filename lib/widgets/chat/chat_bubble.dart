@@ -4,9 +4,12 @@ import 'package:flutter/services.dart';
 import '../../models/chat_message.dart';
 
 class ChatBubble extends StatelessWidget {
-  const ChatBubble({super.key, required this.message});
+  const ChatBubble({super.key, required this.message, this.onMessagePrivately});
 
   final ChatMessage message;
+
+  /// Shown for someone else's message in the shared room.
+  final VoidCallback? onMessagePrivately;
 
   String _deliveryLabel(ChatMessage message) {
     if (message.delivery == MessageDeliveryState.delivered) {
@@ -33,11 +36,26 @@ class ChatBubble extends StatelessWidget {
     final shouldCopy = await showModalBottomSheet<bool>(
       context: context,
       builder: (sheetContext) => SafeArea(
-        child: ListTile(
-          key: const Key('copy_message_action'),
-          leading: const Icon(Icons.content_copy_outlined),
-          title: const Text('Copy message'),
-          onTap: () => Navigator.of(sheetContext).pop(true),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('copy_message_action'),
+              leading: const Icon(Icons.content_copy_outlined),
+              title: const Text('Copy message'),
+              onTap: () => Navigator.of(sheetContext).pop(true),
+            ),
+            if (onMessagePrivately != null)
+              ListTile(
+                key: const Key('message_privately_action'),
+                leading: const Icon(Icons.lock_outline),
+                title: const Text('Message privately'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop(false);
+                  onMessagePrivately!();
+                },
+              ),
+          ],
         ),
       ),
     );
@@ -63,10 +81,17 @@ class ChatBubble extends StatelessWidget {
     final scheme = theme.colorScheme;
     final isSent = message.isSent;
 
-    final bubbleColor = isSent
+    final retired = message.retired;
+    final bubbleColor = retired
+        ? scheme.surfaceContainerHighest.withValues(alpha: 0.6)
+        : isSent
         ? scheme.primary
         : scheme.surfaceContainerHigh.withValues(alpha: 0.98);
-    final textColor = isSent ? scheme.onPrimary : scheme.onSurface;
+    final textColor = retired
+        ? scheme.onSurface.withValues(alpha: 0.55)
+        : isSent
+        ? scheme.onPrimary
+        : scheme.onSurface;
     final align = isSent ? Alignment.centerRight : Alignment.centerLeft;
 
     return Semantics(
@@ -144,6 +169,7 @@ class ChatBubble extends StatelessWidget {
                       ),
                     ),
                     if (isSent &&
+                        !retired &&
                         message.delivery != MessageDeliveryState.none) ...[
                       const SizedBox(height: 2),
                       Text(

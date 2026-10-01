@@ -12,6 +12,7 @@ class ChatMessage {
     this.delivery = MessageDeliveryState.none,
     this.deliveredPeerCount = 0,
     this.locked = false,
+    this.retired = false,
   });
 
   final String id;
@@ -22,4 +23,7 @@ class ChatMessage {
   final MessageDeliveryState delivery;
   final int deliveredPeerCount;
   final bool locked;
+
+  /// The other person deleted this chat; shown grayed out, kept on this phone.
+  final bool retired;
 }

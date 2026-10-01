@@ -12,6 +12,7 @@ class TextMessageWithAuthor {
     this.recipientNodeId = '',
     this.contentEncoding = 'plain',
     this.locked = false,
+    this.retiredBy = '',
   });
 
   final String msgId;
@@ -24,10 +25,13 @@ class TextMessageWithAuthor {
   final String contentEncoding;
   final bool locked;
 
-  TextMessageWithAuthor copyWith({
-    String? textContent,
-    bool? locked,
-  }) {
+  /// Mesh id of the person who deleted this chat after this message was sent,
+  /// or empty. Their phone dropped its copy; ours is kept but shown grayed.
+  final String retiredBy;
+
+  bool get retired => retiredBy.isNotEmpty;
+
+  TextMessageWithAuthor copyWith({String? textContent, bool? locked}) {
     return TextMessageWithAuthor(
       msgId: msgId,
       originNodeId: originNodeId,
@@ -38,7 +42,7 @@ class TextMessageWithAuthor {
       recipientNodeId: recipientNodeId,
       contentEncoding: contentEncoding,
       locked: locked ?? this.locked,
+      retiredBy: retiredBy,
     );
   }
 }
-

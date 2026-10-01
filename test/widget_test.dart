@@ -15,7 +15,9 @@ class _FakeLocalMessageNotificationService
 }
 
 void main() {
-  testWidgets('Home shows message field and Send', (WidgetTester tester) async {
+  testWidgets('Home opens Everyone from the chat list', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -26,6 +28,27 @@ void main() {
         child: MeshengerApp(),
       ),
     );
+
+    expect(find.text('Everyone'), findsOneWidget);
+    expect(find.byKey(const Key('new_chat_button')), findsOneWidget);
+    expect(find.byKey(const Key('settings_button')), findsOneWidget);
+    expect(find.text('Configuration'), findsNothing);
+    expect(find.byKey(const Key('message_input')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('settings_button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Mesh Identity'), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('conversation_everyone')));
+    await tester.pump();
 
     expect(find.byKey(const Key('message_input')), findsOneWidget);
     expect(find.byKey(const Key('send_button')), findsOneWidget);

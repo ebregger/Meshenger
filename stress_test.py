@@ -334,12 +334,13 @@ def get_adb_device_metadata(serials):
 
 
 def _adb_runtime_state_for_device(serial):
-    """Capture lock, display, wakefulness, and adapter state in one ADB call."""
+    """Capture lock, display, wakefulness, app wake lock, and adapter state."""
     state = {
         "serial": serial,
         "wakefulness": None,
         "display_power_state": None,
         "device_locked": None,
+        "meshenger_debug_wake_lock_held": None,
         "keyguard_showing": None,
         "keyguard_state": "unknown",
         "device_idle_mode": None,
@@ -351,7 +352,7 @@ def _adb_runtime_state_for_device(serial):
     }
     script = (
         "echo __POWER__; "
-        "dumpsys power | grep -E 'mWakefulness=|Display Power: state=|mDeviceIdleMode='; "
+        "dumpsys power | grep -E 'mWakefulness=|Display Power: state=|mDeviceIdleMode=|MeshengerDebugBleTestWakeLock'; "
         "echo __WINDOW__; "
         "dumpsys window | grep -E 'mCurrentFocus=|mFocusedApp=|mKeyguardShowing=|mShowingLockscreen=|isStatusBarKeyguard=|mKeyguardOccluded='; "
         "echo __TRUST__; "
@@ -392,6 +393,11 @@ def _adb_runtime_state_for_device(serial):
     idle_state = re.search(r"\bmDeviceIdleMode=(true|false)", power_output, re.I)
     if wakefulness:
         state["wakefulness"] = wakefulness.group(1)
+        state["meshenger_debug_wake_lock_held"] = bool(
+            re.search(r"MeshengerDebugBleTestWakeLock", power_output)
+        )
+    elif re.search(r"MeshengerDebugBleTestWakeLock", power_output):
+        state["meshenger_debug_wake_lock_held"] = True
     if display_state:
         state["display_power_state"] = display_state.group(1)
     if idle_state:
@@ -1347,6 +1353,7 @@ def run_benchmark(
             f"  {state['serial']}: wakefulness={state['wakefulness'] or 'unknown'} "
             f"display={state['display_power_state'] or 'unknown'} "
             f"locked={state['device_locked']} "
+            f"meshenger_wake_lock={state['meshenger_debug_wake_lock_held']} "
             f"keyguard={state['keyguard_state']} "
             f"focus={state['focused_window'] or 'unknown'}"
         )
@@ -1821,6 +1828,7 @@ def run_benchmark(
             f"  {state['serial']}: wakefulness={state['wakefulness'] or 'unknown'} "
             f"display={state['display_power_state'] or 'unknown'} "
             f"locked={state['device_locked']} "
+            f"meshenger_wake_lock={state['meshenger_debug_wake_lock_held']} "
             f"keyguard={state['keyguard_state']} "
             f"focus={state['focused_window'] or 'unknown'}"
         )

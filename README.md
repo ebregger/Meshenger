@@ -41,16 +41,16 @@ Direct chats are encrypted. Each install keeps an X25519 private key on the phon
 3. Open Meshenger on each phone and keep the screens on and unlocked while trying the first sync. Debug builds request that the screen stay on while Meshenger is in the foreground; this does not wake a sleeping display or bypass the lock screen. Release builds follow the phone's normal screen timeout.
 4. Send a sample message. Nearby peers should appear as chips, and the message should arrive as the phones sync.
 
-The **Messages** tab contains the shared conversation and nearby peers. **Everyone** is the shared room. Tap a peer chip, then **Private chat**, to open an encrypted one-to-one thread. Your own messages show **Sent** until a later sync finishes, then **Delivered**. The trash icon clears the open conversation and syncs that removal.
+Messages opens on a chat list. Chips along the top show who is nearby or reachable. **Everyone** is the shared room. Long-press a message there, or tap a peer chip and choose **Private chat**, to message someone privately. The button at the bottom right starts a new private chat or group with people you choose. Choosing people who already share a chat opens that chat. Your own messages show **Sent** until a later sync finishes, then **Delivered**. Long-press a chat in the list to delete it. Deleting only ever changes your own phone: a one-to-one chat stays on the other person's phone with the old messages grayed out and a **Remove from this phone** button, and new messages start a fresh chat. Deleting a group leaves everyone else's copy untouched.
 
-The **Configuration** tab lets you set a display name, choose how long to keep messages, clear the shared room, check permissions and radio diagnostics, and restart the mesh radio if discovery or syncing stalls. Keeping messages for 1, 7, or 30 days removes older messages you sent or received and syncs those removals. Relayed private chats you are not part of stay on the phone so they can still reach their recipients. Debug Android builds also show a **Developer Testing** option to hold a partial CPU wake lock during screen-off BLE tests. It leaves the display and lock screen unchanged, and turns off when disabled or when the mesh foreground service stops.
+The settings button opens display name, message history, notifications, permissions, and radio diagnostics. Keeping messages for 1, 7, or 30 days removes older messages you sent or received from this phone only. Relayed private chats you are not part of stay on the phone so they can still reach their recipients. Debug Android builds also show a **Developer Testing** option to hold a partial CPU wake lock during screen-off BLE tests. It leaves the display and lock screen unchanged, and turns off when disabled or when the mesh foreground service stops.
 
 ## Current capabilities
 
 - Android app with BLE peer discovery and direct phone-to-phone data exchange.
 - Shared chat history that syncs and merges across peers, including through a phone that is in range of both sides.
-- Encrypted direct conversations relayed as ciphertext.
-- Chat clearing and retention controls that sync removals for conversations you participate in.
+- Encrypted direct and group conversations relayed as ciphertext.
+- Chat clearing and retention controls that remove messages from this phone only; other phones keep their copies.
 - Sent and delivered progress on your own messages.
 - Display names, peer presence indicators, sync status, and basic radio diagnostics.
 
@@ -66,6 +66,17 @@ Latency is measured from message submission until the message first appears in t
 | Three-peer mesh, round-robin (60 messages) | 60/60 (100%) | 2.91 / 1.12 / 11.88 / 16.31 s | 0.33 msg/s |
 
 The long two-peer run recorded one connection failure and no send failures. The three-peer run recorded no connection failures, nine connection rejections, zero penalty entries, and no send failures.
+
+Newer debug-build runs:
+
+| Test | Result |
+| --- | --- |
+| 100 live messages with a 1,100-message history on both phones | 100/100 delivered, UI latency p50 0.37 s, p95 0.65 s, max 0.70 s |
+| One phone missing 300 messages (200 inside the newest 1,024, 100 older) | caught up in about 65 s, down from about 5.5 min before gap-fill sent the missing records |
+| One phone missing 80 scattered messages of 100 | caught up in 7.1 s |
+| One phone missing 99 of 100 messages | caught up in 10.0 s |
+| Three phones (two Pixel 3s and a Pixel 9 Pro XL), 100 live messages from one sender | 100/100 delivered in 38 s, UI latency p50 1.79 s, p95 2.70 s, max 3.00 s |
+| Same three phones, two of them each missing a different block of 40 old messages | both caught up (3.9 s and 19.4 s); the complete phone stayed at 100 |
 
 ## Release signing
 

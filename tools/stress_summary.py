@@ -1152,10 +1152,12 @@ def print_run_summary(stream, result, details_path):
             stream.write(
                 f"  {serial}: start locked={start_state.get('device_locked', 'unknown')} "
                 f"wakefulness={start_state.get('wakefulness', 'unknown')} "
-                f"display={start_state.get('display_power_state', 'unknown')}; "
+                f"display={start_state.get('display_power_state', 'unknown')} "
+                f"meshenger_wake_lock={start_state.get('meshenger_debug_wake_lock_held', 'unknown')}; "
                 f"end locked={end_state.get('device_locked', 'unknown')} "
                 f"wakefulness={end_state.get('wakefulness', 'unknown')} "
-                f"display={end_state.get('display_power_state', 'unknown')}\n"
+                f"display={end_state.get('display_power_state', 'unknown')} "
+                f"meshenger_wake_lock={end_state.get('meshenger_debug_wake_lock_held', 'unknown')}\n"
             )
         samples = runtime.get("samples", [])
         stream.write(

@@ -6,11 +6,13 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import io.flutter.plugin.common.EventChannel
 
 /** Bridges the notification's stop action to the active Flutter mesh session. */
@@ -53,6 +55,7 @@ object MeshForegroundServiceEvents {
 class MeshForegroundService : Service() {
   private val tag = "MeshFgService"
   private var meshRadioActive = true
+  private var debugPartialWakeLock: PowerManager.WakeLock? = null
 
   override fun onCreate() {
     super.onCreate()
@@ -89,6 +92,7 @@ class MeshForegroundService : Service() {
 
   override fun onDestroy() {
     android.util.Log.i(tag, "onDestroy")
+    releaseDebugWakeLock()
     if (runningInstance === this) runningInstance = null
     super.onDestroy()
   }
@@ -98,6 +102,44 @@ class MeshForegroundService : Service() {
     android.util.Log.i(tag, "mesh radio active=$active")
     getSystemService(NotificationManager::class.java)
       .notify(NOTIFICATION_ID, buildNotification())
+  }
+
+  private fun updateDebugWakeLock(enabled: Boolean): Boolean {
+    if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) == 0) return false
+    try {
+      if (enabled) {
+        if (debugPartialWakeLock?.isHeld != true) {
+          debugPartialWakeLock = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, DEBUG_WAKE_LOCK_TAG)
+            .apply {
+              setReferenceCounted(false)
+              acquire()
+            }
+        }
+      } else {
+        releaseDebugWakeLock()
+      }
+      android.util.Log.i(tag, "[DEV] partialWakeLockHeld=${debugPartialWakeLock?.isHeld == true}")
+      getSystemService(NotificationManager::class.java)
+        .notify(NOTIFICATION_ID, buildNotification())
+      return true
+    } catch (error: Exception) {
+      android.util.Log.e(tag, "[DEV] Failed to update partial wake lock", error)
+      releaseDebugWakeLock()
+      return false
+    }
+  }
+
+  private fun releaseDebugWakeLock() {
+    val wakeLock = debugPartialWakeLock
+    debugPartialWakeLock = null
+    if (wakeLock?.isHeld == true) {
+      try {
+        wakeLock.release()
+      } catch (error: RuntimeException) {
+        android.util.Log.w(tag, "[DEV] Failed to release partial wake lock", error)
+      }
+    }
   }
 
   private fun createNotificationChannel() {
@@ -143,8 +185,11 @@ class MeshForegroundService : Service() {
       .setSmallIcon(R.drawable.ic_stat_meshenger)
       .setContentTitle("Meshenger is active")
       .setContentText(
-        if (meshRadioActive) "Listening for nearby devices"
-        else "Bluetooth is off. Mesh will resume when available",
+        when {
+          !meshRadioActive -> "Bluetooth is off. Mesh will resume when available"
+          debugPartialWakeLock?.isHeld == true -> "Test mode: CPU awake while screen is off"
+          else -> "Listening for nearby devices"
+        },
       )
       .setContentIntent(contentIntent)
       .setCategory(Notification.CATEGORY_SERVICE)
@@ -163,6 +208,7 @@ class MeshForegroundService : Service() {
     private const val NOTIFICATION_ID = 6201
     private const val REQUEST_OPEN_APP = 6202
     private const val REQUEST_STOP_MESH = 6203
+    private const val DEBUG_WAKE_LOCK_TAG = "MeshengerDebugBleTestWakeLock"
 
     @Volatile
     private var runningInstance: MeshForegroundService? = null
@@ -173,6 +219,13 @@ class MeshForegroundService : Service() {
       val service = runningInstance ?: return false
       service.updateMeshRadioState(active)
       return true
+    }
+
+    fun isDebugWakeLockHeld(): Boolean = runningInstance?.debugPartialWakeLock?.isHeld == true
+
+    fun setDebugWakeLockEnabled(enabled: Boolean): Boolean {
+      val service = runningInstance ?: return false
+      return service.updateDebugWakeLock(enabled)
     }
   }
 }

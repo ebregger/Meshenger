@@ -37,7 +37,7 @@ class _MessageComposeRowState extends ConsumerState<MessageComposeRow> {
     final scheme = theme.colorScheme;
     final draft = ref.watch(messageDraftProvider);
     final conversationId = ref.watch(selectedConversationIdProvider);
-    final privateChat = ConversationIds.isDirect(conversationId);
+    final privateChat = ConversationIds.isPrivate(conversationId);
 
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.65),

@@ -57,3 +57,6 @@ stress_*.txt
 long_stress_*.txt
 probe_*.txt
 *_canary.txt
+stress_test_*.json
+scan_filter_*.json
+*.logcat

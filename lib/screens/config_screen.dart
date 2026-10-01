@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kDebugMode, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,6 +9,7 @@ import '../providers/ble_network_provider.dart';
 import '../providers/database_provider.dart';
 import '../providers/identity_provider.dart';
 import '../widgets/config/chat_history_settings.dart';
+import '../widgets/config/debug_wake_lock_settings.dart';
 import '../widgets/config/diagnostic_tile.dart';
 import '../widgets/config/diagnostics_action_button.dart';
 import '../widgets/config/message_notification_settings.dart';
@@ -52,71 +55,93 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
       _isProgrammaticUpdate = false;
     }
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: ListView(
-        children: [
-          const SizedBox(height: 8),
-          Text('Mesh Identity', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 10),
-          myIdAsync.when(
-            data: (myId) => SelectableText(
-              myId,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings'), centerTitle: true),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: ListView(
+          children: [
+            const SizedBox(height: 8),
+            Text(
+              'Mesh Identity',
+              style: Theme.of(context).textTheme.titleMedium,
             ),
-            loading: () => const LinearProgressIndicator(),
-            error: (e, _) => Text(
-              'Failed to load node id: $e',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.error,
+            const SizedBox(height: 10),
+            myIdAsync.when(
+              data: (myId) => SelectableText(
+                myId,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
+              ),
+              loading: () => const LinearProgressIndicator(),
+              error: (e, _) => Text(
+                'Failed to load node id: $e',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 22),
-          Text('Display Name', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _controller,
-            maxLines: 1,
-            decoration: const InputDecoration(
-              hintText: 'Enter display name',
-              border: OutlineInputBorder(),
+            const SizedBox(height: 22),
+            Text(
+              'Display Name',
+              style: Theme.of(context).textTheme.titleMedium,
             ),
-            onChanged: (value) {
-              if (_isProgrammaticUpdate) return;
-              _debounce?.cancel();
-              _debounce = Timer(const Duration(milliseconds: 250), () async {
-                try {
-                  final db = await ref.read(databaseProvider.future);
-                  await db.setLocalDisplayName(value);
-                  ref.invalidate(localDisplayNameProvider);
-                } catch (e) {
-                  debugPrint('SET DISPLAY NAME FAILED: $e');
-                }
-              });
-            },
-          ),
-          const SizedBox(height: 32),
-          Text('Chat History', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 10),
-          const ChatHistorySettings(),
-          const SizedBox(height: 32),
-          Text(
-            'Message Notifications',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 10),
-          const MessageNotificationSettings(),
-          const SizedBox(height: 24),
-          Text(
-            'Connectivity Diagnostics',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 10),
-          _buildDiagnosticsSection(),
-        ],
+            const SizedBox(height: 10),
+            TextField(
+              controller: _controller,
+              maxLines: 1,
+              decoration: const InputDecoration(
+                hintText: 'Enter display name',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                if (_isProgrammaticUpdate) return;
+                _debounce?.cancel();
+                _debounce = Timer(const Duration(milliseconds: 250), () async {
+                  try {
+                    final db = await ref.read(databaseProvider.future);
+                    await db.setLocalDisplayName(value);
+                    ref.invalidate(localDisplayNameProvider);
+                  } catch (e) {
+                    debugPrint('SET DISPLAY NAME FAILED: $e');
+                  }
+                });
+              },
+            ),
+            const SizedBox(height: 32),
+            Text(
+              'Chat History',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 10),
+            const ChatHistorySettings(),
+            const SizedBox(height: 32),
+            Text(
+              'Message Notifications',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 10),
+            const MessageNotificationSettings(),
+            const SizedBox(height: 24),
+            if (kDebugMode &&
+                defaultTargetPlatform == TargetPlatform.android) ...[
+              Text(
+                'Developer Testing',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 10),
+              const DebugWakeLockSettings(),
+              const SizedBox(height: 24),
+            ],
+            Text(
+              'Connectivity Diagnostics',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 10),
+            _buildDiagnosticsSection(),
+          ],
+        ),
       ),
     );
   }

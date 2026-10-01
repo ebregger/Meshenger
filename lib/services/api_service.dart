@@ -85,7 +85,10 @@ class ApiService {
 
             final chatActions = container.read(chatActionsProvider.notifier);
             final hasChatSyncHook = onLocalCrdtWrite != null;
-            final messageId = await chatActions.sendMessage(text);
+            final messageId = await chatActions.sendMessage(
+              text,
+              conversationId: body['conversationId']?.toString() ?? '',
+            );
             // ChatActions invokes this hook after storing; the API fallback
             // covers sends made before the mesh provider installs the hook.
             if (!hasChatSyncHook && messageId != null) {
@@ -129,6 +132,10 @@ class ApiService {
             });
           } else if (path == '/clear_messages' && request.method == 'POST') {
             // Stress reset: wipe chat only — keep display names in `users`.
+            // Runs verify every message was painted, so load whole threads.
+            ChatPaging.showEverything = true;
+            container.read(chatLimitProvider.notifier).state =
+                ChatPaging.unbounded;
             final db = await container.read(databaseProvider.future);
             final cleared = await db.clearTextMessages();
             container.read(bleNetworkProvider.notifier).onLocalDatabaseWrite();

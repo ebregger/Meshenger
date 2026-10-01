@@ -40,6 +40,7 @@ import androidx.core.app.ActivityCompat
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -98,6 +99,10 @@ class MainActivity : FlutterActivity() {
   // Allow a peer time to discover the service and subscribe before treating an
   // unready connection as stale. Recent GATT activity refreshes this deadline.
   private val pendingInboundStaleAfterMs = 12_000L
+  // Drops silent inbound clients even when nobody is trying to connect, so a
+  // zombie link cannot keep the single slot advertised as busy forever.
+  private val inboundIdleHandler = Handler(Looper.getMainLooper())
+  private val inboundIdleSweep = Runnable { sweepIdleInboundClients() }
   // Set to true during resetNativeServer() to suppress re-entrant disconnect callbacks.
   @Volatile private var isResettingServer = false
   @Volatile private var serverServiceReady = false
@@ -114,8 +119,14 @@ class MainActivity : FlutterActivity() {
   @Volatile private var heldClientLeaseStartedAtMs: Long = 0L
   @Volatile private var heldClientReleaseReason: String? = null
   private val clientIoLock = Object()
+  // Android GATT permits one client write operation at a time. Keep offer
+  // chunks and reply ACKs on one fair queue so an ACK cannot collide with the
+  // chunk callback that is currently completing.
+  private val clientGattWriteLock = java.util.concurrent.locks.ReentrantLock(true)
+  private val clientReplyAckExecutor = Executors.newSingleThreadExecutor()
   @Volatile private var clientIoOk: Boolean? = null
   @Volatile private var heldNotifyLatch: CountDownLatch? = null
+  @Volatile private var heldNotifyResult: Boolean? = null
   private val heldWriteCallbackTimeoutMs = 1500L
   private val outboundCancelGeneration = AtomicLong(0)
   // Reuse one Handler so removeCallbacks() can cancel the lease posted earlier.
@@ -170,34 +181,133 @@ class MainActivity : FlutterActivity() {
   @Volatile private var lastNotifyOk: Boolean? = null
   @Volatile private var lastNotifyMac: String? = null
   @Volatile private var notifyStartedAtMs: Long = 0L
-  private data class PendingServerReplyAck(val token: ByteArray, val latch: CountDownLatch)
-  private data class PendingClientReplyAck(
-    val token: ByteArray,
-    val attemptId: String,
-    val timeout: Runnable,
+  private data class ServerReplyFeedback(
+    val accepted: Boolean,
+    val missingChunkIndices: List<Int> = emptyList(),
+    val retryAll: Boolean = false,
   )
-  private val pendingServerReplyAcks = java.util.concurrent.ConcurrentHashMap<String, PendingServerReplyAck>()
-  private val pendingClientReplyAcks = java.util.concurrent.ConcurrentHashMap<BluetoothGatt, PendingClientReplyAck>()
-  private val serverReplyEofPrefix = "||MESH_REPLY_EOF_V1||".toByteArray(Charsets.US_ASCII)
-  private val serverReplyAckPrefix = "||MESH_REPLY_ACK_V1||".toByteArray(Charsets.US_ASCII)
+  private data class PendingFramedServerReply(
+    val transferId: Int,
+    val feedback: java.util.concurrent.LinkedBlockingQueue<ServerReplyFeedback>,
+  )
+  private class PendingClientReplyFeedbackWrite(
+    val latch: CountDownLatch,
+  ) {
+    @Volatile var status: Int? = null
+  }
+  private data class IncomingReplyTransfer(
+    val macAddress: String,
+    val transferId: Int,
+    val gatt: BluetoothGatt,
+    val attemptId: String,
+    val completeReceipt: (Boolean) -> Unit,
+  )
+  private val pendingServerReplyAcks = java.util.concurrent.ConcurrentHashMap<String, PendingFramedServerReply>()
+  private val pendingClientReplyFeedbackWrites = java.util.concurrent.ConcurrentHashMap<BluetoothGatt, PendingClientReplyFeedbackWrite>()
+  private val incomingReplyTransfers = java.util.concurrent.ConcurrentHashMap<String, IncomingReplyTransfer>()
   private val replyAckTimeoutMs = 2000L
+  private val heldReplyTimeoutMs = replyAckTimeoutMs * 2 + 1000L
+  private val replyStartFrameType = 0xD0
+  private val replyDataFrameType = 0xD1
+  private val replyEndFrameType = 0xD2
+  private val replyAckFrameType = 0xA1
+  private val replyMissingFrameType = 0xA2
+  private val replyMissingAllFrameType = 0xA3
+  private val replyDataFrameHeaderBytes = 3
+  private val maxReplyMissingIndicesPerFrame = 7
   // Per-client MTU negotiated on the server side so we know the notify chunk size.
   private val serverMtuMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
-  private fun buildControlFrame(prefix: ByteArray, token: ByteArray): ByteArray = prefix + token
+  private fun writeFrameInt(target: ByteArray, offset: Int, value: Int) {
+    target[offset] = (value ushr 24).toByte()
+    target[offset + 1] = (value ushr 16).toByte()
+    target[offset + 2] = (value ushr 8).toByte()
+    target[offset + 3] = value.toByte()
+  }
 
-  private fun startsWith(bytes: ByteArray, prefix: ByteArray): Boolean =
-    bytes.size >= prefix.size && prefix.indices.all { bytes[it] == prefix[it] }
+  private fun readFrameInt(source: ByteArray, offset: Int): Int =
+    ((source[offset].toInt() and 0xFF) shl 24) or
+      ((source[offset + 1].toInt() and 0xFF) shl 16) or
+      ((source[offset + 2].toInt() and 0xFF) shl 8) or
+      (source[offset + 3].toInt() and 0xFF)
 
-  private fun controlFrameToken(bytes: ByteArray, prefix: ByteArray): ByteArray? =
-    if (bytes.size == prefix.size + 36 && startsWith(bytes, prefix)) {
-      bytes.copyOfRange(prefix.size, bytes.size)
-    } else {
-      null
+  private fun readFrameU16(source: ByteArray, offset: Int): Int =
+    ((source[offset].toInt() and 0xFF) shl 8) or
+      (source[offset + 1].toInt() and 0xFF)
+
+  private fun appendFrameU16(target: ByteArray, offset: Int, value: Int) {
+    target[offset] = (value ushr 8).toByte()
+    target[offset + 1] = value.toByte()
+  }
+
+  private fun framedReplyKey(macAddress: String, transferId: Int): String =
+    "${macAddress.uppercase()}:$transferId"
+
+  private fun buildReplyDataFrame(chunkIndex: Int, bytes: ByteArray): ByteArray {
+    val frame = ByteArray(replyDataFrameHeaderBytes + bytes.size)
+    frame[0] = replyDataFrameType.toByte()
+    appendFrameU16(frame, 1, chunkIndex)
+    System.arraycopy(bytes, 0, frame, replyDataFrameHeaderBytes, bytes.size)
+    return frame
+  }
+
+  private fun buildReplyStartFrame(
+    transferId: Int,
+    chunkCount: Int,
+    payload: ByteArray,
+  ): ByteArray {
+    val frame = ByteArray(15)
+    frame[0] = replyStartFrameType.toByte()
+    writeFrameInt(frame, 1, transferId)
+    appendFrameU16(frame, 5, chunkCount)
+    writeFrameInt(frame, 7, payload.size)
+    val crc = java.util.zip.CRC32().apply { update(payload) }.value.toInt()
+    writeFrameInt(frame, 11, crc)
+    return frame
+  }
+
+  private fun buildReplyEndFrame(
+    transferId: Int,
+    chunkCount: Int,
+    payload: ByteArray,
+  ): ByteArray {
+    val frame = ByteArray(15)
+    frame[0] = replyEndFrameType.toByte()
+    writeFrameInt(frame, 1, transferId)
+    appendFrameU16(frame, 5, chunkCount)
+    writeFrameInt(frame, 7, payload.size)
+    val crc = java.util.zip.CRC32().apply { update(payload) }.value.toInt()
+    writeFrameInt(frame, 11, crc)
+    return frame
+  }
+
+  private fun parseReplyFeedback(bytes: ByteArray): Pair<Int, ServerReplyFeedback>? {
+    if (bytes.size < 5) return null
+    val transferId = readFrameInt(bytes, 1)
+    if (transferId <= 0) return null
+    return when (bytes[0].toInt() and 0xFF) {
+      replyAckFrameType -> if (bytes.size == 5) {
+        transferId to ServerReplyFeedback(accepted = true)
+      } else {
+        null
+      }
+      replyMissingAllFrameType -> if (bytes.size == 5) {
+        transferId to ServerReplyFeedback(accepted = false, retryAll = true)
+      } else {
+        null
+      }
+      replyMissingFrameType -> {
+        if (bytes.size < 6) return null
+        val count = bytes[5].toInt() and 0xFF
+        if (count == 0 || count > maxReplyMissingIndicesPerFrame || bytes.size != 6 + count * 2) {
+          return null
+        }
+        val indices = List(count) { index -> readFrameU16(bytes, 6 + index * 2) }
+        transferId to ServerReplyFeedback(accepted = false, missingChunkIndices = indices)
+      }
+      else -> null
     }
-
-  private fun newReplyAckToken(): ByteArray =
-    UUID.randomUUID().toString().toByteArray(Charsets.US_ASCII)
+  }
 
   private val REQUEST_BLUETOOTH_PERMS = 4312
 
@@ -271,6 +381,18 @@ class MainActivity : FlutterActivity() {
           val active = call.argument<Boolean>("active") ?: true
           result.success(MeshForegroundService.setMeshRadioActive(active))
         }
+        "get_debug_wake_lock_state" -> {
+          val isDebuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+          result.success(isDebuggable && MeshForegroundService.isDebugWakeLockHeld())
+        }
+        "set_debug_wake_lock" -> {
+          if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
+            result.error("DEBUG_ONLY", "The test wake lock is only available in debug builds", null)
+          } else {
+            val enabled = call.argument<Boolean>("enabled") == true
+            result.success(MeshForegroundService.setDebugWakeLockEnabled(enabled))
+          }
+        }
         "start_server" -> {
           startNativeServer(call, result)
         }
@@ -291,6 +413,9 @@ class MainActivity : FlutterActivity() {
         }
         "reply_payload" -> {
           replyPayloadToPeer(call, result)
+        }
+        "reply_feedback" -> {
+          sendReplyFeedback(call, result)
         }
         "connected_server_macs" -> {
           result.success(ArrayList(notifyReadyServerClients.keys.filter { notifyReadyServerClients[it] == true }))
@@ -554,23 +679,35 @@ class MainActivity : FlutterActivity() {
             val bytes = value ?: ByteArray(0)
             val now = SystemClock.elapsedRealtime()
             serverClientLastActivityAtMs[device.address] = now
-            if (startsWith(bytes, serverReplyAckPrefix)) {
-              val suppliedToken = controlFrameToken(bytes, serverReplyAckPrefix)
-              val pendingAck = pendingServerReplyAcks[device.address]
-              val matched = suppliedToken != null &&
-                pendingAck != null &&
-                pendingAck.token.contentEquals(suppliedToken)
+            val firstByte = bytes.firstOrNull()?.toInt()?.and(0xFF)
+            val pending = pendingServerReplyAcks[device.address]
+            if (
+              pending != null &&
+                (firstByte == replyAckFrameType ||
+                  firstByte == replyMissingFrameType ||
+                  firstByte == replyMissingAllFrameType)
+            ) {
+              val parsed = parseReplyFeedback(bytes)
+              val matched = parsed != null && pending != null &&
+                pending.transferId == parsed.first
               traceBle(
-                if (matched) "SERVER_REPLY_ACK_RECEIVED" else "SERVER_REPLY_ACK_REJECTED",
+                if (matched) {
+                  if (parsed!!.second.accepted) "SERVER_REPLY_ACK_RECEIVED" else "SERVER_REPLY_NACK_RECEIVED"
+                } else {
+                  "SERVER_REPLY_FEEDBACK_REJECTED"
+                },
                 device.address,
                 connectionId = serverConnectionIds[device.address],
                 fields = mapOf(
                   "BYTES" to bytes.size,
+                  "TRANSFER_ID" to parsed?.first,
                   "MATCHED" to matched,
-                  "HAS_PENDING_REPLY" to (pendingAck != null),
+                  "MISSING_COUNT" to parsed?.second?.missingChunkIndices?.size,
+                  "RETRY_ALL" to parsed?.second?.retryAll,
                 ),
               )
-              if (matched) pendingAck?.latch?.countDown()
+              if (matched) pending?.feedback?.offer(parsed!!.second)
+              else responseStatus = BluetoothGatt.GATT_FAILURE
               return
             }
             traceBle(
@@ -674,15 +811,20 @@ class MainActivity : FlutterActivity() {
           }
           if (descriptor.uuid == CCCD_UUID && value != null) {
             serverClientLastActivityAtMs[device.address] = SystemClock.elapsedRealtime()
-            val notifyEnabled = value.isNotEmpty() && (value[0].toInt() and 0x01) != 0
-            if (notifyEnabled) {
+            val notificationEnabled = value.isNotEmpty() && (value[0].toInt() and 0x01) != 0
+            val indicationEnabled = value.isNotEmpty() && (value[0].toInt() and 0x02) != 0
+            if (indicationEnabled) {
               notifyReadyServerClients[device.address] = true
               val connectedAt = serverClientConnectedAtMs[device.address] ?: SystemClock.elapsedRealtime()
               traceBle(
                 "SERVER_CCCD_READY",
                 device.address,
                 connectionId = serverConnectionIds[device.address],
-                fields = mapOf("CONNECT_TO_READY_MS" to SystemClock.elapsedRealtime() - connectedAt),
+                fields = mapOf(
+                  "CONNECT_TO_READY_MS" to SystemClock.elapsedRealtime() - connectedAt,
+                  "NOTIFICATIONS_ENABLED" to notificationEnabled,
+                  "INDICATIONS_ENABLED" to indicationEnabled,
+                ),
               )
               Handler(Looper.getMainLooper()).post {
                 eventSink?.success(
@@ -690,6 +832,7 @@ class MainActivity : FlutterActivity() {
                     "event" to "server_ready",
                     "mac" to device.address,
                     "connectionId" to (serverConnectionIds[device.address] ?: ""),
+                    "indicationsEnabled" to indicationEnabled,
                   )
                 )
               }
@@ -815,6 +958,7 @@ class MainActivity : FlutterActivity() {
               Log.w(TAG, "[DIAGNOSTIC] SERVER COLLISION WARNING! Multiple concurrent clients connected ($activeConns). This may cause GATT 133 panics.")
             }
             updateServerBusyState()
+            scheduleInboundIdleSweep()
             Handler(Looper.getMainLooper()).post {
               eventSink?.success(
                 hashMapOf(
@@ -844,7 +988,7 @@ class MainActivity : FlutterActivity() {
             if (wasConnected) {
               pendingServerReplyAcks.remove(device.address)?.let { pending ->
                 traceBle("SERVER_REPLY_ACK_CANCELLED_DISCONNECT", device.address, connectionId = connectionId)
-                pending.latch.countDown()
+                pending.feedback.offer(ServerReplyFeedback(accepted = false))
               }
               Log.d(TAG, "[SERVER] Client disconnected: ${device.address} status=$status. Active inbound connections now: $activeConnsAfter")
               traceBle(
@@ -901,7 +1045,7 @@ class MainActivity : FlutterActivity() {
       // over the existing open connection, eliminating the GATT 257 reconnect race.
       val notifyCharacteristic = BluetoothGattCharacteristic(
         NOTIFY_CHARACTERISTIC_UUID,
-        BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+        BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_INDICATE,
         BluetoothGattCharacteristic.PERMISSION_READ
       )
       val cccd = BluetoothGattDescriptor(
@@ -981,6 +1125,8 @@ class MainActivity : FlutterActivity() {
     serverConnectionIds.clear()
     serverClientEvicting.clear()
     serverMtuMap.clear()
+    pendingServerReplyAcks.values.forEach { it.feedback.offer(ServerReplyFeedback(accepted = false)) }
+    pendingServerReplyAcks.clear()
     deadMacs.clear()
     isOutboundClientBusy.set(false)
     activeInboundServers.set(0)
@@ -1150,6 +1296,7 @@ class MainActivity : FlutterActivity() {
     heldClientTraceAttemptId = attemptId
     val notifyLatch = CountDownLatch(1)
     heldNotifyLatch = notifyLatch
+    heldNotifyResult = null
     var writeFailureReason: String? = null
     var writeFailureWaitMs = 0L
     try {
@@ -1198,10 +1345,30 @@ class MainActivity : FlutterActivity() {
         attemptId = attemptId,
         fields = mapOf("BYTES" to payload.size, "CHUNK_SIZE" to chunkSize),
       )
-      while (offset < payload.size) {
-        val length = minOf(chunkSize, payload.size - offset)
-        if (!writeBlocking(payload.copyOfRange(offset, offset + length))) {
-          Log.w(TAG, "[GATT] Held-link write failed — releasing for reconnect")
+      clientGattWriteLock.lock()
+      try {
+        while (offset < payload.size) {
+          val length = minOf(chunkSize, payload.size - offset)
+          if (!writeBlocking(payload.copyOfRange(offset, offset + length))) {
+            Log.w(TAG, "[GATT] Held-link write failed — releasing for reconnect")
+            traceBle(
+              "CLIENT_HELD_LINK_WRITE_FAILED",
+              try { g.device.address } catch (_: Throwable) { null },
+              attemptId,
+              mapOf(
+                "REASON" to writeFailureReason,
+                "WAIT_MS" to writeFailureWaitMs,
+                "BYTES" to length,
+                "OFFSET" to offset,
+              ),
+            )
+            releaseHeldClientNow("held_write_failed")
+            return HeldLinkWriteResult.FAILED
+          }
+          offset += length
+        }
+        if (!writeBlocking("||EOF||".toByteArray())) {
+          Log.w(TAG, "[GATT] Held-link EOF failed — releasing for reconnect")
           traceBle(
             "CLIENT_HELD_LINK_WRITE_FAILED",
             try { g.device.address } catch (_: Throwable) { null },
@@ -1209,40 +1376,35 @@ class MainActivity : FlutterActivity() {
             mapOf(
               "REASON" to writeFailureReason,
               "WAIT_MS" to writeFailureWaitMs,
-              "BYTES" to length,
-              "OFFSET" to offset,
+              "BYTES" to 7,
+              "OFFSET" to payload.size,
             ),
           )
-          releaseHeldClientNow("held_write_failed")
+          releaseHeldClientNow("held_eof_write_failed")
           return HeldLinkWriteResult.FAILED
         }
-        offset += length
+      } finally {
+        clientGattWriteLock.unlock()
       }
-      if (!writeBlocking("||EOF||".toByteArray())) {
-        Log.w(TAG, "[GATT] Held-link EOF failed — releasing for reconnect")
-        traceBle(
-          "CLIENT_HELD_LINK_WRITE_FAILED",
-          try { g.device.address } catch (_: Throwable) { null },
-          attemptId,
-          mapOf(
-            "REASON" to writeFailureReason,
-            "WAIT_MS" to writeFailureWaitMs,
-            "BYTES" to 7,
-            "OFFSET" to payload.size,
-          ),
-        )
-        releaseHeldClientNow("held_eof_write_failed")
-        return HeldLinkWriteResult.FAILED
-      }
-      if (!notifyLatch.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
+      if (!notifyLatch.await(heldReplyTimeoutMs, TimeUnit.MILLISECONDS)) {
         Log.w(TAG, "[GATT] Held-link notify timeout — releasing for reconnect")
         traceBle(
           "CLIENT_HELD_LINK_WRITE_FAILED",
           try { g.device.address } catch (_: Throwable) { null },
           attemptId,
-          mapOf("REASON" to "notify_timeout", "WAIT_MS" to 3000L),
+          mapOf("REASON" to "notify_timeout", "WAIT_MS" to heldReplyTimeoutMs),
         )
         releaseHeldClientNow("held_notify_timeout")
+        return HeldLinkWriteResult.FAILED
+      }
+      if (heldNotifyResult != true) {
+        traceBle(
+          "CLIENT_HELD_LINK_WRITE_FAILED",
+          try { g.device.address } catch (_: Throwable) { null },
+          attemptId,
+          mapOf("REASON" to "reply_ack_failed"),
+        )
+        releaseHeldClientNow("held_reply_ack_failed")
         return HeldLinkWriteResult.FAILED
       }
       Handler(Looper.getMainLooper()).post { result.success(null) }
@@ -1263,6 +1425,7 @@ class MainActivity : FlutterActivity() {
       return HeldLinkWriteResult.FAILED
     } finally {
       if (heldNotifyLatch === notifyLatch) heldNotifyLatch = null
+      if (heldNotifyLatch == null) heldNotifyResult = null
       isOutboundClientBusy.set(false)
     }
   }
@@ -1301,6 +1464,64 @@ class MainActivity : FlutterActivity() {
     }
     updateServerBusyState()
     Log.d(TAG, "[SERVER] disconnect_inbound cleared ${macs.size} client(s)")
+  }
+
+  private fun scheduleInboundIdleSweep() {
+    inboundIdleHandler.removeCallbacks(inboundIdleSweep)
+    inboundIdleHandler.postDelayed(inboundIdleSweep, InboundIdlePolicy.sweepIntervalMs)
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun sweepIdleInboundClients() {
+    val now = SystemClock.elapsedRealtime()
+    val zombies = mutableListOf<String>()
+    var remaining = 0
+    synchronized(serverClientLock) {
+      for (mac in connectedServerClients.keys) {
+        val lastActivity = serverClientLastActivityAtMs[mac]
+          ?: serverClientConnectedAtMs[mac]
+          ?: now
+        val evict = InboundIdlePolicy.shouldEvict(
+          notifyReady = notifyReadyServerClients[mac] == true,
+          idleMs = now - lastActivity,
+          alreadyEvicting = serverClientEvicting.containsKey(mac),
+        )
+        if (evict) {
+          serverClientEvicting[mac] = true
+          zombies.add(mac)
+        }
+      }
+      remaining = connectedServerClients.size
+    }
+    for (mac in zombies) {
+      Log.w(TAG, "[DIAGNOSTIC] TARGET_MAC:$mac | EVENT:CONNECTION_EVICTION_REQUESTED | REASON:idle_sweep")
+      traceBle("SERVER_IDLE_EVICTION_REQUESTED", mac, fields = mapOf("REASON" to "idle_sweep"))
+      try {
+        val device = BluetoothAdapter.getDefaultAdapter()?.getRemoteDevice(mac)
+        if (device != null) bluetoothGattServer?.cancelConnection(device)
+      } catch (_: Throwable) {}
+      // A dead link may never deliver STATE_DISCONNECTED; free the slot anyway.
+      inboundIdleHandler.postDelayed({
+        var released = false
+        synchronized(serverClientLock) {
+          if (connectedServerClients.remove(mac) != null) {
+            notifyReadyServerClients.remove(mac)
+            serverClientConnectedAtMs.remove(mac)
+            serverClientLastActivityAtMs.remove(mac)
+            serverConnectionIds.remove(mac)
+            serverClientEvicting.remove(mac)
+            serverMtuMap.remove(mac)
+            activeInboundServers.set(connectedServerClients.size)
+            released = true
+          }
+        }
+        if (released) {
+          traceBle("SERVER_IDLE_SLOT_RELEASED", mac)
+          updateServerBusyState()
+        }
+      }, 3_000L)
+    }
+    if (remaining > 0) scheduleInboundIdleSweep()
   }
 
   @SuppressLint("MissingPermission")
@@ -1802,22 +2023,42 @@ class MainActivity : FlutterActivity() {
         }
       }
 
+      fun completeErrorOnMain(code: String, message: String) {
+        if (isCompleted.compareAndSet(false, true)) {
+          traceBle(
+            "CLIENT_ATTEMPT_FAILED",
+            macAddress,
+            attemptId,
+            mapOf(
+              "PHASE" to phase,
+              "ERROR_CODE" to code,
+              "DURATION_MS" to SystemClock.elapsedRealtime() - attemptStartedAtMs,
+            ),
+          )
+          isOutboundClientBusy.set(false)
+          try { gatt?.disconnect() } catch (_: Throwable) {}
+          try { gatt?.close() } catch (_: Throwable) {}
+          Handler(Looper.getMainLooper()).post { result.error(code, message, null) }
+          taskLatch.countDown()
+        }
+      }
+
       fun finishNotifyReceipt(
         receivedGatt: BluetoothGatt,
         receiptAttemptId: String,
-        acknowledgementAccepted: Boolean?,
+        acknowledgementAccepted: Boolean,
       ) {
         isOutboundClientBusy.set(false)
+        if (heldClientGatt === receivedGatt) {
+          heldNotifyResult = acknowledgementAccepted
+        }
         traceBle(
-          when (acknowledgementAccepted) {
-            true -> "CLIENT_DELTA_RECEIPT_CONFIRMED"
-            false -> "CLIENT_DELTA_ACK_WRITE_FAILED"
-            null -> "CLIENT_DELTA_RECEIPT_LEGACY"
-          },
+          if (acknowledgementAccepted) "CLIENT_DELTA_RECEIPT_CONFIRMED"
+          else "CLIENT_DELTA_ACK_WRITE_FAILED",
           macAddress,
           receiptAttemptId,
         )
-        if (acknowledgementAccepted != false) {
+        if (acknowledgementAccepted) {
           if (heldClientGatt === receivedGatt && heldClientLeaseStartedAtMs > 0L) {
             val now = System.currentTimeMillis()
             val previousLeaseAgeMs = now - heldClientLeaseStartedAtMs
@@ -1858,34 +2099,21 @@ class MainActivity : FlutterActivity() {
           heldClientReleaseReason = null
           heldClientHandler.removeCallbacks(heldClientRelease)
         }
-        heldNotifyLatch?.countDown()
+        val notifyLatch = heldNotifyLatch
         heldNotifyLatch = null
-        completeSuccessOnMain()
+        notifyLatch?.countDown()
         if (acknowledgementAccepted == false) {
+          completeErrorOnMain(
+            "reply_ack_failed",
+            "Server reply acknowledgement was not accepted",
+          )
           try { receivedGatt.disconnect() } catch (_: Throwable) {}
           try { receivedGatt.close() } catch (_: Throwable) {}
+        } else {
+          completeSuccessOnMain()
         }
       }
 
-      fun completeErrorOnMain(code: String, message: String) {
-        if (isCompleted.compareAndSet(false, true)) {
-          traceBle(
-            "CLIENT_ATTEMPT_FAILED",
-            macAddress,
-            attemptId,
-            mapOf(
-              "PHASE" to phase,
-              "ERROR_CODE" to code,
-              "DURATION_MS" to SystemClock.elapsedRealtime() - attemptStartedAtMs,
-            ),
-          )
-          isOutboundClientBusy.set(false)
-          try { gatt?.disconnect() } catch (_: Throwable) {}
-          try { gatt?.close() } catch (_: Throwable) {}
-          Handler(Looper.getMainLooper()).post { result.error(code, message, null) }
-          taskLatch.countDown()
-        }
-      }
       // Track the MTU negotiated by the OS. Android doesn't guarantee 512;
       // the peer may negotiate down to 256 or stay at the 23-byte default.
       // We subtract 3 for the ATT protocol header (opcode + handle = 3 bytes).
@@ -2045,6 +2273,13 @@ class MainActivity : FlutterActivity() {
                 }
               }, 50)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+              pendingClientReplyFeedbackWrites.remove(g)?.let { pending ->
+                pending.status = BluetoothGatt.GATT_FAILURE
+                pending.latch.countDown()
+              }
+              incomingReplyTransfers.entries
+                .filter { it.value.gatt === g }
+                .forEach { incomingReplyTransfers.remove(it.key, it.value) }
               if (heldClientGatt === g) {
                 synchronized(clientIoLock) {
                   if (clientIoOk == null) clientIoOk = false
@@ -2069,7 +2304,7 @@ class MainActivity : FlutterActivity() {
                 try { g.close() } catch (_: Throwable) {}
                 completeErrorOnMain("DISCONNECTED", "Disconnected during phase=$phase status=$status")
               } else {
-                // Already completed (e.g. after receiving EOF from server notify).
+                // Already completed after receiving and validating the framed reply.
                 try { g.close() } catch (_: Throwable) {}
                 if (heldClientGatt === g) {
                   emitHeldLinkState(
@@ -2157,12 +2392,21 @@ class MainActivity : FlutterActivity() {
                       completeErrorOnMain("NOTIFY_ENABLE_FAILED", "Failed to enable local notifications")
                       return@Thread
                     }
+                    // V2 uses notifications for chunks and an indication for
+                    // the final frame, so enable both CCCD modes on every peer.
+                    val cccdValue = byteArrayOf(0x03, 0x00)
+                    traceBle(
+                      "CLIENT_REPLY_CCCD_CONFIG",
+                      macAddress,
+                      attemptId,
+                      mapOf("NOTIFICATIONS_ENABLED" to true, "INDICATIONS_ENABLED" to true),
+                    )
                     synchronized(lock) { lastWriteOk = null }
                     val started = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                      g.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothGatt.GATT_SUCCESS
+                      g.writeDescriptor(descriptor, cccdValue) == BluetoothGatt.GATT_SUCCESS
                     } else {
                       @Suppress("DEPRECATION")
-                      descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                      descriptor.value = cccdValue
                       @Suppress("DEPRECATION")
                       g.writeDescriptor(descriptor)
                     }
@@ -2242,42 +2486,47 @@ class MainActivity : FlutterActivity() {
                     // Use the MTU negotiated with this specific peer, not a hardcoded constant.
                     // Android is not guaranteed to grant 512; it may stay at 23 bytes (default) on some devices.
                     Log.d(TAG, "[GATT] Starting chunked write: ${payload.size} bytes in chunks of $negotiatedChunkSize mac=$macAddress")
-                    while (offset < payload.size) {
-                      val length = minOf(negotiatedChunkSize, payload.size - offset)
-                      val chunk = ByteArray(length)
-                      System.arraycopy(payload, offset, chunk, 0, length)
-                      val ok = writeBlocking(chunk)
-                      if (!ok) {
+                    clientGattWriteLock.lock()
+                    try {
+                      while (offset < payload.size) {
+                        val length = minOf(negotiatedChunkSize, payload.size - offset)
+                        val chunk = ByteArray(length)
+                        System.arraycopy(payload, offset, chunk, 0, length)
+                        val ok = writeBlocking(chunk)
+                        if (!ok) {
+                          try { g.disconnect() } catch (_: Throwable) {}
+                          try { g.close() } catch (_: Throwable) {}
+                          completeErrorOnMain("WRITE_FAILED", "Write chunk failed at offset=$offset len=$length")
+                          return@Thread
+                        }
+                        offset += length
+                      }
+
+                      val eof = "||EOF||".toByteArray()
+                      val eofOk = writeBlocking(eof)
+                      if (!eofOk) {
                         try { g.disconnect() } catch (_: Throwable) {}
                         try { g.close() } catch (_: Throwable) {}
-                        completeErrorOnMain("WRITE_FAILED", "Write chunk failed at offset=$offset len=$length")
+                        completeErrorOnMain("WRITE_FAILED", "Write EOF failed")
                         return@Thread
                       }
-                      offset += length
-                    }
 
-                    val eof = "||EOF||".toByteArray()
-                    val eofOk = writeBlocking(eof)
-                    if (!eofOk) {
-                      try { g.disconnect() } catch (_: Throwable) {}
-                      try { g.close() } catch (_: Throwable) {}
-                      completeErrorOnMain("WRITE_FAILED", "Write EOF failed")
-                      return@Thread
+                      // DO NOT disconnect here. Keep the connection alive so the Server can
+                      // push the Delta reply back via NOTIFY. Do NOT completeSuccess yet —
+                      // releasing the Flutter future early lets Dart start another dial while
+                      // isOutboundClientBusy is still held → gatt_busy storms (Red3 lag).
+                      // Success is signaled after the peer validates and acknowledges its reply.
+                      Log.d(TAG, "[GATT] Offer sent. Waiting for notify Delta reply mac=$macAddress")
+                      traceBle(
+                        "CLIENT_OFFER_EOF_SENT",
+                        macAddress,
+                        attemptId,
+                        mapOf("PAYLOAD_BYTES" to payload.size, "CHUNK_SIZE" to negotiatedChunkSize),
+                      )
+                      failureCounts.remove(macAddress)
+                    } finally {
+                      clientGattWriteLock.unlock()
                     }
-
-                    // DO NOT disconnect here. Keep the connection alive so the Server can
-                    // push the Delta reply back via NOTIFY. Do NOT completeSuccess yet —
-                    // releasing the Flutter future early lets Dart start another dial while
-                    // isOutboundClientBusy is still held → gatt_busy storms (Red3 lag).
-                    // Success is signaled when we receive the server's "||EOF||" notify.
-                    Log.d(TAG, "[GATT] Offer sent. Waiting for notify Delta reply mac=$macAddress")
-                    traceBle(
-                      "CLIENT_OFFER_EOF_SENT",
-                      macAddress,
-                      attemptId,
-                      mapOf("PAYLOAD_BYTES" to payload.size, "CHUNK_SIZE" to negotiatedChunkSize),
-                    )
-                    failureCounts.remove(macAddress)
                   } catch (t: Throwable) {
                     try { g.disconnect() } catch (_: Throwable) {}
                     try { g.close() } catch (_: Throwable) {}
@@ -2341,17 +2590,10 @@ class MainActivity : FlutterActivity() {
             super.onCharacteristicWrite(g, characteristic, status)
             Log.d(TAG, "[GATT] onCharacteristicWrite status=$status mac=$macAddress")
             if (g != null) {
-              val replyAck = pendingClientReplyAcks.remove(g)
-              if (replyAck != null) {
-                mainHandler.removeCallbacks(replyAck.timeout)
-                val accepted = status == BluetoothGatt.GATT_SUCCESS
-                traceBle(
-                  "CLIENT_REPLY_ACK_WRITE_CALLBACK",
-                  macAddress,
-                  replyAck.attemptId,
-                  mapOf("STATUS" to status, "SUCCESS" to accepted),
-                )
-                finishNotifyReceipt(g, replyAck.attemptId, accepted)
+              val feedbackWrite = pendingClientReplyFeedbackWrites[g]
+              if (feedbackWrite != null) {
+                feedbackWrite.status = status
+                feedbackWrite.latch.countDown()
                 return
               }
             }
@@ -2401,104 +2643,142 @@ class MainActivity : FlutterActivity() {
 
           private fun handleNotifyChunk(g: BluetoothGatt, charUuid: UUID, value: ByteArray) {
             if (charUuid != NOTIFY_CHARACTERISTIC_UUID) return
-            Log.d(TAG, "[GATT-NOTIFY] Received chunk ${value.size} bytes from server mac=$macAddress")
+            Log.d(TAG, "[GATT-NOTIFY] Received frame ${value.size} bytes from server mac=$macAddress")
             val traceAttemptId = if (heldClientGatt === g) {
               heldClientTraceAttemptId ?: attemptId
             } else {
               attemptId
             }
-            val hasReplyEofPrefix = startsWith(value, serverReplyEofPrefix)
-            val replyEofToken = controlFrameToken(value, serverReplyEofPrefix)
-            if (hasReplyEofPrefix && replyEofToken == null) {
-              traceBle(
-                "CLIENT_DELTA_EOF_FRAME_INVALID",
-                macAddress,
-                traceAttemptId,
-                mapOf("BYTES" to value.size),
-              )
-              return
-            }
-            val legacyEof = value.contentEquals("||EOF||".toByteArray())
-            val isEof = replyEofToken != null || legacyEof
-            val eventBytes = if (replyEofToken != null) "||EOF||".toByteArray() else value
-            traceBle(
-              if (isEof) "CLIENT_DELTA_EOF_RECEIVED" else "CLIENT_DELTA_CHUNK_RECEIVED",
-              macAddress,
-              traceAttemptId,
-              mapOf("BYTES" to value.size, "ACK_REQUIRED" to (replyEofToken != null)),
-            )
-            // Forward the chunk to Flutter exactly as if a write came in from the other direction.
-            Handler(Looper.getMainLooper()).post {
-              val payload: HashMap<String, Any> = hashMapOf(
-                "mac" to macAddress,
-                "bytes" to eventBytes,
-                "attemptId" to traceAttemptId,
-              )
-              eventSink?.success(payload)
-            }
-            if (isEof) {
-              Log.d(TAG, "[GATT-NOTIFY] EOF received — acknowledging reply from mac=$macAddress")
-              mainHandler.removeCallbacks(transferWatchdog)
-              if (replyEofToken == null) {
-                finishNotifyReceipt(g, traceAttemptId, null)
-                return
-              }
-
-              val writeChar = heldWriteChar
-                ?: g.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID)
-              if (writeChar == null) {
-                traceBle("CLIENT_REPLY_ACK_CHAR_MISSING", macAddress, traceAttemptId)
-                finishNotifyReceipt(g, traceAttemptId, false)
-                return
-              }
-              val ackFrame = buildControlFrame(serverReplyAckPrefix, replyEofToken)
-              lateinit var pendingAck: PendingClientReplyAck
-              val timeout = Runnable {
-                if (pendingClientReplyAcks.remove(g, pendingAck)) {
+            val frameType = value.firstOrNull()?.toInt()?.and(0xFF)
+            when (frameType) {
+              replyStartFrameType, replyEndFrameType -> {
+                if (value.size != 15) {
                   traceBle(
-                    "CLIENT_REPLY_ACK_WRITE_TIMEOUT",
+                    if (frameType == replyStartFrameType) "CLIENT_REPLY_START_FRAME_INVALID"
+                    else "CLIENT_REPLY_END_FRAME_INVALID",
                     macAddress,
                     traceAttemptId,
-                    mapOf("TIMEOUT_MS" to replyAckTimeoutMs),
+                    mapOf("BYTES" to value.size),
                   )
-                  finishNotifyReceipt(g, traceAttemptId, false)
+                  return
                 }
-              }
-              pendingAck = PendingClientReplyAck(replyEofToken, traceAttemptId, timeout)
-              if (pendingClientReplyAcks.putIfAbsent(g, pendingAck) != null) {
-                traceBle("CLIENT_REPLY_ACK_ALREADY_PENDING", macAddress, traceAttemptId)
-                finishNotifyReceipt(g, traceAttemptId, false)
-                return
-              }
-              val started = try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                  g.writeCharacteristic(
-                    writeChar,
-                    ackFrame,
-                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-                  ) == BluetoothGatt.GATT_SUCCESS
-                } else {
-                  @Suppress("DEPRECATION")
-                  writeChar.value = ackFrame
-                  @Suppress("DEPRECATION")
-                  g.writeCharacteristic(writeChar)
+                val transferId = readFrameInt(value, 1)
+                val chunkCount = readFrameU16(value, 5)
+                val totalBytes = readFrameInt(value, 7)
+                val crc32 = readFrameInt(value, 11)
+                if (transferId <= 0 || totalBytes < 0) {
+                  traceBle(
+                    if (frameType == replyStartFrameType) "CLIENT_REPLY_START_FRAME_INVALID"
+                    else "CLIENT_REPLY_END_FRAME_INVALID",
+                    macAddress,
+                    traceAttemptId,
+                    mapOf("TRANSFER_ID" to transferId, "TOTAL_BYTES" to totalBytes),
+                  )
+                  return
                 }
-              } catch (t: Throwable) {
-                Log.w(TAG, "[GATT-NOTIFY] Reply ACK write threw: ${t.message}")
-                false
-              }
-              if (!started) {
-                pendingClientReplyAcks.remove(g, pendingAck)
-                traceBle("CLIENT_REPLY_ACK_WRITE_REJECTED", macAddress, traceAttemptId)
-                finishNotifyReceipt(g, traceAttemptId, false)
-              } else {
+
+                if (frameType == replyStartFrameType) {
+                  traceBle(
+                    "CLIENT_REPLY_START_RECEIVED",
+                    macAddress,
+                    traceAttemptId,
+                    mapOf(
+                      "TRANSFER_ID" to transferId,
+                      "CHUNK_COUNT" to chunkCount,
+                      "TOTAL_BYTES" to totalBytes,
+                      "CRC32" to (crc32.toLong() and 0xFFFFFFFFL),
+                    ),
+                  )
+                  Handler(Looper.getMainLooper()).post {
+                    eventSink?.success(
+                      hashMapOf(
+                        "event" to "reply_start",
+                        "mac" to macAddress,
+                        "transferId" to transferId,
+                        "chunkCount" to chunkCount,
+                        "totalBytes" to totalBytes,
+                        "crc32" to (crc32.toLong() and 0xFFFFFFFFL),
+                        "attemptId" to traceAttemptId,
+                      ),
+                    )
+                  }
+                  return
+                }
+
+                val transfer = IncomingReplyTransfer(
+                  macAddress = macAddress,
+                  transferId = transferId,
+                  gatt = g,
+                  attemptId = traceAttemptId,
+                  completeReceipt = { accepted ->
+                    finishNotifyReceipt(g, traceAttemptId, accepted)
+                  },
+                )
+                incomingReplyTransfers[framedReplyKey(macAddress, transferId)] = transfer
                 traceBle(
-                  "CLIENT_REPLY_ACK_WRITE_STARTED",
+                  "CLIENT_REPLY_END_RECEIVED",
                   macAddress,
                   traceAttemptId,
-                  mapOf("BYTES" to ackFrame.size),
+                  mapOf(
+                    "TRANSFER_ID" to transferId,
+                    "CHUNK_COUNT" to chunkCount,
+                    "TOTAL_BYTES" to totalBytes,
+                    "CRC32" to (crc32.toLong() and 0xFFFFFFFFL),
+                    "INDICATION" to true,
+                  ),
                 )
-                mainHandler.postDelayed(timeout, replyAckTimeoutMs)
+                Handler(Looper.getMainLooper()).post {
+                  eventSink?.success(
+                    hashMapOf(
+                      "event" to "reply_end",
+                      "mac" to macAddress,
+                      "transferId" to transferId,
+                      "chunkCount" to chunkCount,
+                      "totalBytes" to totalBytes,
+                      "crc32" to (crc32.toLong() and 0xFFFFFFFFL),
+                      "attemptId" to traceAttemptId,
+                    ),
+                  )
+                }
+                return
+              }
+              replyDataFrameType -> {
+                if (value.size <= replyDataFrameHeaderBytes) {
+                  traceBle(
+                    "CLIENT_REPLY_CHUNK_FRAME_INVALID",
+                    macAddress,
+                    traceAttemptId,
+                    mapOf("BYTES" to value.size),
+                  )
+                  return
+                }
+                val chunkIndex = readFrameU16(value, 1)
+                val bytes = value.copyOfRange(replyDataFrameHeaderBytes, value.size)
+                traceBle(
+                  "CLIENT_REPLY_CHUNK_RECEIVED",
+                  macAddress,
+                  traceAttemptId,
+                  mapOf("CHUNK_INDEX" to chunkIndex, "BYTES" to bytes.size),
+                )
+                Handler(Looper.getMainLooper()).post {
+                  eventSink?.success(
+                    hashMapOf(
+                      "event" to "reply_data",
+                      "mac" to macAddress,
+                      "chunkIndex" to chunkIndex,
+                      "bytes" to bytes,
+                      "attemptId" to traceAttemptId,
+                    ),
+                  )
+                }
+              }
+              else -> {
+                traceBle(
+                  "CLIENT_REPLY_FRAME_INVALID",
+                  macAddress,
+                  traceAttemptId,
+                  mapOf("BYTES" to value.size, "FRAME_TYPE" to frameType),
+                )
               }
             }
           }
@@ -2573,9 +2853,161 @@ class MainActivity : FlutterActivity() {
     }
   }
 
-  // Server-side reply: push a Delta payload back to a connected Client via NOTIFY.
+  // Server-side reply: push a framed Delta payload back over the existing GATT link.
   // This avoids the GATT 257 "role-switching" crash by reusing the existing open connection
   // instead of spinning up a second GAP link.
+  @SuppressLint("MissingPermission")
+  private fun sendReplyFeedback(
+    call: io.flutter.plugin.common.MethodCall,
+    result: MethodChannel.Result,
+  ) {
+    val macAddress = call.argument<String>("macAddress")
+      ?: return result.error("no_mac", "macAddress is required", null)
+    val transferId = call.argument<Int>("transferId")
+      ?: return result.error("no_transfer_id", "transferId is required", null)
+    val action = call.argument<String>("action")
+      ?: return result.error("no_action", "action is required", null)
+    val key = framedReplyKey(macAddress, transferId)
+    val transfer = incomingReplyTransfers[key]
+      ?: return result.error("reply_transfer_missing", "Reply transfer is no longer active", null)
+    val missingIndices = (call.argument<List<*>>("missingIndices") ?: emptyList<Any?>())
+      .mapNotNull { (it as? Number)?.toInt() }
+    val retryAll = call.argument<Boolean>("retryAll") == true ||
+      (missingIndices.isEmpty() && action == "nack") ||
+      missingIndices.size > maxReplyMissingIndicesPerFrame
+    val feedback = when {
+      action == "ack" -> byteArrayOf(replyAckFrameType.toByte()) + ByteArray(4).also {
+        writeFrameInt(it, 0, transferId)
+      }
+      action == "nack" && retryAll -> byteArrayOf(replyMissingAllFrameType.toByte()) + ByteArray(4).also {
+        writeFrameInt(it, 0, transferId)
+      }
+      action == "nack" -> {
+        val frame = ByteArray(6 + missingIndices.size * 2)
+        frame[0] = replyMissingFrameType.toByte()
+        writeFrameInt(frame, 1, transferId)
+        frame[5] = missingIndices.size.toByte()
+        missingIndices.forEachIndexed { index, chunkIndex ->
+          appendFrameU16(frame, 6 + index * 2, chunkIndex)
+        }
+        frame
+      }
+      else -> return result.error("invalid_action", "action must be ack or nack", null)
+    }
+
+    clientReplyAckExecutor.execute {
+      clientGattWriteLock.lock()
+      var pendingWrite: PendingClientReplyFeedbackWrite? = null
+      try {
+        if (incomingReplyTransfers[key] !== transfer) {
+          Handler(Looper.getMainLooper()).post {
+            result.error("reply_transfer_stale", "Reply transfer changed before feedback", null)
+          }
+          return@execute
+        }
+        val gatt = transfer.gatt
+        val writeChar = gatt.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID)
+        if (writeChar == null) {
+          Handler(Looper.getMainLooper()).post {
+            result.error("write_characteristic_missing", "Reply feedback characteristic is missing", null)
+          }
+          if (action == "ack") transfer.completeReceipt(false)
+          return@execute
+        }
+        val activeWrite = PendingClientReplyFeedbackWrite(CountDownLatch(1))
+        pendingWrite = activeWrite
+        if (pendingClientReplyFeedbackWrites.putIfAbsent(gatt, activeWrite) != null) {
+          Handler(Looper.getMainLooper()).post {
+            result.error("gatt_write_busy", "Another reply feedback write is pending", null)
+          }
+          if (action == "ack") transfer.completeReceipt(false)
+          return@execute
+        }
+        val started = try {
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(
+              writeChar,
+              feedback,
+              BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+            ) == BluetoothGatt.GATT_SUCCESS
+          } else {
+            @Suppress("DEPRECATION")
+            writeChar.value = feedback
+            @Suppress("DEPRECATION")
+            gatt.writeCharacteristic(writeChar)
+          }
+        } catch (t: Throwable) {
+          Log.w(TAG, "[GATT-REPLY] Feedback write threw: ${t.message}")
+          false
+        }
+        if (!started) {
+          pendingClientReplyFeedbackWrites.remove(gatt, activeWrite)
+          Handler(Looper.getMainLooper()).post {
+            result.error("reply_feedback_rejected", "GATT rejected reply feedback", null)
+          }
+          if (action == "ack") transfer.completeReceipt(false)
+          return@execute
+        }
+        traceBle(
+          if (action == "ack") "CLIENT_REPLY_ACK_QUEUED" else "CLIENT_REPLY_NACK_QUEUED",
+          macAddress,
+          transfer.attemptId,
+          mapOf(
+            "TRANSFER_ID" to transferId,
+            "BYTES" to feedback.size,
+            "MISSING_COUNT" to missingIndices.size,
+            "RETRY_ALL" to retryAll,
+          ),
+        )
+        val callbackReceived = activeWrite.latch.await(replyAckTimeoutMs, TimeUnit.MILLISECONDS)
+        val status = activeWrite.status
+        pendingClientReplyFeedbackWrites.remove(gatt, activeWrite)
+        if (!callbackReceived || status != BluetoothGatt.GATT_SUCCESS) {
+          traceBle(
+            "CLIENT_REPLY_FEEDBACK_WRITE_FAILED",
+            macAddress,
+            transfer.attemptId,
+            mapOf("ACTION" to action, "STATUS" to status, "TIMEOUT" to !callbackReceived),
+          )
+          incomingReplyTransfers.remove(key, transfer)
+          transfer.completeReceipt(false)
+          Handler(Looper.getMainLooper()).post {
+            result.error("reply_feedback_write_failed", "Reply feedback write failed", null)
+          }
+          return@execute
+        }
+        traceBle(
+          if (action == "ack") "CLIENT_REPLY_ACK_WRITE_CALLBACK" else "CLIENT_REPLY_NACK_WRITE_CALLBACK",
+          macAddress,
+          transfer.attemptId,
+          mapOf("TRANSFER_ID" to transferId, "STATUS" to status),
+        )
+        if (action == "ack") {
+          incomingReplyTransfers.remove(key, transfer)
+          transfer.completeReceipt(true)
+        }
+        Handler(Looper.getMainLooper()).post { result.success(null) }
+      } catch (e: InterruptedException) {
+        Thread.currentThread().interrupt()
+        pendingWrite?.let { pendingClientReplyFeedbackWrites.remove(transfer.gatt, it) }
+        incomingReplyTransfers.remove(key, transfer)
+        transfer.completeReceipt(false)
+        Handler(Looper.getMainLooper()).post {
+          result.error("reply_feedback_interrupted", "Reply feedback was interrupted", null)
+        }
+      } catch (t: Throwable) {
+        pendingWrite?.let { pendingClientReplyFeedbackWrites.remove(transfer.gatt, it) }
+        incomingReplyTransfers.remove(key, transfer)
+        transfer.completeReceipt(false)
+        Handler(Looper.getMainLooper()).post {
+          result.error("reply_feedback_failed", t.message ?: "Reply feedback failed", null)
+        }
+      } finally {
+        clientGattWriteLock.unlock()
+      }
+    }
+  }
+
   @SuppressLint("MissingPermission")
   private fun replyPayloadToPeer(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
     val macAddress = call.argument<String>("macAddress")
@@ -2607,7 +3039,12 @@ class MainActivity : FlutterActivity() {
         val mtu = serverMtuMap[macAddress] ?: 23
         val chunkSize = (mtu - 3).coerceIn(20, 512)
 
-        fun notifyBlocking(chunk: ByteArray, offset: Int, isEof: Boolean = false): Boolean {
+        fun notifyBlocking(
+          chunk: ByteArray,
+          offset: Int,
+          isEof: Boolean = false,
+          confirm: Boolean = false,
+        ): Boolean {
           if (
             connectedServerClients[macAddress] != true ||
             notifyReadyServerClients[macAddress] != true
@@ -2624,12 +3061,12 @@ class MainActivity : FlutterActivity() {
 
           val startStatus: Int
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            startStatus = server.notifyCharacteristicChanged(device, notifyChar, false, chunk)
+            startStatus = server.notifyCharacteristicChanged(device, notifyChar, confirm, chunk)
           } else {
             @Suppress("DEPRECATION")
             notifyChar.value = chunk
             @Suppress("DEPRECATION")
-            val started = server.notifyCharacteristicChanged(device, notifyChar, false)
+            val started = server.notifyCharacteristicChanged(device, notifyChar, confirm)
             startStatus = if (started) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
           }
           if (startStatus != BluetoothGatt.GATT_SUCCESS) {
@@ -2637,7 +3074,7 @@ class MainActivity : FlutterActivity() {
               "SERVER_NOTIFY_REJECTED",
               macAddress,
               connectionId = serverConnectionIds[macAddress],
-              fields = mapOf("STATUS" to startStatus, "BYTES" to chunk.size, "OFFSET" to offset, "EOF" to isEof),
+              fields = mapOf("STATUS" to startStatus, "BYTES" to chunk.size, "OFFSET" to offset, "EOF" to isEof, "INDICATION" to confirm),
             )
             return false
           }
@@ -2645,13 +3082,12 @@ class MainActivity : FlutterActivity() {
             "SERVER_NOTIFY_STARTED",
             macAddress,
             connectionId = serverConnectionIds[macAddress],
-            fields = mapOf("BYTES" to chunk.size, "OFFSET" to offset, "EOF" to isEof),
+            fields = mapOf("BYTES" to chunk.size, "OFFSET" to offset, "EOF" to isEof, "INDICATION" to confirm),
           )
 
           // Android 9 often omits onNotificationSent for unconfirmed NOTIFY.
-          // The immediate return code checks admission and the reply EOF has
-          // an application-level ACK, so pacing every missing callback at
-          // 400 ms needlessly stalls 20-byte MTU replies past the watchdog.
+          // The final indication has an application-level receipt, so pacing
+          // each missing notification callback at 400 ms stalls small-MTU replies.
           val callbackFallbackMs =
             if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) 50L else 400L
           val deadlineMs = startedAt + callbackFallbackMs
@@ -2679,89 +3115,214 @@ class MainActivity : FlutterActivity() {
               "BYTES" to chunk.size,
               "OFFSET" to offset,
               "EOF" to isEof,
+              "INDICATION" to confirm,
             ),
           )
           return accepted
         }
 
-        Log.d(TAG, "[GATT-NOTIFY] Sending ${payload.size} bytes in chunks of $chunkSize to mac=$macAddress")
-        traceBle(
-          "SERVER_REPLY_STARTED",
-          macAddress,
-          connectionId = serverConnectionIds[macAddress],
-          fields = mapOf(
-            "BYTES" to payload.size,
-            "CHUNK_SIZE" to chunkSize,
-            "BENCH_MESSAGE_IDS" to benchmarkMessageIds.joinToString(","),
-          ),
-        )
-        var offset = 0
-        while (offset < payload.size) {
-          val length = minOf(chunkSize, payload.size - offset)
-          val chunk = payload.copyOfRange(offset, offset + length)
-          if (!notifyBlocking(chunk, offset)) {
-            Log.e(TAG, "[GATT-NOTIFY] Notify chunk failed at offset=$offset")
-            Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify chunk failed at offset=$offset", null) }
-            return@submit
-          }
-          offset += length
-        }
 
-        val replyToken = newReplyAckToken()
-        val pendingAck = PendingServerReplyAck(replyToken, CountDownLatch(1))
-        if (pendingServerReplyAcks.putIfAbsent(macAddress, pendingAck) != null) {
+        val dataChunkSize = chunkSize - replyDataFrameHeaderBytes
+        if (dataChunkSize <= 0) {
+          Handler(Looper.getMainLooper()).post {
+            result.error("INVALID_MTU", "MTU cannot carry a framed reply chunk", null)
+          }
+          return@submit
+        }
+        val chunkCount = if (payload.isEmpty()) 0 else (payload.size + dataChunkSize - 1) / dataChunkSize
+        if (chunkCount > 0xFFFF) {
+          Handler(Looper.getMainLooper()).post {
+            result.error("REPLY_TOO_LARGE", "Reply exceeds framed chunk index capacity", null)
+          }
+          return@submit
+        }
+        val transferId = java.util.concurrent.ThreadLocalRandom.current()
+          .nextInt(1, Int.MAX_VALUE)
+        val pending = PendingFramedServerReply(
+          transferId = transferId,
+          feedback = java.util.concurrent.LinkedBlockingQueue(),
+        )
+        if (pendingServerReplyAcks.putIfAbsent(macAddress, pending) != null) {
           traceBle(
             "SERVER_REPLY_ACK_BUSY",
             macAddress,
             connectionId = serverConnectionIds[macAddress],
+            fields = mapOf("PROTOCOL" to "framed", "TRANSFER_ID" to transferId),
           )
           Handler(Looper.getMainLooper()).post {
-            result.error("NOTIFY_BUSY", "Another reply is awaiting receipt from this peer", null)
+            result.error("NOTIFY_BUSY", "Another framed reply is awaiting receipt from this peer", null)
           }
           return@submit
         }
         try {
           traceBle(
-            "SERVER_REPLY_ACK_WAIT_STARTED",
+            "SERVER_REPLY_STARTED",
             macAddress,
             connectionId = serverConnectionIds[macAddress],
-            fields = mapOf("TIMEOUT_MS" to replyAckTimeoutMs),
+            fields = mapOf(
+              "PROTOCOL" to "framed_v2",
+              "TRANSFER_ID" to transferId,
+              "BYTES" to payload.size,
+              "MTU" to mtu,
+              "CHUNK_SIZE" to dataChunkSize,
+              "CHUNK_COUNT" to chunkCount,
+              "CRC32" to java.util.zip.CRC32().apply { update(payload) }.value,
+              "BENCH_MESSAGE_IDS" to benchmarkMessageIds.joinToString(","),
+            ),
           )
-          val eof = buildControlFrame(serverReplyEofPrefix, replyToken)
-          if (!notifyBlocking(eof, payload.size, isEof = true)) {
-            Handler(Looper.getMainLooper()).post { result.error("NOTIFY_FAILED", "Notify EOF failed", null) }
-            return@submit
-          }
-
-          val ackReceived = pendingAck.latch.await(
-            replyAckTimeoutMs,
-            java.util.concurrent.TimeUnit.MILLISECONDS,
-          ) && pendingServerReplyAcks[macAddress] === pendingAck &&
-            connectedServerClients[macAddress] == true
-          if (!ackReceived) {
+          var retries = 0
+          fun sendChunk(index: Int): Boolean {
+            val offset = index * dataChunkSize
+            val length = minOf(dataChunkSize, payload.size - offset)
+            val data = payload.copyOfRange(offset, offset + length)
+            val frame = buildReplyDataFrame(index, data)
+            val sent = notifyBlocking(frame, offset, isEof = false)
             traceBle(
-              "SERVER_REPLY_ACK_TIMEOUT",
+              if (sent) "SERVER_REPLY_CHUNK_SENT" else "SERVER_REPLY_CHUNK_FAILED",
               macAddress,
               connectionId = serverConnectionIds[macAddress],
-              fields = mapOf("TIMEOUT_MS" to replyAckTimeoutMs),
+              fields = mapOf(
+                "TRANSFER_ID" to transferId,
+                "CHUNK_INDEX" to index,
+                "CHUNK_COUNT" to chunkCount,
+                "OFFSET" to offset,
+                "DATA_BYTES" to data.size,
+                "RETRANSMIT" to (retries > 0),
+              ),
             )
+            return sent
+          }
+          fun sendEnd(): Boolean = notifyBlocking(
+            buildReplyEndFrame(transferId, chunkCount, payload),
+            payload.size,
+            isEof = true,
+            confirm = true,
+          )
+
+          val startFrame = buildReplyStartFrame(transferId, chunkCount, payload)
+          if (!notifyBlocking(startFrame, 0, isEof = false)) {
             Handler(Looper.getMainLooper()).post {
-              result.error("NOTIFY_UNCONFIRMED", "Peer did not acknowledge the complete notification", null)
+              result.error("NOTIFY_FAILED", "Framed reply start failed", null)
             }
             return@submit
           }
-
-          Log.d(TAG, "[GATT-NOTIFY] Delta received and acknowledged by mac=$macAddress")
           traceBle(
-            "SERVER_REPLY_COMPLETE",
+            "SERVER_REPLY_START_SENT",
             macAddress,
             connectionId = serverConnectionIds[macAddress],
-            fields = mapOf("BYTES" to payload.size, "ACKNOWLEDGED" to true),
+            fields = mapOf(
+              "TRANSFER_ID" to transferId,
+              "CHUNK_COUNT" to chunkCount,
+              "TOTAL_BYTES" to payload.size,
+              "CRC32" to (java.util.zip.CRC32().apply { update(payload) }.value),
+            ),
           )
-          Handler(Looper.getMainLooper()).post { result.success(null) }
+          for (index in 0 until chunkCount) {
+            if (!sendChunk(index)) {
+              Handler(Looper.getMainLooper()).post {
+                result.error("NOTIFY_FAILED", "Framed reply chunk failed at index=$index", null)
+              }
+              return@submit
+            }
+          }
+          if (!sendEnd()) {
+            Handler(Looper.getMainLooper()).post {
+              result.error("NOTIFY_FAILED", "Framed reply end indication failed", null)
+            }
+            return@submit
+          }
+          traceBle(
+            "SERVER_REPLY_FEEDBACK_WAIT_STARTED",
+            macAddress,
+            connectionId = serverConnectionIds[macAddress],
+            fields = mapOf("TRANSFER_ID" to transferId, "TIMEOUT_MS" to replyAckTimeoutMs),
+          )
+
+          while (true) {
+            val feedback = pending.feedback.poll(replyAckTimeoutMs, TimeUnit.MILLISECONDS)
+            if (
+              feedback?.accepted == true &&
+              pendingServerReplyAcks[macAddress] === pending &&
+              connectedServerClients[macAddress] == true
+            ) {
+              traceBle(
+                "SERVER_REPLY_COMPLETE",
+                macAddress,
+                connectionId = serverConnectionIds[macAddress],
+                fields = mapOf(
+                  "TRANSFER_ID" to transferId,
+                  "PROTOCOL" to "framed_v2",
+                  "BYTES" to payload.size,
+                  "ACKNOWLEDGED" to true,
+                  "RETRIES" to retries,
+                ),
+              )
+              Handler(Looper.getMainLooper()).post { result.success(null) }
+              return@submit
+            }
+            if (
+              connectedServerClients[macAddress] != true ||
+              !FramedReplyRetryPolicy.canRetry(retries)
+            ) {
+              traceBle(
+                "SERVER_REPLY_ACK_TIMEOUT",
+                macAddress,
+                connectionId = serverConnectionIds[macAddress],
+                fields = mapOf(
+                  "TRANSFER_ID" to transferId,
+                  "TIMEOUT_MS" to replyAckTimeoutMs,
+                  "RETRIES" to retries,
+                  "HAS_FEEDBACK" to (feedback != null),
+                ),
+              )
+              Handler(Looper.getMainLooper()).post {
+                result.error("NOTIFY_UNCONFIRMED", "Peer did not validate the complete framed reply", null)
+              }
+              return@submit
+            }
+
+            val retryAll = FramedReplyRetryPolicy.shouldReplayAll(
+              feedbackReceived = feedback != null,
+              retryAllRequested = feedback?.retryAll == true,
+            )
+            val missing = if (retryAll) {
+              (0 until chunkCount).toList()
+            } else {
+              feedback?.missingChunkIndices.orEmpty().distinct().filter { it in 0 until chunkCount }
+            }
+            val retryIndices = if (missing.isEmpty()) (0 until chunkCount).toList() else missing
+            retries += 1
+            traceBle(
+              "SERVER_REPLY_RETRY_STARTED",
+              macAddress,
+              connectionId = serverConnectionIds[macAddress],
+              fields = mapOf(
+                "TRANSFER_ID" to transferId,
+                "RETRY" to retries,
+                "REQUESTED_MISSING" to (feedback?.missingChunkIndices?.size ?: 0),
+                "RETRY_COUNT" to retryIndices.size,
+                "RETRY_ALL" to retryAll,
+                "REASON" to if (feedback == null) "ack_timeout" else "peer_nack",
+              ),
+            )
+            var retryFailed = false
+            for (index in retryIndices) {
+              if (!sendChunk(index)) {
+                retryFailed = true
+                break
+              }
+            }
+            if (retryFailed || !sendEnd()) {
+              Handler(Looper.getMainLooper()).post {
+                result.error("NOTIFY_FAILED", "Framed reply retry failed", null)
+              }
+              return@submit
+            }
+          }
         } finally {
-          pendingServerReplyAcks.remove(macAddress, pendingAck)
+          pendingServerReplyAcks.remove(macAddress, pending)
         }
+
       } catch (t: Throwable) {
         Log.e(TAG, "[GATT-NOTIFY] Exception during reply", t)
         Handler(Looper.getMainLooper()).post { result.error("NOTIFY_EXCEPTION", t.message ?: "Unknown", null) }

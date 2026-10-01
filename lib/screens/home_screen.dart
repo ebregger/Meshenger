@@ -19,9 +19,11 @@ import '../services/message_delivery_tracker.dart';
 import '../services/ui_debug_snapshot.dart';
 import '../widgets/chat/chat_bubble.dart';
 import '../widgets/chat/chat_input_dock.dart';
-import '../widgets/chat/conversation_bar.dart';
-import '../widgets/chat/device_chip.dart';
-import '../widgets/config/chat_history_settings.dart';
+import '../widgets/chat/chat_people.dart';
+import '../widgets/chat/conversation_list.dart';
+import '../widgets/chat/new_chat_page.dart';
+import '../widgets/chat/peer_strip.dart';
+import '../widgets/chat/retired_notice.dart';
 import '../widgets/home/liquid_glass_app_bar.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -33,7 +35,6 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   final ScrollController _chatScroll = ScrollController();
-  int _tabIndex = 0;
 
   bool _showScrollToBottom = false;
 
@@ -45,13 +46,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _openMessagesAfterNotificationTap() {
-    if (!mounted || _tabIndex == 0) return;
-    setState(() => _tabIndex = 0);
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   void _scrollListener() {
     if (!_chatScroll.hasClients) return;
     final currentScroll = _chatScroll.position.pixels;
+    _maybeLoadOlder();
 
     final shouldShow = currentScroll > 150;
     if (shouldShow != _showScrollToBottom) {
@@ -61,11 +63,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
+  /// Asks for the next page of older messages while the reader is still well
+  /// short of the oldest one loaded, so pages arrive before they are needed.
+  void _maybeLoadOlder() {
+    if (!_chatScroll.hasClients) return;
+    final position = _chatScroll.position;
+    if (position.maxScrollExtent - position.pixels >
+        ChatPaging.prefetchExtent) {
+      return;
+    }
+    _requestOlderPage();
+  }
+
+  void _requestOlderPage() {
+    final chat = ref.read(chatProvider);
+    // While another thread is loading, the previous thread's rows are still
+    // on show. They say nothing about how much of this one exists.
+    if (chat.isLoading) return;
+    final loaded = chat.value?.length ?? 0;
+    final limit = ref.read(chatLimitProvider);
+    // Fewer rows than asked for means either the thread is fully loaded or a
+    // page is already on its way.
+    if (loaded < limit) return;
+    ref.read(chatLimitProvider.notifier).state = limit + ChatPaging.pageSize;
+  }
+
   @override
   void dispose() {
     messageNotificationTapEvents.removeListener(
       _openMessagesAfterNotificationTap,
     );
+    _warmTimer?.cancel();
     _chatScroll.removeListener(_scrollListener);
     _chatScroll.dispose();
     super.dispose();
@@ -85,81 +113,50 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  Widget _messagesTab(BuildContext context) {
-    final myIdAsync = ref.watch(myNodeIdProvider);
-    final profilesAsync = ref.watch(nodeProfilesProvider);
-    final activePeersAsync = ref.watch(activePeersProvider);
+  Timer? _warmTimer;
 
-    final profileMap = <String, String>{};
-    profilesAsync.whenData((profiles) {
-      for (final p in profiles) {
-        final name = p.displayName.trim();
-        if (name.isNotEmpty) {
-          profileMap[p.nodeId] = name;
+  /// Keeps older pages coming: a quick first top-up after a thread opens, then
+  /// more whenever a page lands while the reader is still close to its top.
+  void _scheduleOlderPages() {
+    if (ref.read(chatLimitProvider) == ChatPaging.initialLimit) {
+      _warmTimer ??= Timer(const Duration(milliseconds: 250), () {
+        _warmTimer = null;
+        if (!mounted) return;
+        if (ref.read(chatLimitProvider) == ChatPaging.initialLimit) {
+          _requestOlderPage();
         }
-      }
+      });
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _maybeLoadOlder();
     });
+  }
 
+  Widget _messagesTab(BuildContext context) {
+    final location = ref.watch(chatLocationProvider);
+    final peerStrip = PeerStrip(
+      onPeerTap: (peer) => _showNodeDetailsDialog(context, peer),
+    );
+    if (location.showingList) {
+      return SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            peerStrip,
+            const Expanded(child: ConversationList()),
+          ],
+        ),
+      );
+    }
+
+    final myIdAsync = ref.watch(myNodeIdProvider);
+    final conversationId = location.conversationId;
     return SafeArea(
-      bottom: false,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const ConversationBar(),
-          SizedBox(
-            height: 52,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Row(
-                children: [
-                  if (activePeersAsync.asData?.value.isEmpty ?? true)
-                    Text(
-                      'No mesh nodes nearby',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    )
-                  else
-                    ...() {
-                      final peers = activePeersAsync.asData!.value;
-                      final out = <Widget>[];
-                      for (var i = 0; i < peers.length; i++) {
-                        final s = peers[i];
-                        final label = profileMap[s.id] ?? s.name;
-                        Color chipColor;
-                        switch (s.status) {
-                          case PeerStatus.direct:
-                            chipColor = Colors.green;
-                            break;
-                          case PeerStatus.indirect:
-                            chipColor = Colors.yellow;
-                            break;
-                          case PeerStatus.disconnected:
-                            chipColor = Colors.grey;
-                            break;
-                        }
-                        if (i > 0) out.add(const SizedBox(width: 10));
-                        out.add(
-                          InkWell(
-                            borderRadius: BorderRadius.circular(20),
-                            onTap: () => _showNodeDetailsDialog(context, s),
-                            child: DeviceChip(
-                              label: label,
-                              accentColor: chipColor,
-                              faded: s.status != PeerStatus.direct,
-                              talking: s.isTalking,
-                              meshCaughtUp: s.meshCaughtUp,
-                            ),
-                          ),
-                        );
-                      }
-                      return out;
-                    }(),
-                ],
-              ),
-            ),
-          ),
+          if (conversationId.isEmpty) peerStrip,
           Expanded(
             child: Stack(
               children: [
@@ -168,35 +165,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       .watch(chatProvider)
                       .when(
                         data: (messages) {
-                          // After paint: expose rendered chat list to stress-test /ui API.
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            UiDebugSnapshot.reportRendered([
-                              for (final m in messages)
-                                {
-                                  'msgId': m.msgId,
-                                  'textContent': m.textContent,
-                                  'originNodeId': m.originNodeId,
-                                },
-                            ]);
-                            final viewerId = myIdAsync.value;
-                            if (viewerId == null) return;
-                            for (final message in messages) {
-                              if (message.originNodeId == viewerId) {
-                                messageDeliveryTracker.observeStored(
-                                  message.msgId,
-                                );
-                              }
-                            }
-                          });
-
                           final myId = myIdAsync.value;
-                          final privateChat = ConversationIds.isDirect(
-                            ref.watch(selectedConversationIdProvider),
-                          );
                           if (messages.isEmpty) {
                             return Center(
                               child: Text(
-                                privateChat
+                                ConversationIds.isDirect(conversationId)
                                     ? 'No private messages yet'
                                     : 'No messages yet',
                                 style: Theme.of(context).textTheme.bodyLarge
@@ -227,8 +200,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                         .watch(messageDeliveryProvider)
                                         .stateFor(tm.msgId)
                                   : MessageDeliveryState.none;
-                              final delivery =
-                                  !isSent
+                              final delivery = !isSent
                                   ? MessageDeliveryState.none
                                   : deliveryState ==
                                         MessageDeliveryState.delivered
@@ -250,10 +222,70 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                           .peerCount(tm.msgId)
                                     : 0,
                                 locked: tm.locked,
+                                retired: tm.retired,
+                              );
+                              final endsRetiredRun =
+                                  tm.retired &&
+                                  (messageIndex == messages.length - 1 ||
+                                      !messages[messageIndex + 1].retired);
+                              final deletedBy = endsRetiredRun
+                                  ? chatDisplayName(
+                                      nodeId: tm.retiredBy,
+                                      profileNames: profileNameMap(
+                                        ref
+                                                .watch(nodeProfilesProvider)
+                                                .asData
+                                                ?.value ??
+                                            const [],
+                                      ),
+                                    )
+                                  : '';
+                              final bubbleWidget = ChatBubble(
+                                message: bubble,
+                                onMessagePrivately:
+                                    conversationId.isEmpty &&
+                                        !isSent &&
+                                        myId != null &&
+                                        tm.originNodeId.isNotEmpty
+                                    ? () => openConversation(
+                                        ref,
+                                        ConversationIds.direct(
+                                          myId,
+                                          tm.originNodeId,
+                                        ),
+                                      )
+                                    : null,
                               );
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 10),
-                                child: ChatBubble(message: bubble),
+                                child: endsRetiredRun
+                                    ? Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          bubbleWidget,
+                                          RetiredChatNotice(
+                                            deletedBy: deletedBy,
+                                            onDelete: () async {
+                                              final ok =
+                                                  await confirmDeleteGrayedMessages(
+                                                    context,
+                                                    deletedBy: deletedBy,
+                                                  );
+                                              if (!ok) return;
+                                              await ref
+                                                  .read(
+                                                    chatActionsProvider
+                                                        .notifier,
+                                                  )
+                                                  .deleteGrayedMessages(
+                                                    conversationId,
+                                                  );
+                                            },
+                                          ),
+                                        ],
+                                      )
+                                    : bubbleWidget,
                               );
                             },
                           );
@@ -301,87 +333,105 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final topInset = MediaQuery.paddingOf(context).top;
 
     ref.listen(chatProvider, (previous, next) {
+      final messages = next.value;
       final prevLen = previous?.value?.length;
-      final nextLen = next.value?.length;
-      if (prevLen != nextLen) {
+      final nextLen = messages?.length;
+      final newestChanged =
+          previous?.value?.lastOrNull?.msgId != messages?.lastOrNull?.msgId;
+      if (messages != null) {
+        final viewerId = ref.read(myNodeIdProvider).asData?.value;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          if (_tabIndex == 0) {
+          UiDebugSnapshot.reportRendered([
+            for (final message in messages)
+              {
+                'msgId': message.msgId,
+                'textContent': message.textContent,
+                'originNodeId': message.originNodeId,
+              },
+          ]);
+          if (viewerId == null) return;
+          for (final message in messages) {
+            if (message.originNodeId == viewerId) {
+              messageDeliveryTracker.observeStored(message.msgId);
+            }
+          }
+        });
+      }
+      // Older pages joining the top must not move the reader; only a new
+      // newest message (or a different thread) snaps to the bottom.
+      if (newestChanged) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (!ref.read(chatLocationProvider).showingList) {
             _snapChatToBottom(animated: prevLen != null && prevLen > 0);
           }
         });
       }
+      if (nextLen != null && nextLen > 0) _scheduleOlderPages();
     });
 
     ref.watch(publishMeshIdentityProvider);
-    final conversationTitle = _conversationTitle();
-    final clearConversation = IconButton(
-      key: const Key('clear_conversation'),
-      tooltip: 'Clear conversation',
-      onPressed: () => confirmAndClearConversation(
-        context,
-        ref,
-        conversationId: ref.read(selectedConversationIdProvider),
-      ),
-      icon: const Icon(Icons.delete_outline),
+    final location = ref.watch(chatLocationProvider);
+    final inThread = !location.showingList;
+    final conversationTitle = _conversationTitle(location);
+    final backButton = BackButton(
+      onPressed: () => ref.read(chatLocationProvider.notifier).showList(),
     );
-    final appBar = _tabIndex == 0
-        ? (useLiquidBar
-              ? LiquidGlassAppBar(
-                  title: conversationTitle,
-                  statusBarHeight: topInset,
-                  trailing: clearConversation,
-                )
-              : AppBar(
-                  title: Text(conversationTitle),
-                  centerTitle: true,
-                  actions: [clearConversation],
-                ))
-        : AppBar(title: const Text('Configuration'), centerTitle: true);
+    final settingsButton = IconButton(
+      key: const Key('settings_button'),
+      tooltip: 'Settings',
+      onPressed: () {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (context) => const ConfigurationScreen(),
+          ),
+        );
+      },
+      icon: const Icon(Icons.settings_outlined),
+    );
+    final appBar = useLiquidBar
+        ? LiquidGlassAppBar(
+            title: conversationTitle,
+            statusBarHeight: topInset,
+            leading: inThread ? backButton : null,
+            trailing: inThread ? null : settingsButton,
+          )
+        : AppBar(
+            title: Text(conversationTitle),
+            centerTitle: true,
+            automaticallyImplyLeading: false,
+            leading: inThread ? backButton : null,
+            actions: [if (!inThread) settingsButton],
+          );
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: appBar,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tabIndex,
-        onDestinationSelected: (idx) => setState(() => _tabIndex = idx),
-        // BottomNavigationBar used one shared Material, so InkSparkle swept the
-        // whole bar from any press. Keep the indicator/label motion only.
-        overlayColor: const WidgetStatePropertyAll(Colors.transparent),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline_rounded),
-            selectedIcon: Icon(Icons.chat_bubble_rounded),
-            label: 'Messages',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Configuration',
-          ),
-        ],
-      ),
-      body: IndexedStack(
-        index: _tabIndex,
-        children: [_messagesTab(context), const ConfigurationScreen()],
-      ),
+      floatingActionButton: location.showingList
+          ? FloatingActionButton(
+              key: const Key('new_chat_button'),
+              tooltip: 'New chat',
+              onPressed: () => openNewChatPage(context),
+              child: const Icon(Icons.edit_outlined),
+            )
+          : null,
+      body: _messagesTab(context),
     );
   }
 
-  String _conversationTitle() {
-    final conversationId = ref.watch(selectedConversationIdProvider);
-    if (conversationId.isEmpty) return 'Messages';
-    final myId = ref.watch(myNodeIdProvider).asData?.value;
-    final other = myId == null
-        ? null
-        : ConversationIds.otherParty(conversationId, myId);
-    if (other == null || other.isEmpty) return 'Private chat';
-    final profiles = ref.watch(nodeProfilesProvider).asData?.value ?? const [];
-    for (final profile in profiles) {
-      final name = profile.displayName.trim();
-      if (profile.nodeId == other && name.isNotEmpty) return name;
-    }
-    return other.length <= 8 ? other : other.substring(0, 8);
+  String _conversationTitle(ChatLocation location) {
+    if (location.showingList) return 'Messages';
+    return conversationTitle(
+      location.conversationId,
+      myNodeId: ref.watch(myNodeIdProvider).asData?.value,
+      profileNames: profileNameMap(
+        ref.watch(nodeProfilesProvider).asData?.value ?? const [],
+      ),
+      peerNames: peerNameMap(
+        ref.watch(activePeersProvider).asData?.value ?? const [],
+      ),
+    );
   }
 
   void _showNodeDetailsDialog(BuildContext context, MeshNodeState state) {
@@ -642,16 +692,10 @@ class _NodeDetailsDialogState extends State<NodeDetailsDialog> {
               return TextButton(
                 key: const Key('private_chat_button'),
                 onPressed: () {
-                  final conversationId = ConversationIds.direct(
-                    myId,
-                    widget.initialState.id,
+                  openConversation(
+                    ref,
+                    ConversationIds.direct(myId, widget.initialState.id),
                   );
-                  ref
-                      .read(pinnedDirectConversationIdsProvider.notifier)
-                      .pin(conversationId);
-                  ref
-                      .read(selectedConversationIdProvider.notifier)
-                      .select(conversationId);
                   _timer?.cancel();
                   Navigator.of(context).pop();
                 },

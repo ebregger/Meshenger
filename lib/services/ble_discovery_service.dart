@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../constants/ble_constants.dart';
 import '../providers/database_provider.dart';
 import 'benchmark_trace.dart';
+import 'deep_catchup.dart';
 import 'mesh_advertisement.dart';
 import 'mesh_catchup.dart';
 import 'mesh_dial_policy.dart';
@@ -121,6 +122,10 @@ class BleDiscoveryService {
   /// Soft cap for compressed offer+push payloads. Larger pushes routinely hit the
   /// 60s GATT transfer watchdog and leave lagging nodes stuck mid-transfer.
   static const int maxOfferPushBytes = 48 * 1024;
+
+  /// Rows in one gap-fill page. The same number is asked of the database and
+  /// allowed on the wire, so nothing selected is dropped afterwards.
+  static const int repairPageRows = 80;
 
   /// Keep BLE payloads under the GATT transfer budget by preferring newest rows.
   static Map<String, dynamic> shrinkChangesetForBle(
@@ -787,6 +792,11 @@ class BleDiscoveryService {
           // Likely not our mesh GATT (ghost advertiser / stale cache).
           d = const Duration(seconds: 30);
           break;
+        case 'held_link_stale':
+          // This link was previously healthy; wait briefly for its close and
+          // require a refreshed scan address before opening the replacement.
+          d = const Duration(seconds: 1);
+          break;
         case 'timeout':
           // Transient write/connection timeout — retry soon.
           d = const Duration(seconds: 4);
@@ -960,6 +970,10 @@ class BleDiscoveryService {
         }
 
         await FlutterBluePlus.startScan(
+          // Android stops unfiltered BLE scans when the screen turns off.
+          // Every Meshenger primary advertisement includes this service UUID,
+          // so keep the scan filtered at the platform layer while backgrounded.
+          withServices: [meshServiceUuid],
           androidUsesFineLocation: true,
           androidScanMode: AndroidScanMode.lowLatency,
           androidLegacy: false,
@@ -1094,8 +1108,9 @@ class BleDiscoveryService {
                 );
           }
           if (telemetryNodeIdPrefix == null && remotePayload != null) {
-            telemetryNodeIdPrefix =
-                MeshAdvertisement.readNodeIdPrefix(remotePayload)?.toLowerCase();
+            telemetryNodeIdPrefix = MeshAdvertisement.readNodeIdPrefix(
+              remotePayload,
+            )?.toLowerCase();
           }
           if (remoteExtendedConnectable != null &&
               telemetryNodeIdPrefix != null) {
@@ -1896,6 +1911,11 @@ class BleDiscoveryService {
           ? lastKnownPeerBuckets[resolvedPeer]
           : null;
       Map<String, dynamic> ourChangeset;
+      var usedGapFill = false;
+      // Everything below that uses the whole-history digest wants it current
+      // (a stale one points at rows the peer just sent us). The urgent path
+      // never waits for it.
+      if (!forceNewestPush) await db.computeDeepDigest();
       if (forceNewestPush) {
         // Keep the urgent per-write payload small. Re-sending the full 25-row
         // page on every local message repeatedly transferred rows the peer had
@@ -1907,7 +1927,29 @@ class BleDiscoveryService {
       } else if (priorBuckets != null && priorBuckets.isNotEmpty) {
         // Prefer bucket gap-fill — newest-N cannot heal stranded rows once they
         // fall outside the sliding window (seen: Red stuck ~30 behind forever).
-        ourChangeset = await db.getRowsForMismatchedBuckets(priorBuckets);
+        // The whole-history fingerprints are 32x finer than the window ones,
+        // so use them when the peer has sent them.
+        final peerDeep = resolvedPeer == null
+            ? null
+            : DeepCatchup.peer(resolvedPeer);
+        ourChangeset = <String, dynamic>{};
+        if (peerDeep != null &&
+            peerDeep.hasBuckets &&
+            DeepCatchup.differs(db.freshDeepDigest, peerDeep)) {
+          ourChangeset = await db.getRowsForDeepMismatch(
+            peerDeep.buckets,
+            maxRows: repairPageRows,
+            peerKey: resolvedPeer ?? '',
+          );
+        }
+        if (ourChangeset.isEmpty) {
+          ourChangeset = await db.getRowsForMismatchedBuckets(
+            priorBuckets,
+            maxRows: repairPageRows,
+            peerKey: resolvedPeer ?? '',
+          );
+        }
+        usedGapFill = ourChangeset.isNotEmpty;
         if (ourChangeset.isEmpty && priorVector.isNotEmpty) {
           ourChangeset = await db.getDeltaChangeset(
             priorVector,
@@ -1923,6 +1965,22 @@ class BleDiscoveryService {
         // Unknown peer frontier — never ship full DB (empty vector = all rows).
         ourChangeset = await db.getNewestRowsChangeset(maxRows: 8);
       }
+      // Nothing newer to send but whole-history digests differ: trade older
+      // rows from the mismatched deep buckets. Skipped on the urgent path and
+      // whenever our digest is still being recomputed, so it never adds delay.
+      if (ourChangeset.isEmpty && !forceNewestPush && resolvedPeer != null) {
+        final peerDeep = DeepCatchup.peer(resolvedPeer);
+        if (peerDeep != null &&
+            peerDeep.hasBuckets &&
+            DeepCatchup.differs(db.freshDeepDigest, peerDeep)) {
+          ourChangeset = await db.getRowsForDeepMismatch(
+            peerDeep.buckets,
+            maxRows: repairPageRows,
+            peerKey: resolvedPeer,
+          );
+          usedGapFill = ourChangeset.isNotEmpty;
+        }
+      }
       // Large rotating repair ONLY when we have nothing else to send.
       // Merging 100+ repair rows into every diverge offer ballooned GATT (~149
       // msgs) and blocked the second peer for many seconds.
@@ -1937,7 +1995,9 @@ class BleDiscoveryService {
       if (ourChangeset.isEmpty) {
         ourChangeset = await db.getNewestRowsChangeset(maxRows: 8);
       }
-      if (!forceNewestPush) {
+      // A gap-fill page is chosen because the peer is missing those rows, so
+      // the newest ones (which it holds) would only take up room in it.
+      if (!forceNewestPush && !usedGapFill) {
         ourChangeset = prioritizeNewestMessages(
           ourChangeset,
           await db.getNewestRowsChangeset(maxRows: 8),
@@ -1961,13 +2021,25 @@ class BleDiscoveryService {
       if (!forceNewestPush) {
         ourChangeset = truncateChangesetForBle(
           ourChangeset,
-          maxRowsPerTable: 25,
+          maxRowsPerTable: usedGapFill ? repairPageRows : 25,
         );
       }
       final fpsBlob = await traceUrgentStage(
         'bucket_fingerprints',
         db.getBucketFingerprintBlob,
       );
+      final peerDeepKnown = resolvedPeer == null
+          ? null
+          : DeepCatchup.peer(resolvedPeer);
+      final deepFields = forceNewestPush
+          ? const <String, dynamic>{}
+          : DeepCatchup.envelopeFields(
+              db,
+              withBuckets: DeepCatchup.differs(
+                db.freshDeepDigest,
+                peerDeepKnown,
+              ),
+            );
       final offerEnvelope = <String, dynamic>{
         'type': 'offer',
         'sender_id': myNodeId2,
@@ -1976,6 +2048,7 @@ class BleDiscoveryService {
         'peer_hashes': peerHashesForGossip(),
         'vector': myVector,
         'fps_b': base64Encode(fpsBlob),
+        ...deepFields,
         'initiator_data': ourChangeset,
       };
       final encodeTimer = Stopwatch()..start();
@@ -2076,6 +2149,8 @@ class BleDiscoveryService {
         );
       }
       debugPrint('🟥 Connection/GATT failed for $targetMac: $e');
+      final heldLinkFailed =
+          e is PlatformException && e.code == 'held_link_stale';
 
       // Peer already dialed us — push newest over the open server link instead of
       // burning another outbound attempt (seen: urgent retry → already_connected).
@@ -2106,7 +2181,19 @@ class BleDiscoveryService {
 
       // Pause scan-path dials (not urgent) so the radio can recover.
       if (!forceNewestPush) {
-        _outboundCircuitUntil = DateTime.now().add(const Duration(seconds: 8));
+        final circuitDelay = heldLinkFailed
+            ? const Duration(milliseconds: 500)
+            : const Duration(seconds: 8);
+        _outboundCircuitUntil = DateTime.now().add(circuitDelay);
+        _traceUrgentFlow(
+          'OUTBOUND_CIRCUIT_DELAY_SET',
+          fields: {
+            'PEER_NODE_ID': peerNodeId,
+            'TARGET_MAC': targetMac,
+            'DELAY_MS': circuitDelay.inMilliseconds,
+            'REASON': heldLinkFailed ? 'held_link_stale' : 'gatt_failure',
+          },
+        );
       }
       // Refresh hash cooldown so retries respect the scan debounce window.
       _hashCooldowns[remoteHashInt] = DateTime.now();
@@ -2223,7 +2310,10 @@ class BleDiscoveryService {
       return;
     }
     final mac = preferredDialMac(peerId);
-    if (mac == null || mac.isEmpty) return;
+    if (mac == null || mac.isEmpty) {
+      debugPrint('🗄️ [SYNC] Hash repair skipped: no dial address for $peerId');
+      return;
+    }
     _lastHashRepairAttempt[peerId] = now;
     unawaited(
       _runMeshInitiatorHandshake(
@@ -2258,7 +2348,10 @@ class BleDiscoveryService {
   final Set<String> _inboundUrgentPending = {};
   final Map<String, DateTime> _lastHashRepairAttempt = {};
   final Map<String, DateTime> _lastUrgentAttemptAt = {};
-  final Set<String> _urgentExcludedPeerIds = <String>{};
+
+  /// Peers a relayed message must not be sent back to (the peer it came from),
+  /// keyed to that message so a later local write still reaches them.
+  final Map<String, String> _urgentExcludedPeerIds = <String, String>{};
   final _scanHandshakeThrottle = MeshScanHandshakeThrottle(
     window: const Duration(seconds: 1),
   );
@@ -2452,7 +2545,7 @@ class BleDiscoveryService {
   }) {
     if (messageId?.isNotEmpty == true) _urgentMessageId = messageId;
     if (excludePeerId?.isNotEmpty == true) {
-      _urgentExcludedPeerIds.add(excludePeerId!);
+      _urgentExcludedPeerIds[excludePeerId!] = messageId ?? '';
     }
     final now = DateTime.now();
     final previous = _lastLocalWriteAt;
@@ -2500,6 +2593,7 @@ class BleDiscoveryService {
       'neighbors': currentNeighborIds,
       'peer_hashes': peerHashesForGossip(),
       'fps_b': base64Encode(fpsBlob),
+      if (pushPath != 'urgent_newest') ...DeepCatchup.envelopeFields(db),
       'data': changeset,
     };
     final payload = zlib.encode(utf8.encode(jsonEncode(envelope)));
@@ -2777,7 +2871,23 @@ class BleDiscoveryService {
         final buckets = lastKnownPeerBuckets[peerId];
         if (buckets != null && buckets.isNotEmpty) {
           final bucketTimer = Stopwatch()..start();
-          changeset = await db.getRowsForMismatchedBuckets(buckets);
+          final peerDeep = DeepCatchup.peer(peerId);
+          if (peerDeep != null &&
+              peerDeep.hasBuckets &&
+              DeepCatchup.differs(db.freshDeepDigest, peerDeep)) {
+            changeset = await db.getRowsForDeepMismatch(
+              peerDeep.buckets,
+              maxRows: repairPageRows,
+              peerKey: peerId,
+            );
+          }
+          if (changeset.isEmpty) {
+            changeset = await db.getRowsForMismatchedBuckets(
+              buckets,
+              maxRows: repairPageRows,
+              peerKey: peerId,
+            );
+          }
           fromVector = false;
           debugPrint(
             '[BLE_TRACE] EVENT:INBOUND_CATCHUP_STAGE | '
@@ -2879,8 +2989,21 @@ class BleDiscoveryService {
     return _tryInboundUrgentPush(myNodeId, peerId);
   }
 
-  /// Prefer an existing inbound link; otherwise the elected peer dials once,
-  /// refreshing the RPA before one retry if the first address fails.
+  bool _isTransientUrgentDialFailure(Object error) {
+    if (error is TimeoutException) return true;
+    if (error is! PlatformException) return false;
+    return const {
+      'DISCONNECTED',
+      'CCCD_FAILED',
+      'timeout',
+      'gatt_busy',
+      'already_connected',
+      'no_server',
+    }.contains(error.code);
+  }
+
+  /// Prefer an existing inbound link; otherwise the elected peer dials and
+  /// quickly retries one transient GATT failure with the latest scan address.
   Future<bool> _urgentDeliverPeer(
     String myNodeId,
     String peerId, {
@@ -3175,6 +3298,7 @@ class BleDiscoveryService {
 
           final heldLinkFailed =
               e is PlatformException && e.code == 'held_link_stale';
+          final transientDialFailure = _isTransientUrgentDialFailure(e);
           if (heldLinkFailed && attempt == 0) {
             const retryReserve = Duration(milliseconds: 3000);
             totalCap += retryReserve;
@@ -3211,22 +3335,63 @@ class BleDiscoveryService {
                 selectedMac = refreshed;
                 continue;
               }
-            } else {
-              final alternate = await _waitForFreshAlternateDialMac(
-                peerId,
-                attemptMac,
-                timeout: refreshBudget,
-              );
-              if (alternate != null) {
-                selectedMac = alternate;
-                continue;
+            } else if (transientDialFailure) {
+              // A DISCONNECTED/CCCD failure is usually a short-lived Android
+              // GATT race. Waiting the rest of the urgent budget for an
+              // alternate RPA delayed the next attempt by 5–7 seconds even
+              // when the current scan address was still fresh. Let Android
+              // finish closing the failed GATT, then retry once against the
+              // latest scan result (which may be the same still-valid RPA).
+              const retryPause = Duration(milliseconds: 250);
+              if (remaining() >
+                  retryPause + const Duration(milliseconds: 500)) {
+                await Future<void>.delayed(retryPause);
+                if (inboundDelivered.isCompleted) {
+                  return await inboundDelivered.future;
+                }
+                final retryMac = scanFreshDialMac(peerId);
+                if (retryMac != null) {
+                  selectedMac = retryMac;
+                  _traceUrgentFlow(
+                    'URGENT_TRANSIENT_FAST_RETRY',
+                    fields: {
+                      'PEER_NODE_ID': peerId,
+                      'FAILED_MAC': attemptMac,
+                      'TARGET_MAC': retryMac,
+                      'SAME_MAC': retryMac == attemptMac,
+                      'ERROR': e.toString(),
+                    },
+                  );
+                  continue;
+                }
               }
             }
           }
 
           final tail = remaining();
-          return tail > Duration.zero &&
-              await _waitForInboundUrgentPush(myNodeId, peerId, timeout: tail);
+          final inboundGrace =
+              (heldLinkFailed || transientDialFailure) &&
+                  tail > const Duration(milliseconds: 500)
+              ? const Duration(milliseconds: 500)
+              : tail;
+          if (inboundGrace != tail) {
+            _traceUrgentFlow(
+              'URGENT_TRANSIENT_FAILURE_YIELD',
+              fields: {
+                'PEER_NODE_ID': peerId,
+                'ATTEMPT': attempt + 1,
+                'ERROR': e.toString(),
+                'INBOUND_GRACE_MS': inboundGrace.inMilliseconds,
+                'BUDGET_REMAINING_MS': tail.inMilliseconds,
+              },
+            );
+          }
+          return inboundGrace > Duration.zero &&
+              await _waitForInboundUrgentPush(
+                myNodeId,
+                peerId,
+                timeout: inboundGrace,
+              );
         }
       }
       return false;
@@ -3234,24 +3399,6 @@ class BleDiscoveryService {
       _urgentInboundCompleter = previousCompleter;
       _urgentTargetPeer = previousTarget;
     }
-  }
-
-  Future<String?> _waitForFreshAlternateDialMac(
-    String peerId,
-    String failedMac, {
-    required Duration timeout,
-  }) async {
-    final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      final now = DateTime.now();
-      final alternate = freshAlternateDialMac(peerId, failedMac, now: now);
-      if (alternate != null) {
-        final deadUntil = deadMacUntil[alternate];
-        if (deadUntil == null || !now.isBefore(deadUntil)) return alternate;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 75));
-    }
-    return null;
   }
 
   Future<String?> _waitForFreshScanRetryDialMac(
@@ -3344,8 +3491,12 @@ class BleDiscoveryService {
           break;
         }
         _urgentSyncDirty = false;
-        final excludedPeerIds = Set<String>.from(_urgentExcludedPeerIds);
-        _urgentExcludedPeerIds.removeAll(excludedPeerIds);
+        // A relayed message is not sent back to its source, including when
+        // this loop runs again for it. Exclusions belonging to an older
+        // message are dropped, so a newer local write still reaches everyone.
+        final currentMessage = _urgentMessageId ?? '';
+        _urgentExcludedPeerIds.removeWhere((_, id) => id != currentMessage);
+        final excludedPeerIds = Set<String>.from(_urgentExcludedPeerIds.keys);
         final peerSelectionTimer = Stopwatch()..start();
         // Only dial scan-fresh RPAs. Stale GATT/bind MACs routinely 4s-timeout and
         // burn the only outbound slot (seen: P9→Clear miss while Red also times out).
@@ -3697,6 +3848,7 @@ class BleDiscoveryService {
         );
       } else {
         _urgentMessageId = null;
+        _urgentExcludedPeerIds.clear();
       }
     }
   }

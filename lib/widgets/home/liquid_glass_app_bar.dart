@@ -8,10 +8,13 @@ class LiquidGlassAppBar extends StatelessWidget implements PreferredSizeWidget {
     super.key,
     required this.title,
     required this.statusBarHeight,
+    this.leading,
     this.trailing,
   });
 
   final String title;
+
+  final Widget? leading;
 
   /// Top safe inset from [MediaQuery] (typically status bar).
   final double statusBarHeight;
@@ -22,8 +25,7 @@ class LiquidGlassAppBar extends StatelessWidget implements PreferredSizeWidget {
   static const double _toolbarHeight = 56;
 
   @override
-  Size get preferredSize =>
-      Size.fromHeight(_toolbarHeight + statusBarHeight);
+  Size get preferredSize => Size.fromHeight(_toolbarHeight + statusBarHeight);
 
   @override
   Widget build(BuildContext context) {
@@ -48,13 +50,16 @@ class LiquidGlassAppBar extends StatelessWidget implements PreferredSizeWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
+                ?leading,
                 Expanded(
                   child: Text(
                     title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: -0.2,
-                        ),
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.2,
+                    ),
                   ),
                 ),
                 ?trailing,
