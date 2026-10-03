@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'catchup_push_budget.dart';
 import 'database_service.dart';
 
 /// What a peer told us about its whole history. [buckets] stays empty until a
@@ -70,6 +71,9 @@ class DeepCatchup {
   static void remember(String peerId, PeerDeepDigest digest) {
     if (peerId.isEmpty) return;
     final previous = _peers[peerId];
+    if (previous == null || previous.hash != digest.hash) {
+      CatchupPushBudget.shared.refill(peerId);
+    }
     // A hash-only update for a digest we already hold buckets for keeps them.
     if (!digest.hasBuckets &&
         previous != null &&

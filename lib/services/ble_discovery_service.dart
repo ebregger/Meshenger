@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, listEquals;
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
@@ -11,7 +11,9 @@ import 'package:flutter/services.dart';
 import '../constants/ble_constants.dart';
 import '../providers/database_provider.dart';
 import 'benchmark_trace.dart';
+import 'catchup_push_budget.dart';
 import 'deep_catchup.dart';
+import 'deferred_repair.dart';
 import 'mesh_advertisement.dart';
 import 'mesh_catchup.dart';
 import 'mesh_dial_policy.dart';
@@ -126,6 +128,12 @@ class BleDiscoveryService {
   /// Rows in one gap-fill page. The same number is asked of the database and
   /// allowed on the wire, so nothing selected is dropped afterwards.
   static const int repairPageRows = 80;
+
+  /// Envelope flag on a payload that carries gap-fill rows. Those rows are old
+  /// history the receiver was missing, not new messages, so the receiver does
+  /// not relay them onward as urgent pushes; its neighbors catch up through
+  /// their own handshakes.
+  static const String repairFlagKey = 'repair';
 
   /// Keep BLE payloads under the GATT transfer budget by preferring newest rows.
   static Map<String, dynamic> shrinkChangesetForBle(
@@ -471,6 +479,10 @@ class BleDiscoveryService {
 
   static void rememberPeerBuckets(String peerNodeId, List<int> buckets) {
     if (peerNodeId.isEmpty) return;
+    final previous = lastKnownPeerBuckets[peerNodeId];
+    if (previous == null || !listEquals(previous, buckets)) {
+      CatchupPushBudget.shared.refill(peerNodeId);
+    }
     lastKnownPeerBuckets[peerNodeId] = List<int>.from(buckets);
   }
 
@@ -926,6 +938,7 @@ class BleDiscoveryService {
       peerObservedHash.clear();
       lastKnownPeerVector.clear();
       lastKnownPeerBuckets.clear();
+      CatchupPushBudget.shared.clear();
       _activeBluetoothNodeId = null;
       _lastBluetoothActivityAt = null;
       _lastUrgentAttemptAt.clear();
@@ -1777,6 +1790,15 @@ class BleDiscoveryService {
             'PEER_NODE_ID:$inboundPeer | TARGET_MAC:$inboundMac | '
             'WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
           );
+          // The link that blocks us usually closes within a second (it is the
+          // tail of the round that just finished). Retry then instead of
+          // waiting for the next scan result to come round.
+          _deferredRepairs.defer(
+            inboundPeer,
+            myNodeId: myNodeId,
+            hash: remoteHashInt,
+            now: DateTime.now(),
+          );
           return;
         }
 
@@ -2049,6 +2071,7 @@ class BleDiscoveryService {
         'vector': myVector,
         'fps_b': base64Encode(fpsBlob),
         ...deepFields,
+        if (usedGapFill) repairFlagKey: true,
         'initiator_data': ourChangeset,
       };
       final encodeTimer = Stopwatch()..start();
@@ -2091,10 +2114,17 @@ class BleDiscoveryService {
         final rowCounts = ourChangeset.map(
           (t, rows) => MapEntry(t, (rows as List).length),
         );
+        final deepMode = deepFields.containsKey(DeepCatchup.bucketsKey)
+            ? 'buckets'
+            : deepFields.isNotEmpty
+            ? 'hash'
+            : forceNewestPush
+            ? 'urgent'
+            : 'stale';
         debugPrint(
           '📤 [DISCOVERY] Sending offer+push to $targetMac — '
           'vector=${myVector.length} rows=$rowCounts peer=$resolvedPeer '
-          'fps=${fpsBlob.length}B',
+          'fps=${fpsBlob.length}B deep=$deepMode',
         );
       }
       final macAddress = device.remoteId.str;
@@ -2535,6 +2565,20 @@ class BleDiscoveryService {
     _inboundServerStateInitialized = true;
     _signalInboundServerStateChanged();
     debugPrint('🔗 [DISCOVERY] Server client disconnected: $mac');
+    _retryDeferredRepairs();
+  }
+
+  final DeferredRepairQueue _deferredRepairs = DeferredRepairQueue();
+
+  /// Re-dials peers whose round was put off while an inbound link was open.
+  void _retryDeferredRepairs() {
+    if (_deferredRepairs.isEmpty) return;
+    Timer(const Duration(milliseconds: 300), () {
+      for (final repair in _deferredRepairs.takeLive(DateTime.now())) {
+        _lastHashRepairAttempt.remove(repair.peerId);
+        requestHashRepair(repair.myNodeId, repair.peerId, repair.hash);
+      }
+    });
   }
 
   /// Dial known neighbors immediately after a local write (don't wait for ADV/scan).
@@ -2922,6 +2966,17 @@ class BleDiscoveryService {
         retryDelay = const Duration(seconds: 3);
       }
       _lastInboundCatchupAt[peerId] = DateTime.now();
+      if (!fromVector && !CatchupPushBudget.shared.tryUse(peerId)) {
+        // These pages are aimed by fingerprints the peer sent a while ago and
+        // may be well out of date. Stop until it reports again; its request
+        // for fresh ones may be waiting for this link to go quiet.
+        debugPrint(
+          '[BLE_TRACE] EVENT:INBOUND_CATCHUP_BUDGET_SPENT | '
+          'PEER_NODE_ID:$peerId | '
+          'WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
+        );
+        return true;
+      }
       await _pushChangesetOverInbound(
         myNodeId,
         mac,

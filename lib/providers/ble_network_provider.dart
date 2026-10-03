@@ -15,6 +15,7 @@ import '../services/ble_discovery_service.dart';
 import '../services/database_service.dart';
 import '../services/benchmark_trace.dart';
 import '../services/deep_catchup.dart';
+import '../services/offer_reply_planner.dart';
 import '../services/framed_reply_retry_state.dart';
 import '../services/local_write_hook.dart';
 import '../services/native_mesh_service.dart';
@@ -1254,8 +1255,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 final initiatorChangeset = Map<String, dynamic>.from(
                   initiatorDataRaw,
                 );
-                final shouldRelayMessages = await db.hasNewerIncomingMessages(
-                  initiatorChangeset,
+                final shouldRelayMessages = OfferReplyPlanner.shouldRelay(
+                  envelope: root,
+                  hasNewerMessages: await db.hasNewerIncomingMessages(
+                    initiatorChangeset,
+                  ),
                 );
                 final rowCounts = initiatorChangeset.map(
                   (t, rows) => MapEntry(t, (rows as List).length),
@@ -1365,9 +1369,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 'offer_post_merge_hash',
                 db.getDatabaseHash,
               );
-              var usedRepair = false;
-              var fpsComplete = true;
-
               // Whole-history digest. Never consulted on the urgent path, so it
               // cannot slow live messages down. Elsewhere it is brought up to
               // date first (about 80 ms on a Pixel 3, and only when something
@@ -1381,94 +1382,99 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   ? null
                   : await db.computeDeepDigest();
               final deepMismatch = DeepCatchup.differs(ourDeep, remoteDeep);
-              // The whole-history fingerprints have 1024 buckets, so they point
-              // at the missing rows far more precisely than the 32-bucket
-              // window fingerprints. Use them whenever both sides have them,
-              // whether the gap is recent or old.
-              if (delta.isEmpty && deepMismatch && remoteDeep!.hasBuckets) {
-                final older = await measureServerSyncStage(
-                  'offer_deep_repair',
-                  () => db.getRowsForDeepMismatch(
-                    remoteDeep.buckets,
-                    maxRows: BleDiscoveryService.repairPageRows,
-                    peerKey: senderId ?? '',
-                  ),
-                );
-                if (older.isNotEmpty) {
-                  delta = older;
-                  usedRepair = true;
-                  fpsComplete = false;
-                  debugPrint(
-                    '📥 [SYNC] Gap fill for $senderId — '
-                    '${older.values.whereType<List>().fold<int>(0, (a, b) => a + b.length)} '
-                    'row(s) from mismatched history buckets',
-                  );
-                }
-              }
+              debugPrint(
+                '🔎 [SYNC] Offer from $senderId — deep: '
+                'ours=${ourDeep == null ? 'none' : 'hash'}, '
+                'theirs=${remoteDeep == null
+                    ? 'none'
+                    : remoteDeep.hasBuckets
+                    ? 'buckets'
+                    : 'hash'}, '
+                'mismatch=$deepMismatch, delta=${delta.isEmpty ? 'empty' : 'rows'}',
+              );
 
-              // Remember peer digests always; only scan for absent rows when the
-              // version-vector delta is empty (avoids loading the full CRDT on
-              // every live write — that stalled Pixel 3 replies for seconds).
+              // Remember the peer's window fingerprints whenever they arrive.
+              var fingerprints = PeerFingerprints.missing;
+              List<int>? remoteBuckets;
               final fpsB64 = root['fps_b'] ?? root['row_fps'];
               if (fpsB64 is String && fpsB64.isNotEmpty) {
+                fingerprints = PeerFingerprints.unusable;
                 try {
                   final raw = base64Decode(fpsB64);
                   if (raw.length ==
                       DatabaseService.fingerprintBucketCount * 4) {
-                    final remoteBuckets =
-                        DatabaseService.decodeBucketFingerprints(raw);
+                    remoteBuckets = DatabaseService.decodeBucketFingerprints(
+                      raw,
+                    );
+                    fingerprints = PeerFingerprints.usable;
                     if (senderId != null) {
                       BleDiscoveryService.rememberPeerBuckets(
                         senderId,
                         remoteBuckets,
                       );
                     }
-                    if (delta.isEmpty && senderHash != ourSenderHash) {
-                      final absent = await measureServerSyncStage(
-                        'offer_bucket_repair',
-                        () => db.getRowsForMismatchedBuckets(
-                          remoteBuckets,
-                          maxRows: BleDiscoveryService.repairPageRows,
-                          peerKey: senderId ?? '',
-                        ),
-                      );
-                      if (absent.isNotEmpty) {
-                        delta = absent;
-                        usedRepair = true;
-                        final absentCount = absent.values
-                            .whereType<List>()
-                            .fold<int>(0, (a, b) => a + b.length);
-                        fpsComplete =
-                            absentCount < BleDiscoveryService.repairPageRows;
-                        debugPrint(
-                          '📥 [SYNC] Bucket gap-fill for $senderId — '
-                          '$absentCount row(s) in mismatched buckets',
-                        );
-                      }
-                    }
                   }
                 } catch (e) {
                   debugPrint('⚠️ [SYNC] fps_b decode failed: $e');
                 }
-              } else if (delta.isEmpty && senderHash != ourSenderHash) {
-                delta = await measureServerSyncStage(
+              }
+
+              // Which rows to send back. Repairs only scan for absent rows when
+              // the version-vector delta is empty (loading the full CRDT on
+              // every live write stalled Pixel 3 replies for seconds).
+              var deltaStalled = false;
+              if (senderId != null && !prioritizeNewestForLatency) {
+                if (delta.isEmpty) {
+                  OfferReplyPlanner.stalledDeltas.forget(senderId);
+                } else {
+                  deltaStalled = OfferReplyPlanner.stalledDeltas.record(
+                    senderId,
+                    jsonEncode(delta).hashCode,
+                  );
+                  if (deltaStalled) {
+                    debugPrint(
+                      '⚠️ [SYNC] Same delta sent to $senderId again and '
+                      'again — trying gap repair first',
+                    );
+                  }
+                }
+              }
+              final plan = await OfferReplyPlanner.plan(
+                delta: delta,
+                deltaStalled: deltaStalled,
+                deepBucketsMismatch:
+                    deepMismatch && (remoteDeep?.hasBuckets ?? false),
+                fingerprints: fingerprints,
+                windowHashesDiffer: senderHash != ourSenderHash,
+                deepRows: () => measureServerSyncStage(
+                  'offer_deep_repair',
+                  () => db.getRowsForDeepMismatch(
+                    remoteDeep!.buckets,
+                    maxRows: BleDiscoveryService.repairPageRows,
+                    peerKey: senderId ?? '',
+                  ),
+                ),
+                windowRows: () => measureServerSyncStage(
+                  'offer_bucket_repair',
+                  () => db.getRowsForMismatchedBuckets(
+                    remoteBuckets!,
+                    maxRows: BleDiscoveryService.repairPageRows,
+                    peerKey: senderId ?? '',
+                  ),
+                ),
+                hashRepairRows: () => measureServerSyncStage(
                   'offer_hash_repair',
                   () => db.getHashRepairChangeset(peerKey: senderId),
-                );
-                usedRepair = delta.isNotEmpty;
-                fpsComplete = false;
+                ),
+                newestRows: () => db.getNewestRowsChangeset(maxRows: 8),
+              );
+              delta = plan.delta;
+              final usedRepair = plan.isRepair;
+              var fpsComplete = plan.fingerprintsComplete;
+              if (usedRepair) {
                 debugPrint(
-                  '⚠️ [SYNC] Hash-mismatch repair for $senderId — '
-                  'slice tables=${delta.keys.toList()}',
-                );
-              }
-              // A repair reply only happens when the peer's frontier already
-              // covers our newest rows, so repeating them would waste a slice
-              // of every page.
-              if (!usedRepair) {
-                delta = BleDiscoveryService.prioritizeNewestMessages(
-                  delta,
-                  await db.getNewestRowsChangeset(maxRows: 8),
+                  '📥 [SYNC] Gap fill for $senderId via ${plan.source.name} — '
+                  '${OfferReplyPlanner.countRows(delta)} row(s)',
                 );
               }
               var selectedDeltaRows = 0;
@@ -1538,6 +1544,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                   if (deepMismatch)
                     DeepCatchup.bucketsKey: base64Encode(ourDeep.buckets),
                 },
+                if (usedRepair) BleDiscoveryService.repairFlagKey: true,
                 'data': delta,
               };
               var outBytes = zlib.encode(
@@ -1701,8 +1708,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 '📥 [SYNC] Merging delta from $senderMac — $totalRows rows across ${changeset.length} tables: $rowCounts',
               );
               if (changeset.isNotEmpty) {
-                final shouldRelayMessages = await db.hasNewerIncomingMessages(
-                  changeset,
+                final shouldRelayMessages = OfferReplyPlanner.shouldRelay(
+                  envelope: root,
+                  hasNewerMessages: await db.hasNewerIncomingMessages(
+                    changeset,
+                  ),
                 );
                 traceBenchmarkMessageRows(
                   'MERGE_STARTED',

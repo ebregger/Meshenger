@@ -73,6 +73,7 @@ Newer debug-build runs:
 | --- | --- |
 | 100 live messages with a 1,100-message history on both phones | 100/100 delivered, UI latency p50 0.37 s, p95 0.65 s, max 0.70 s |
 | One phone missing 300 messages (200 inside the newest 1,024, 100 older) | caught up in about 65 s, down from about 5.5 min before gap-fill sent the missing records |
+| One phone missing 300 scattered messages of a 500-message history (two Pixel 3s, three runs) | caught up in 41.0, 44.3 and 66.0 s |
 | One phone missing 80 scattered messages of 100 | caught up in 7.1 s |
 | One phone missing 99 of 100 messages | caught up in 10.0 s |
 | Three phones (two Pixel 3s and a Pixel 9 Pro XL), 100 live messages from one sender | 100/100 delivered in 38 s, UI latency p50 1.79 s, p95 2.70 s, max 3.00 s |

@@ -3,12 +3,13 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:fixnum/fixnum.dart' show Int64;
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite_crdt/sqlite_crdt.dart';
 
 import '../models/generated/mesh_data.pb.dart';
 import '../models/text_message_with_author.dart';
+import 'deep_index.dart';
 import 'identity_service.dart';
 import 'database_mappers.dart';
 import 'local_deletion_store.dart';
@@ -704,36 +705,69 @@ class DatabaseService {
     }
   }
 
+  late final DeepIndex _deepIndex = DeepIndex(
+    bucketCount: deepBucketCount,
+    fingerprint: rowFingerprint,
+  );
+
+  /// Tables the deep digest covers: SQL for each row's key and for the id its
+  /// fingerprint is built from (empty when it only counts towards the hash).
+  static const Map<String, ({String key, String id})> _deepTables = {
+    'messages': (key: 'msg_id', id: 'msg_id'),
+    'users': (key: 'mesh_node_id', id: 'node_id'),
+    'bitmap_chunks': (key: "file_id || ':' || chunk_index", id: "''"),
+  };
+
+  /// Brings the deep index up to date with the database and returns how many
+  /// rows it had to read.
+  ///
+  /// The first pass reads every live row. After that every write and merge
+  /// stamps the rows it touches with a newer `modified` value, so a pass only
+  /// reads the rows changed since the last one, however long the history is.
+  Future<int> _refreshDeepIndex() async {
+    final index = _deepIndex;
+    var read = 0;
+    for (final MapEntry(key: table, value: columns) in _deepTables.entries) {
+      final since = index.seeded ? index.modifiedMark[table] : null;
+      // Read the mark first: a row written while the pass runs is then read
+      // again next time instead of being missed.
+      final newest = await _crdt.query(
+        'SELECT max(modified) AS mark FROM $table',
+      );
+      final mark = newest.isEmpty ? null : newest.first['mark'] as String?;
+      final rows = await _crdt.query(
+        'SELECT ${columns.key} AS k, ${columns.id} AS id, hlc, is_deleted '
+        'FROM $table '
+        '${since == null ? 'WHERE is_deleted = 0' : 'WHERE modified >= ?1'}',
+        [?since],
+      );
+      for (final row in rows) {
+        final hlc = row['hlc'];
+        index.apply(
+          table: table,
+          key: row['k']?.toString() ?? '',
+          id: row['id']?.toString() ?? '',
+          hlc: hlc is String ? hlc : '',
+          live: row['is_deleted'] == 0,
+        );
+      }
+      read += rows.length;
+      if (mark != null) index.modifiedMark[table] = mark;
+    }
+    index.seeded = true;
+    return read;
+  }
+
   Future<DeepDigest?> _buildDeepDigest() async {
     try {
       await init();
       final revision = _dbHashRevision;
       final timer = Stopwatch()..start();
-      final hlcs = <String>[];
-      final xors = List<int>.filled(deepBucketCount, 0);
-      Future<void> collect(String table, String? idColumn) async {
-        final result = await _crdt.query(
-          'SELECT ${idColumn ?? "''"} AS id, hlc FROM $table '
-          'WHERE is_deleted = 0',
-        );
-        for (final row in result) {
-          final hlc = row['hlc'];
-          if (hlc is! String || hlc.isEmpty) continue;
-          hlcs.add(hlc);
-          final id = row['id']?.toString() ?? '';
-          if (id.isEmpty) continue;
-          final fp = rowFingerprint(id);
-          xors[fp % deepBucketCount] ^= fp;
-        }
-      }
-
-      await collect('messages', 'msg_id');
-      await collect('users', 'node_id');
-      await collect('bitmap_chunks', null);
-      hlcs.sort();
-      final digest = DeepDigest(_fnvHlcs(hlcs), _packBuckets(xors));
+      final read = await _refreshDeepIndex();
+      final digest = DeepDigest(_deepIndex.hash, _deepIndex.packedBuckets());
       debugPrint(
-        '[DB] deep digest built: ${hlcs.length} rows in ${timer.elapsedMilliseconds} ms',
+        '[DB] deep digest updated: read $read, ${_deepIndex.length} live '
+        'in ${timer.elapsedMilliseconds} ms',
       );
       if (revision != _dbHashRevision) return null;
       _deepDigest = digest;
@@ -742,9 +776,38 @@ class DatabaseService {
       return digest;
     } catch (error) {
       // The database may have been closed mid-computation (shutdown, tests).
+      // Start over next time rather than trust a half-applied pass.
+      _deepIndex.clear();
       debugPrint('[DB] deep digest skipped: $error');
       return null;
     }
+  }
+
+  /// Rebuilds the deep digest from scratch, ignoring the incremental index.
+  /// Only for checking that the incremental path stayed correct.
+  @visibleForTesting
+  Future<DeepDigest> deepDigestFromScratch() async {
+    await init();
+    final fresh = DeepIndex(
+      bucketCount: deepBucketCount,
+      fingerprint: rowFingerprint,
+    );
+    for (final MapEntry(key: table, value: columns) in _deepTables.entries) {
+      final rows = await _crdt.query(
+        'SELECT ${columns.key} AS k, ${columns.id} AS id, hlc FROM $table '
+        'WHERE is_deleted = 0',
+      );
+      for (final row in rows) {
+        fresh.apply(
+          table: table,
+          key: row['k']?.toString() ?? '',
+          id: row['id']?.toString() ?? '',
+          hlc: row['hlc'] as String? ?? '',
+          live: true,
+        );
+      }
+    }
+    return DeepDigest(fresh.hash, fresh.packedBuckets());
   }
 
   static List<int> decodeDeepBuckets(List<int> raw) {
@@ -771,27 +834,11 @@ class DatabaseService {
     final local = decodeDeepBuckets(digest.buckets);
     final bad = _differingBuckets(local, remoteBuckets, deepBucketCount);
     if (bad.isEmpty) return {};
-    Future<List<_DigestRow>> rowsInBadBuckets(
-      String table,
-      String column,
-    ) async {
-      final result = await _crdt.query(
-        'SELECT $column AS id FROM $table WHERE is_deleted = 0',
-      );
-      return [
-        for (final row in result)
-          if (row['id'] != null &&
-              row['id'].toString().isNotEmpty &&
-              bad.contains(
-                rowFingerprint(row['id'].toString()) % deepBucketCount,
-              ))
-            _DigestRow(table, row['id'].toString(), ''),
-      ];
-    }
-
+    // The index already holds every live row, so there is nothing to query.
     final candidates = [
-      ...await rowsInBadBuckets('messages', 'msg_id'),
-      ...await rowsInBadBuckets('users', 'node_id'),
+      for (final entry in _deepIndex.rowsInBuckets(bad))
+        if (entry.table == 'messages' || entry.table == 'users')
+          _DigestRow(entry.table, entry.id, entry.hlc),
     ];
     final picked = _pickRepairRows(
       'd:$peerKey',
