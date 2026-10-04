@@ -49,4 +49,51 @@ void main() {
     DeepCatchup.remember('p', const PeerDeepDigest(11));
     expect(shared.tryUse('p'), isTrue);
   });
+
+  test(
+    'prevents 10-minute stall: 20-page budget halts circular push thrashing when peer repeats identical fingerprints',
+    () {
+      final shared = CatchupPushBudget.shared;
+      const phoneB = 'phone-b';
+      final staleBuckets = List<int>.generate(32, (i) => i * 17);
+
+      // Simulate Phone A receiving the exact same fingerprint over 21 consecutive iterations.
+      for (var iteration = 1; iteration <= 21; iteration++) {
+        BleDiscoveryService.rememberPeerBuckets(phoneB, staleBuckets);
+
+        if (iteration <= 20) {
+          expect(
+            shared.tryUse(phoneB),
+            isTrue,
+            reason: 'Iteration $iteration: push permitted within 20-page budget',
+          );
+        } else {
+          // On iteration 21 (after 20 pages used), the budget halts further pushes
+          // and forces the link to go quiet so Phone B's request for fresh fingerprints can be sent.
+          expect(
+            shared.tryUse(phoneB),
+            isFalse,
+            reason:
+                'Iteration $iteration: budget must halt further pushes to prevent link starvation',
+          );
+          expect(shared.remaining(phoneB), 0);
+        }
+      }
+
+      // Phone B's request for fresh state finally gets through the quiet link:
+      final freshBuckets = List<int>.generate(
+        32,
+        (i) => i * 17 + (i == 0 ? 1 : 0),
+      );
+      BleDiscoveryService.rememberPeerBuckets(phoneB, freshBuckets);
+
+      // Pushes resume once fresh fingerprints are reported
+      expect(
+        shared.tryUse(phoneB),
+        isTrue,
+        reason: 'Budget refills once peer reports updated fingerprints',
+      );
+      expect(shared.remaining(phoneB), 19);
+    },
+  );
 }

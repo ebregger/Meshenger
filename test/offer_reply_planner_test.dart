@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:bluetooth_app/services/ble_discovery_service.dart';
 import 'package:bluetooth_app/services/offer_reply_planner.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -193,6 +195,50 @@ void main() {
 
         expect(plan.source, OfferReplySource.versionVector);
         expect(OfferReplyPlanner.countRows(plan.delta), 25);
+      },
+    );
+
+    test(
+      'prevents 10-minute stall: circular 25-row push thrashing is detected and broken by switching to gap repair',
+      () async {
+        final calls = _Calls()
+          ..deep = rows('messages', 80, prefix: 'gap')
+          ..newest = rows('messages', 8, prefix: 'n');
+        final delta25 = rows('messages', 25, prefix: 'stale');
+        final tracker = StalledDeltaTracker(threshold: 3);
+
+        const peer = 'phone-b';
+        final deltaHash = jsonEncode(delta25).hashCode;
+
+        // Iterations 1 & 2: delta is sent normally (25 delta + 8 newest = 33 rows)
+        for (var i = 1; i <= 2; i++) {
+          final isStalled = tracker.record(peer, deltaHash);
+          expect(isStalled, isFalse, reason: 'Iteration $i is before threshold');
+          final plan = await calls.plan(
+            delta: delta25,
+            deltaStalled: isStalled,
+            deepMismatch: true,
+            windowDiffers: true,
+          );
+          expect(plan.source, OfferReplySource.versionVector);
+          expect(OfferReplyPlanner.countRows(plan.delta), 33);
+        }
+
+        // Iteration 3: 3rd consecutive identical delta trips stalled detector
+        final isStalled = tracker.record(peer, deltaHash);
+        expect(isStalled, isTrue, reason: 'Iteration 3 trips stalled threshold');
+
+        // Offer reply planner diverts away from repeating the stalled 25 rows
+        // and prioritizes gap repair rows to break the circular flood
+        final plan = await calls.plan(
+          delta: delta25,
+          deltaStalled: isStalled,
+          deepMismatch: true,
+          windowDiffers: true,
+        );
+        expect(plan.source, OfferReplySource.deepBuckets);
+        expect(plan.isRepair, isTrue);
+        expect(OfferReplyPlanner.countRows(plan.delta), 80);
       },
     );
   });
