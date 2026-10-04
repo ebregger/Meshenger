@@ -57,9 +57,8 @@ class PermissionsHelper {
       final android = await DeviceInfoPlugin().androidInfo;
       final sdkInt = android.version.sdkInt;
 
-      // Always include location: flutter_blue_plus with androidUsesFineLocation:true
-      // requires ACCESS_FINE_LOCATION to receive manufacturer data in scan results,
-      // even on Android 12+ (API 31+) where the new BT permissions were added.
+      // Keep precise location permission: native scans retain the existing
+      // location-aware behavior rather than asserting neverForLocation.
       final List<Permission> toCheck = sdkInt >= _android12ApiLevel
           ? [
               Permission.bluetoothScan,
@@ -76,10 +75,8 @@ class PermissionsHelper {
 
       // Check hardware toggles
       locEnabled = await Permission.location.serviceStatus.isEnabled;
-      // For BT hardware state, we usually rely on FlutterBluePlus stream,
-      // but we can check initial state here if needed.
-      // However, Permission.bluetooth.serviceStatus isn't reliable for "Hardware On".
-      // We'll use FlutterBluePlus.adapterStateNow in the provider.
+      // The provider queries the native adapter and listens for state broadcasts.
+      // Permission.bluetooth.serviceStatus does not reliably report radio state.
     } else {
       // Non-Android assumed ready (iOS handles via Info.plist dialogs)
       btEnabled = true;
@@ -104,8 +101,7 @@ class PermissionsHelper {
     final android = await DeviceInfoPlugin().androidInfo;
     final sdkInt = android.version.sdkInt;
 
-    // Always include location: flutter_blue_plus requires ACCESS_FINE_LOCATION
-    // even on Android 12+ when androidUsesFineLocation is true.
+    // Retain precise location permission for the native filtered scanner.
     final List<Permission> permissions = sdkInt >= _android12ApiLevel
         ? const [
             Permission.bluetoothScan,

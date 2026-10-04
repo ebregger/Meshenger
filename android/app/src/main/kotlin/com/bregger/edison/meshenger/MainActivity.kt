@@ -64,6 +64,13 @@ class MainActivity : FlutterActivity() {
   }
 
   private var eventSink: EventChannel.EventSink? = null
+  private var bleRadio: NativeBleRadio? = null
+
+  override fun onDestroy() {
+    bleRadio?.close()
+    bleRadio = null
+    super.onDestroy()
+  }
   private var bluetoothGattServer: BluetoothGattServer? = null
   private var advertiser: BluetoothLeAdvertiser? = null
   private var advertiseCallback: AdvertiseCallback? = null
@@ -349,6 +356,12 @@ class MainActivity : FlutterActivity() {
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
 
+    bleRadio?.close()
+    val radio = NativeBleRadio(this, SERVICE_UUID)
+    bleRadio = radio
+    EventChannel(flutterEngine.dartExecutor.binaryMessenger, "com.featherfawks.mesh/radio_events")
+      .setStreamHandler(radio)
+
     val identityStorage = MeshIdentityStorage(applicationContext)
     MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.bregger.edison.meshenger/identity")
       .setMethodCallHandler { call, result ->
@@ -384,6 +397,13 @@ class MainActivity : FlutterActivity() {
 
     methodChannel.setMethodCallHandler { call, result ->
       when (call.method) {
+        "adapter_state" -> result.success(radio.adapterState())
+        "start_scan" -> radio.startScan(result)
+        "stop_scan" -> {
+          radio.stopScan()
+          result.success(null)
+        }
+        "request_bluetooth_enable" -> radio.requestEnable(result)
         "start_mesh_foreground_service" -> {
           startMeshForegroundService(result)
         }

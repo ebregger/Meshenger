@@ -18,4 +18,4 @@ MIT and Apache 2.0 allow commercial forks to remain closed source. MPL requires 
 
 For Meshenger, MIT would prioritize a simple permissive license; Apache 2.0 would prioritize permissive reuse with explicit patent terms; GPL 3.0 would prioritize keeping covered distributed forks open. The current decision is to choose none of them yet.
 
-Before applying a future license, check ownership of contributions and compatibility with the resolved dependencies. A Meshenger license cannot override FlutterBluePlus's separate commercial-use terms. See [the removal assessment](FLUTTER_BLUE_PLUS_REMOVAL.md).
+Before applying a future license, check ownership of contributions and compatibility with the resolved dependencies. A Meshenger license cannot override a dependency's separate terms. FlutterBluePlus has been removed from the current dependency graph; earlier builds containing it keep its separate commercial-use terms. See [the removal record](FLUTTER_BLUE_PLUS_REMOVAL.md).

@@ -5,7 +5,6 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint, listEquals;
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
@@ -20,6 +19,7 @@ import '../services/framed_reply_retry_state.dart';
 import '../services/local_write_hook.dart';
 import '../services/mesh_payload_limits.dart';
 import '../services/native_mesh_service.dart';
+import '../services/native_ble_radio.dart';
 import '../utils/ble_permission_result.dart';
 import '../utils/permissions_helper.dart';
 import 'ble_network_state.dart';
@@ -69,7 +69,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   late final BleDiscoveryService _discovery;
   final NativeMeshService _nativeMesh = NativeMeshService();
 
-  StreamSubscription<BluetoothAdapterState>? _adapterSub;
+  StreamSubscription<MeshAdapterState>? _adapterSub;
+  int _adapterListenerGeneration = 0;
   StreamSubscription<List<TextMessage>>? _localMessagesSub;
   StreamSubscription<List<NodeProfile>>? _localProfilesSub;
   StreamSubscription<IncomingBleChunk>? _nativePayloadSub;
@@ -492,20 +493,33 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       return;
     }
     state = state.copyWith(lastPermissionResult: outcome);
-    _attachAdapterListener();
+    await _attachAdapterListener();
   }
 
-  void _attachAdapterListener() {
-    unawaited(_adapterSub?.cancel());
-    _adapterSub = FlutterBluePlus.adapterState.listen((event) {
-      _onAdapterState(event);
-      unawaited(refreshMeshHealth());
-    });
-    _onAdapterState(FlutterBluePlus.adapterStateNow);
+  Future<void> _attachAdapterListener() async {
+    final generation = ++_adapterListenerGeneration;
+    await _adapterSub?.cancel();
+    if (!mounted || generation != _adapterListenerGeneration) return;
+    var observedState = false;
+    _adapterSub = NativeBleRadio.instance.adapterStates.listen(
+      (event) {
+        observedState = true;
+        _onAdapterState(event);
+        unawaited(refreshMeshHealth());
+      },
+      onError: (Object error) {
+        observedState = true;
+        debugPrint('[MESH] Adapter stream error: $error');
+        _onAdapterState(MeshAdapterState.unauthorized);
+      },
+    );
+    final initial = await NativeBleRadio.instance.adapterState();
+    if (!mounted || generation != _adapterListenerGeneration) return;
+    if (!observedState) _onAdapterState(initial);
     unawaited(refreshMeshHealth());
   }
 
-  void _onAdapterState(BluetoothAdapterState value) {
+  void _onAdapterState(MeshAdapterState value) {
     final wasOn = state.adapterStatus == BleAdapterStatus.on;
     final next = _mapAdapterState(value);
     debugPrint('[MESH] Adapter state=$value wasOn=$wasOn mapped=$next');
@@ -525,19 +539,19 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     _publishRadioFlags();
   }
 
-  static BleAdapterStatus _mapAdapterState(BluetoothAdapterState value) {
+  static BleAdapterStatus _mapAdapterState(MeshAdapterState value) {
     switch (value) {
-      case BluetoothAdapterState.on:
+      case MeshAdapterState.on:
         return BleAdapterStatus.on;
-      case BluetoothAdapterState.off:
-      case BluetoothAdapterState.turningOff:
+      case MeshAdapterState.off:
+      case MeshAdapterState.turningOff:
         return BleAdapterStatus.off;
-      case BluetoothAdapterState.unauthorized:
+      case MeshAdapterState.unauthorized:
         return BleAdapterStatus.unauthorized;
-      case BluetoothAdapterState.unavailable:
+      case MeshAdapterState.unavailable:
         return BleAdapterStatus.off;
-      case BluetoothAdapterState.unknown:
-      case BluetoothAdapterState.turningOn:
+      case MeshAdapterState.unknown:
+      case MeshAdapterState.turningOn:
         return BleAdapterStatus.unknown;
     }
   }
@@ -2072,6 +2086,8 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   /// Pulls the latest hardware and permission statuses into the state.
   Future<void> refreshMeshHealth() async {
     final report = await PermissionsHelper.checkMeshHealth();
+    final adapter = await NativeBleRadio.instance.adapterState();
+    if (!mounted) return;
 
     final Map<String, String> statusMap = {};
     report.permissions.forEach((perm, status) {
@@ -2084,8 +2100,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
     state = state.copyWith(
       locationServicesEnabled: report.locationServicesEnabled,
-      bluetoothHardwareEnabled:
-          FlutterBluePlus.adapterStateNow == BluetoothAdapterState.on,
+      bluetoothHardwareEnabled: adapter == MeshAdapterState.on,
       permissionStatuses: statusMap,
     );
   }
@@ -2101,6 +2116,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         lastPermissionResult: outcome,
       );
       await _adapterSub?.cancel();
+      _adapterListenerGeneration++;
       _adapterSub = null;
       await _discovery.stopAll();
       await _nativePayloadSub?.cancel();
@@ -2119,7 +2135,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     }
 
     state = state.copyWith(lastPermissionResult: outcome);
-    _attachAdapterListener();
+    await _attachAdapterListener();
     return outcome;
   }
 
@@ -2131,7 +2147,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   /// System UI to enable the Bluetooth radio when [BleAdapterStatus.off].
   Future<void> promptEnableBluetooth() async {
     try {
-      await FlutterBluePlus.turnOn();
+      await NativeBleRadio.instance.turnOn();
     } catch (_) {
       // User dismissed or platform rejected; [adapterState] will still update.
     }
@@ -2188,6 +2204,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   @override
   void dispose() {
+    _adapterListenerGeneration++;
     _clearIncoming();
     _meshSessionActive = false;
     _meshSessionReady = false;

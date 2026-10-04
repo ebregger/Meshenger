@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint, listEquals;
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 
@@ -19,6 +18,7 @@ import 'mesh_catchup.dart';
 import 'mesh_dial_policy.dart';
 import 'mesh_payload_limits.dart';
 import 'native_mesh_service.dart';
+import 'native_ble_radio.dart';
 import 'native_mesh_urgent.dart';
 import 'peer_hash_observation.dart';
 
@@ -37,7 +37,7 @@ class _UrgentInboundLinkStillActive implements Exception {
   String toString() => 'Inbound GATT link still active for $peerId@$mac';
 }
 
-/// Mesh discovery: central scanning via [FlutterBluePlus]; GAP advertise lives in native Android.
+/// Mesh discovery: central scanning via [NativeBleRadio]; GAP advertise lives in native Android.
 class BleDiscoveryService {
   /// Advertised database hash → stable node ID only when that hash currently
   /// belongs to exactly one known peer. Database hashes are state fingerprints,
@@ -563,9 +563,9 @@ class BleDiscoveryService {
   static void rememberScanMac(String nodeId, String mac, {DateTime? seenAt}) {
     if (nodeId.isEmpty || mac.isEmpty || mac == '<unknown>') return;
     final at = seenAt ?? DateTime.now();
-    // FBP delivers a mixed-age batch (newest-first, then older <3s). Never let an
+    // Android can deliver delayed batches. Never let an
     // older sighting of the *same* MAC overwrite a fresher one. A *different* MAC
-    // is an RPA rotation — always take it even if FBP's stamp lags slightly.
+    // is an RPA rotation — always take it even if its stamp lags slightly.
     final prevSeen = nodeIdMacSeenAt[nodeId];
     final prevMac = nodeIdToMac[nodeId];
     if (prevSeen != null &&
@@ -743,7 +743,7 @@ class BleDiscoveryService {
     if (nodeId.isEmpty || mac.isEmpty || mac == '<unknown>') return;
     lastGoodDialMac[nodeId] = mac;
     macToNodeId[mac] = nodeId;
-    // Do NOT bump nodeIdMacSeenAt here — FBP scan timestamps lag wall-clock, so
+    // Do NOT bump nodeIdMacSeenAt here — observation timestamps lag wall-clock, so
     // stamping now() made every later scan sighting look "older" and got dropped.
     // Urgent freshness must stay scan-driven; only seed dial MAC if scan never saw peer.
     if (!nodeIdToMac.containsKey(nodeId)) {
@@ -785,7 +785,7 @@ class BleDiscoveryService {
   final NativeMeshService _nativeMesh = NativeMeshService();
   Uint8List? _localHash;
   bool? _localExtendedConnectable;
-  StreamSubscription<List<ScanResult>>? _scanSub;
+  StreamSubscription<List<MeshScanResult>>? _scanSub;
   Timer? _heartbeatTimer;
   DateTime? _lastResultAt;
   final Map<String, DateTime> _lastRssiTraceAt = {};
@@ -800,7 +800,7 @@ class BleDiscoveryService {
   final List<
     ({
       int hash,
-      BluetoothDevice device,
+      String device,
       String? peerNodeId,
       String? peerKeyHint,
       bool hashTrusted,
@@ -864,14 +864,12 @@ class BleDiscoveryService {
   }
 
   /// Advertisement includes our GATT service UUID (ignore unrelated peripherals).
-  static bool advertisesMeshService(ScanResult r) {
-    return r.advertisementData.serviceUuids.any(
-      (u) => u.str128.toLowerCase() == meshServiceUuid.str128,
-    );
+  static bool advertisesMeshService(MeshScanResult r) {
+    return r.serviceUuids.any((u) => u.toLowerCase() == meshServiceUuid);
   }
 
   /// Identity fields the scanner uses when it sees [result].
-  static MeshAdvertisement inspectAdvertisement(ScanResult result) {
+  static MeshAdvertisement inspectAdvertisement(MeshScanResult result) {
     return MeshAdvertisement.fromScanResult(result);
   }
 
@@ -879,11 +877,11 @@ class BleDiscoveryService {
     _localHash = value;
   }
 
-  Uint8List? _tryGetRemoteHash(ScanResult r) {
+  Uint8List? _tryGetRemoteHash(MeshScanResult r) {
     return MeshAdvertisement.fromScanResult(r).payload;
   }
 
-  bool _isLikelyNativeMeshAdvert(ScanResult r) {
+  bool _isLikelyNativeMeshAdvert(MeshScanResult r) {
     // Fast path: the primary advertisement always contains our Service UUID.
     // Accept the packet immediately so we don't drop results where the Scan
     // Response (which carries the 0xFFE0 manufacturer hash) hasn't merged yet.
@@ -891,7 +889,7 @@ class BleDiscoveryService {
 
     // Legacy / fallback path: older builds that don't emit the service UUID
     // yet can still be matched by the full manufacturer magic-header check.
-    final raw = r.advertisementData.manufacturerData[meshManufacturerId];
+    final raw = r.manufacturerData[meshManufacturerId];
     if (raw == null || raw.length < 8) return false;
     return raw[0] == 0x4D && // M
         raw[1] == 0x45 && // E
@@ -988,82 +986,30 @@ class BleDiscoveryService {
       '⏳ [BENCHMARK] EVENT:SCAN_COMMANDED | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}',
     );
 
-    // Robust startScan with retry for "APPLICATION_REGISTRATION_FAILED" (Android code 2).
-    int attempts = 0;
-    var started = false;
-    while (attempts < 3) {
-      try {
-        attempts++;
-        // Explicitly stop any existing scan before starting a new one.
-        // This clears any stale scanner registrations in some Android stacks.
-        await FlutterBluePlus.stopScan();
-        if (attempts > 1) {
-          await Future.delayed(Duration(milliseconds: 500 * attempts));
-        }
-
-        await FlutterBluePlus.startScan(
-          // Android stops unfiltered BLE scans when the screen turns off.
-          // Every Meshenger primary advertisement includes this service UUID,
-          // so keep the scan filtered at the platform layer while backgrounded.
-          withServices: [meshServiceUuid],
-          androidUsesFineLocation: true,
-          androidScanMode: AndroidScanMode.lowLatency,
-          androidLegacy: false,
-          continuousUpdates: true,
-        );
-        // Do NOT stamp liveness here — FBP can return success then async
-        // APPLICATION_REGISTRATION_FAILED, which would silence the watchdog.
-        final scanStartedAt = DateTime.now();
-        _lastResultAt = null;
-        _heartbeatTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
-          final last = _lastResultAt;
-          final quietFor = last != null
-              ? DateTime.now().difference(last)
-              : DateTime.now().difference(scanStartedAt);
-          if (quietFor.inSeconds > 12) {
-            debugPrint(
-              '⚠️ [SCAN] Watchdog: No scan results for 12s. Scanner may be stalled.',
-            );
-            onScannerStalled?.call();
-          }
-        });
-        started = true;
-        break;
-      } catch (e) {
-        debugPrint('⚠️ [SCAN] Start failure (attempt $attempts): $e');
-        if (attempts >= 3) {
-          onScannerError?.call(e.toString());
-          return;
-        }
-      }
-    }
-    if (!started) return;
-
-    _scanSub = FlutterBluePlus.scanResults.listen(
+    _scanSub = NativeBleRadio.instance.scanResults.listen(
       (results) {
         if (results.isNotEmpty) {
           // Any callback proves scanner liveness. Busy mesh peers can briefly
           // omit their service ADV, which must not trigger a radio restart.
           _lastResultAt = DateTime.now();
         }
-        // CRITICAL: Sort by timestamp descending. FBP maintains a growing historical List.
-        // Dead/ghost MACs will fall to the bottom, ensuring we process actively broadcasting peers first,
-        // avoiding catastrophic 12s timeout deadlocks trying to connect to dead iterations of ourselves.
+        // Native callbacks contain only new observations. Order batched callbacks
+        // by observation time and keep the age guard for delayed Android batches.
         final sortedResults = results.toList()
-          ..sort((a, b) => b.timeStamp.compareTo(a.timeStamp));
+          ..sort((a, b) => b.seenAt.compareTo(a.seenAt));
 
         final scanNow = DateTime.now();
         for (final r in sortedResults) {
-          // Ignore FBP's cached historical sightings — they overwrite dial MACs with
-          // dead RPAs and make urgent sync dial ghosts (Red→Clear timeouts).
-          if (scanNow.difference(r.timeStamp).inSeconds > 6) {
+          // Ignore delayed sightings so stale rotating addresses cannot overwrite
+          // the current dial address.
+          if (scanNow.difference(r.seenAt).inSeconds > 6) {
             continue;
           }
           if (!_isLikelyNativeMeshAdvert(r)) {
             continue;
           }
 
-          final mac = r.device.remoteId.str;
+          final mac = r.macAddress;
           final lastRssiTraceAt = _lastRssiTraceAt[mac];
           if (lastRssiTraceAt == null ||
               scanNow.difference(lastRssiTraceAt).inSeconds >= 5) {
@@ -1085,7 +1031,7 @@ class BleDiscoveryService {
           int? telemetryHash16;
           String? telemetryNodeIdPrefix;
           bool? remoteExtendedConnectable;
-          final telemetryData = r.advertisementData.manufacturerData[0xFFE1];
+          final telemetryData = r.manufacturerData[0xFFE1];
           if (telemetryData != null && telemetryData.length >= 4) {
             final tBytes = Uint8List.fromList(telemetryData);
             // Bit Unpacking
@@ -1106,7 +1052,7 @@ class BleDiscoveryService {
                 _rememberPeerExtendedConnectable(
                   normalizedPrefix,
                   remoteExtendedConnectable,
-                  r.timeStamp,
+                  r.seenAt,
                 );
                 if (_loggedPeerCapabilities.add(
                   '$normalizedPrefix:$remoteExtendedConnectable',
@@ -1149,7 +1095,7 @@ class BleDiscoveryService {
             _rememberPeerExtendedConnectable(
               telemetryNodeIdPrefix.toLowerCase(),
               remoteExtendedConnectable,
-              r.timeStamp,
+              r.seenAt,
             );
           }
           if (telemetryNodeIdPrefix == localNodeIdPrefix) {
@@ -1191,9 +1137,9 @@ class BleDiscoveryService {
             }
             if (known != null) {
               localSeenNodes[known] = DateTime.now();
-              rememberScanMac(known, mac, seenAt: r.timeStamp);
-              rememberScanRssi(known, r.rssi, seenAt: r.timeStamp);
-              rememberPeerBusy(known, targetBusy, seenAt: r.timeStamp);
+              rememberScanMac(known, mac, seenAt: r.seenAt);
+              rememberScanRssi(known, r.rssi, seenAt: r.seenAt);
+              rememberPeerBusy(known, targetBusy, seenAt: r.seenAt);
             }
             final coolKey = mac.hashCode | 0x100000000;
             if (targetBusy) {
@@ -1258,7 +1204,7 @@ class BleDiscoveryService {
                   _runMeshInitiatorHandshake(
                     myNodeId,
                     coolKey,
-                    r.device,
+                    r.macAddress,
                     peerNodeId: known,
                     peerKeyHint: known,
                     remoteHashTrusted: false,
@@ -1314,9 +1260,9 @@ class BleDiscoveryService {
               hashToNodeId[remoteHashInt];
 
           if (stableNodeId != null) {
-            rememberScanMac(stableNodeId, mac, seenAt: r.timeStamp);
-            rememberScanRssi(stableNodeId, r.rssi, seenAt: r.timeStamp);
-            rememberPeerBusy(stableNodeId, targetBusy, seenAt: r.timeStamp);
+            rememberScanMac(stableNodeId, mac, seenAt: r.seenAt);
+            rememberScanRssi(stableNodeId, r.rssi, seenAt: r.seenAt);
+            rememberPeerBusy(stableNodeId, targetBusy, seenAt: r.seenAt);
             localSeenNodes[stableNodeId] = DateTime.now();
             if (prefix != null && prefix.isNotEmpty) {
               nodeIdPrefixToNodeId[prefix] = stableNodeId;
@@ -1324,7 +1270,7 @@ class BleDiscoveryService {
                 _rememberPeerExtendedConnectable(
                   prefix.toLowerCase(),
                   remoteExtendedConnectable,
-                  r.timeStamp,
+                  r.seenAt,
                 );
               }
             }
@@ -1464,7 +1410,7 @@ class BleDiscoveryService {
             _runMeshInitiatorHandshake(
               myNodeId,
               remoteHashInt,
-              r.device,
+              r.macAddress,
               peerNodeId: stableNodeId,
               peerKeyHint: stableNodeId ?? prefix,
               remoteHashTrusted: true,
@@ -1478,6 +1424,50 @@ class BleDiscoveryService {
         onScannerError?.call(e.toString());
       },
     );
+
+    // Robust startScan with retry for "APPLICATION_REGISTRATION_FAILED" (Android code 2).
+    int attempts = 0;
+    var started = false;
+    while (attempts < 3) {
+      try {
+        attempts++;
+        // Explicitly stop any existing scan before starting a new one.
+        // This clears any stale scanner registrations in some Android stacks.
+        await NativeBleRadio.instance.stopScan();
+        if (attempts > 1) {
+          await Future.delayed(Duration(milliseconds: 500 * attempts));
+        }
+
+        await NativeBleRadio.instance.startScan();
+        // Do NOT stamp liveness here — Android can return success then async
+        // APPLICATION_REGISTRATION_FAILED, which would silence the watchdog.
+        final scanStartedAt = DateTime.now();
+        _lastResultAt = null;
+        _heartbeatTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+          final last = _lastResultAt;
+          final quietFor = last != null
+              ? DateTime.now().difference(last)
+              : DateTime.now().difference(scanStartedAt);
+          if (quietFor.inSeconds > 12) {
+            debugPrint(
+              '⚠️ [SCAN] Watchdog: No scan results for 12s. Scanner may be stalled.',
+            );
+            onScannerStalled?.call();
+          }
+        });
+        started = true;
+        break;
+      } catch (e) {
+        debugPrint('⚠️ [SCAN] Start failure (attempt $attempts): $e');
+        if (attempts >= 3) {
+          onScannerError?.call(e.toString());
+          await _scanSub?.cancel();
+          _scanSub = null;
+          return;
+        }
+      }
+    }
+    if (!started) return;
   }
 
   bool _shouldInitiatePeer({
@@ -1665,7 +1655,7 @@ class BleDiscoveryService {
   Future<void> _runMeshInitiatorHandshake(
     String myNodeId,
     int remoteHashInt,
-    BluetoothDevice device, {
+    String device, {
     String? peerNodeId,
     String? peerKeyHint,
     bool remoteHashTrusted = true,
@@ -1747,7 +1737,7 @@ class BleDiscoveryService {
   Future<void> _doHandshake(
     String myNodeId,
     int remoteHashInt,
-    BluetoothDevice device, {
+    String device, {
     String? peerNodeId,
     String? peerKeyHint,
     bool remoteHashTrusted = true,
@@ -1755,7 +1745,7 @@ class BleDiscoveryService {
   }) async {
     // If the peer is already our GATT client, NOTIFY catch-up instead of a
     // second outbound (dual-role is what wedges Red→Clear after a burst).
-    final inboundPeer = peerNodeId ?? macToNodeId[device.remoteId.str];
+    final inboundPeer = peerNodeId ?? macToNodeId[device];
     if (inboundPeer != null && !forceNewestPush) {
       final now = DateTime.now();
       if (_scanHandshakeThrottle.shouldThrottle(inboundPeer, now: now)) {
@@ -1825,7 +1815,7 @@ class BleDiscoveryService {
         }
 
         final heldClientLookupTimer = Stopwatch()..start();
-        final targetMac = device.remoteId.str;
+        final targetMac = device;
         final cachedHeldClientMac = await _readReusableHeldClientMac();
         var reusableHeldClient =
             cachedHeldClientMac?.toUpperCase() == targetMac.toUpperCase();
@@ -1852,7 +1842,7 @@ class BleDiscoveryService {
             'URGENT_REUSING_HELD_OUTBOUND',
             fields: {
               'PEER_NODE_ID': inboundPeer,
-              'TARGET_MAC': device.remoteId.str,
+              'TARGET_MAC': device,
               'INBOUND_MAC': inboundMac,
             },
           );
@@ -1899,7 +1889,7 @@ class BleDiscoveryService {
     // we don't spam connect() attempts to stale/cached advertisers.
     _hashCooldowns[remoteHashInt] = DateTime.now();
     _notifyConnectionPhase();
-    final targetMac = device.remoteId.str;
+    final targetMac = device;
     debugPrint(
       '[BENCHMARK] TARGET_MAC:$targetMac | EVENT:SCAN_HIT | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}',
     );
@@ -2136,7 +2126,7 @@ class BleDiscoveryService {
           'fps=${fpsBlob.length}B deep=$deepMode',
         );
       }
-      final macAddress = device.remoteId.str;
+      final macAddress = device;
       // Android mesh advertisers use Random Resolvable Addresses.
       // We pass isRandom: true to ensure the native layer uses the correct addressing mode.
       if (resolvedPeer != null) {
@@ -2276,7 +2266,7 @@ class BleDiscoveryService {
       // Urgent path must observe failure so it can retry an alternate scan MAC.
       if (forceNewestPush) rethrow;
     } finally {
-      // NOTE: Do NOT call device.disconnect() here.
+      // Native GATT callbacks own connection teardown here.
       // The native GATT layer now keeps the connection open so the Server can push
       // the Delta reply back via NOTIFY. The Client's onCharacteristicChanged handler
       // will close the connection cleanly when it receives the "||EOF||" notify chunk.
@@ -2360,7 +2350,7 @@ class BleDiscoveryService {
       _runMeshInitiatorHandshake(
         myNodeId,
         remoteHash,
-        BluetoothDevice.fromId(mac),
+        mac,
         peerNodeId: peerId,
         peerKeyHint: peerId,
         remoteHashTrusted: true,
@@ -3318,7 +3308,7 @@ class BleDiscoveryService {
             : const Duration(milliseconds: 7000);
 
         try {
-          final device = BluetoothDevice.fromId(attemptMac);
+          final device = attemptMac;
           final coolKey = 0x200000000 | (peerId.hashCode & 0xffffffff);
           _traceUrgentFlow(
             'URGENT_FORCE_DIAL_STARTED',
@@ -3520,7 +3510,7 @@ class BleDiscoveryService {
     if (mac == null || mac.isEmpty) return false;
     deadMacUntil.remove(mac);
     try {
-      final device = BluetoothDevice.fromId(mac);
+      final device = mac;
       final coolKey = 0x200000000 | (peerId.hashCode & 0xffffffff);
       await _runMeshInitiatorHandshake(
         myNodeId,
@@ -3948,7 +3938,7 @@ class BleDiscoveryService {
     _scanSub = null;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
-    await FlutterBluePlus.stopScan();
+    await NativeBleRadio.instance.stopScan();
   }
 
   Future<void> stopAll() async {

@@ -11,7 +11,7 @@ No public release has been posted. The permanent Android application ID is `com.
 - Flutter owns the Android BLE permission prompt. Interrupted/partial permission results do not authorize startup, and the native foreground service checks actual grants and handles revocation races. This fixes the fresh-install Android 15 crash caused by competing native and Flutter prompts.
 - The public room and relay metadata are explained in the UI. **Relayed** tracks the specific local message IDs in a successful transfer to a known peer; it does not mean recipient/read acknowledgement.
 - Untrusted inbound transfers have byte, chunk, concurrency and time limits. Decompression is bounded before JSON/CRDT merge; unknown tables/columns and oversized records are rejected. Large outbound history pushes are trimmed to fit the receiver's compressed and expanded byte limits, and only included message IDs count as relayed. User text is capped at 2,000 characters/2 KB and groups at 16 people.
-- Settings exposes dependency licenses, including FlutterBluePlus's additional BSD notices. No project source license is granted by those notices.
+- Settings exposes dependency licenses. FlutterBluePlus and its notice asset have since been removed with the native discovery replacement; earlier candidate APKs retain the notices required by their packaged dependencies. No project source license is granted by dependency notices.
 - CI runs Flutter analysis/tests, Python tooling tests, Kotlin unit tests and full Android release lint. Flutter is pinned to 3.47.5.
 - The release workflow validates the tag against `pubspec.yaml`, restores signing files from secrets, builds universal/split APKs, verifies signatures, and uploads APKs with SHA-256 checksums as temporary workflow artifacts. Its GitHub permission is `contents: read`; it has no release-publishing step.
 
@@ -48,7 +48,7 @@ On Windows use `gradlew.bat` and Android Studio's JBR when Java is not on the pa
 
 - Review the final diff and run the updated workflow on a clean GitHub runner. Local builds do not establish that the hosted workflow has passed.
 - Confirm the signing key has a secure offline backup.
-- Decide whether to retain FlutterBluePlus under its own terms or implement and test [native discovery replacement](FLUTTER_BLUE_PLUS_REMOVAL.md) before release.
+- Expand testing of the [native discovery replacement](FLUTTER_BLUE_PLUS_REMOVAL.md) to the additional Android/OEM/background cases below.
 - Check public, direct and group chats on signed APKs, including fingerprint verification and a deliberate changed-key warning, offline/history catch-up, message retention and deletion.
 - Exercise three-phone forwarding with the recipient initially absent; confirm relays cannot display private text and that **Relayed** does not claim end-recipient receipt.
 - Test Android 7/8 compatibility, Android 9–11 location requirements, Android 12/12L Nearby Devices/location behavior, Android 13+ notification permission, and a current Android version. Include at least one non-Pixel OEM.
@@ -81,4 +81,14 @@ October 3, 2026, local validation:
 
 Local candidate APKs and `SHA256SUMS.txt` are in `build/release-candidates/` (gitignored). The signing certificate SHA-256 fingerprint is `d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5`.
 
-These changes have not been pushed or run by the updated hosted workflow, and no release/tag has been published. Physical group/three-phone forwarding, deliberate changed-key UI behavior, Android 12/12L and non-Pixel OEM tests remain publication gates. Unit tests cover key-change blocking and confirmation, identity migration/failure handling, decompression and outbound batch limits, and relay progress for exact message IDs. The final outbound batch limit was added after the phone checks; those checks used the same behavior for ordinary small messages.
+The release-preparation checkpoint was pushed as `db35434` on October 4, 2026. Its first hosted run exposed an overly broad signing guard: lint's resource/JAR packaging tasks were mistaken for APK/AAB packaging. Commit `8062bec` narrows the guard, allowing unsigned CI tests/lint while still rejecting actual release packaging without a key. [The hosted rerun passed](https://github.com/ebregger/Meshenger/actions/runs/37209329724).
+
+No release/tag has been published. Physical group/three-phone forwarding, deliberate changed-key UI behavior, Android 12/12L and non-Pixel OEM tests remain publication gates. Unit tests cover key-change blocking and confirmation, identity migration/failure handling, decompression and outbound batch limits, and relay progress for exact message IDs. The final outbound batch limit was added after the October 3 phone checks; those checks used the same behavior for ordinary small messages.
+
+## Native discovery validation, October 4, 2026
+
+FlutterBluePlus has been replaced by native filtered discovery and adapter events. Flutter analysis is clean; 149 Flutter tests and 9 Kotlin tests pass. Full release lint reports 0 errors and 19 warnings. Universal and ARM64/ARMv7/x86-64 candidates were rebuilt and verified against the same signing certificate. Their dependency graph, native DEX files and bundled notices contain no FlutterBluePlus plugin/license. The universal APK is 61,833,996 bytes, compared with 62,204,108 bytes before removal.
+
+Matching 1,000-message debug runs on the Android 9/15 phones use an isolated `.benchmark` application ID and start with fresh disposable app data for each variant. Original installations retain their identities and existing data; their data was never cleared. Timing and reliability results are recorded in the [before/after performance report](FLUTTER_BLUE_PLUS_BENCHMARK.md).
+
+Load testing exposed debug send API assertions in the existing CRDT library when concurrent writes/merges publish their clocks out of order. The database write can persist before the assertion is raised, so API acknowledgement failures and actual message delivery are recorded separately. Investigate this race and retained-history catch-up delays before publication; do not treat complete eventual delivery as a clean send-API result.

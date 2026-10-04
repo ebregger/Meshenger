@@ -98,4 +98,4 @@ The release workflow builds signed **candidate artifacts only**. It does not pub
 
 ## Licensing
 
-Meshenger's own source is currently **unlicensed**; no open-source license has been granted. Dependencies keep their separate licenses. Settings includes **Third-party licenses**, including FlutterBluePlus's additional BSD notices. See [the license overview](docs/LICENSING.md), [dependency notices](THIRD_PARTY_NOTICES.md), and [the FlutterBluePlus removal assessment](docs/FLUTTER_BLUE_PLUS_REMOVAL.md).
+Meshenger's own source is currently **unlicensed**; no open-source license has been granted. Dependencies keep their separate licenses. Settings includes **Third-party licenses**. Android discovery, advertising and GATT transport now use the native platform channel; FlutterBluePlus has been removed. See [the license overview](docs/LICENSING.md), [dependency notices](THIRD_PARTY_NOTICES.md), and [the FlutterBluePlus removal record](docs/FLUTTER_BLUE_PLUS_REMOVAL.md).

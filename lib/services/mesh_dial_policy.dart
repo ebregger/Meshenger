@@ -159,9 +159,9 @@ class MeshDialPolicy {
 
 /// Limits repeated scan-path handshakes for the same peer.
 ///
-/// FlutterBluePlus emits growing batches of recent advertisements. Without a
-/// per-peer gate, each copy can trigger the same native connection lookup and
-/// trace event while an inbound GATT link is already active.
+/// Repeated advertisements can trigger the same native connection lookup and
+/// trace event. A per-peer gate avoids repeating that work while an inbound
+/// GATT link is already active.
 class MeshScanHandshakeThrottle {
   MeshScanHandshakeThrottle({required this.window});
 

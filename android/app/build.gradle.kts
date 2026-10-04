@@ -53,6 +53,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Isolate performance runs from the user's installed app and data.
+            if (providers.gradleProperty("meshengerBenchmark").orNull == "true") {
+                applicationIdSuffix = ".benchmark"
+            }
+        }
         release {
             signingConfig = if (hasReleaseKeystore) {
                 signingConfigs.getByName("release")

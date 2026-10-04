@@ -1,34 +1,27 @@
-# FlutterBluePlus removal assessment
+# FlutterBluePlus removal
 
-Assessment of the current Android implementation, October 3, 2026. FlutterBluePlus is still present in `pubspec.yaml`/`pubspec.lock`; the release preparation did not replace the scanner.
+The Android implementation now uses Meshenger's own platform channel for discovery and Bluetooth adapter control. FlutterBluePlus, its platform/interface packages, and now-unused transitive dependencies have been removed from `pubspec.yaml` and `pubspec.lock`. Meshenger's own source remains unlicensed.
 
-## What it does now
+## Implementation
 
-| Responsibility | Current owner |
-| --- | --- |
-| Start/stop service-filtered BLE scans and stream advertisements | FlutterBluePlus in `ble_discovery_service.dart` |
-| Adapter state stream/current state and the Bluetooth-enable prompt | FlutterBluePlus in `ble_network_provider.dart` |
-| MAC addresses, RSSI, advertisement timestamps, manufacturer data and service UUIDs | FlutterBluePlus scan result/device types, parsed by `mesh_advertisement.dart` |
-| UUID constants and fake scan results in tests | FlutterBluePlus `Guid`, `ScanResult`, `BluetoothDevice` types |
-| Advertising, GATT server/client, writes, notifications, framing and connection reuse | Meshenger's Kotlin implementation in `MainActivity.kt`, accessed through `NativeMeshService` |
+- `NativeBleRadio.kt` uses `BluetoothLeScanner` with the Meshenger service UUID filter, low-latency mode, all repeated observations and immediate reporting. API 26+ enables extended advertisements and supported PHYs; Android 7 keeps compatible settings.
+- The radio event channel carries only the current callback's observations, including address, RSSI, service UUIDs, manufacturer bytes and the original observation time converted from Android's monotonic clock. It does not build a growing historical result list.
+- Dart uses application-owned `MeshScanResult` and `MeshAdapterState` types. GATT destinations are address strings and UUID constants are canonical strings. Fake-peer tests use the same observation shape.
+- Adapter queries and an `ACTION_STATE_CHANGED` receiver report state; `ACTION_REQUEST_ENABLE` opens Android's Bluetooth-enable UI. Receiver registration uses `RECEIVER_EXPORTED` on API 33+ because Bluetooth system broadcasts can come from a privileged non-system UID; the receiver queries actual adapter state rather than trusting broadcast extras.
+- Immediate registration failures complete the scan-start method with an error for the existing three-attempt retry loop. Later failures become scan-stream errors. Permission checks and revocation handling, explicit stop, stale callback suppression and activity teardown prevent leaked scanner registrations.
+- Discovery subscribes before commanding the scan. Existing freshness, self-filtering, rotating-address, handshake throttle, dial election, watchdog and recovery behavior is retained. Advertising, GATT transfer, framing, held-link reuse and CRDT merge remain on the existing transport.
 
-The old FlutterBluePlus connection-state subscription contained empty callbacks and has been removed. Meshenger does not use FlutterBluePlus's GATT connection or characteristic APIs for message transfers.
+The former plugin-owned Bluetooth/device/UUID types and all FlutterBluePlus imports are gone. Its extra notice asset was removed for new builds after dependency removal; earlier candidate APKs retain their bundled notices and terms.
 
-## Recommended replacement
+## Validation
 
-Extend the existing Android platform channel with a small native scanner and adapter events, rather than introducing another general Bluetooth plugin. Use Android's `BluetoothLeScanner`, an adapter-state broadcast receiver, and `ACTION_REQUEST_ENABLE`. Keep the current Kotlin advertising/GATT transport.
+Flutter analysis passes. All 149 Flutter tests and 9 Kotlin unit tests pass, and full Android release lint reports no errors. New radio tests exercise observation timestamps/binary data, callback batches without historical accumulation, asynchronous errors alongside adapter events, and native method dispatch. The connected Android 9 and Android 15 Pixel 3 phones are used for matching 1,000-message before/after runs; see the performance record added alongside these changes.
 
-1. Introduce application-owned scan and adapter types. Advertisement observations need address, RSSI, timestamp, service UUIDs, manufacturer bytes, and any address metadata required by the existing dial policy. Pass observations through the existing advertisement parser and keep fake-peer tests independent of a plugin.
-2. Implement filtered scans for the Meshenger service UUID, low-latency mode, repeated observations, and extended advertisements where supported. Android 7 must use supported scan settings; do not call API 26 or 33 methods below their API level.
-3. Report asynchronous `onScanFailed` errors, scanning lifecycle and adapter state. Preserve registration retries, the scan watchdog, freshness filtering, self-filtering, rotating-address handling, and stop/recovery behavior. Native scan callbacks are individual/batched observations rather than FlutterBluePlus's growing cached list; make that change explicit in discovery policy.
-4. Replace `BluetoothDevice` wrappers with addresses where they are only passed to the native transport. Replace `Guid` constants with canonical UUID strings. Remove all FlutterBluePlus imports, including test fixtures and permission comments.
-5. Remove the dependency, regenerate the lockfile/plugin registration through `flutter pub get`, and remove its additional notice only once no FlutterBluePlus code is packaged. Rebuild all supported Android artifacts.
-6. Re-run the advertisement/parser and scheduling tests, two-phone live sync and history catch-up, three-phone relay, radio-toggle/permission recovery, and screen-off tests across the Android test matrix before publishing.
+Further Android versions, a non-Pixel OEM, three-phone forwarding and extended background/Doze behavior remain first-release gates. These two-phone foreground results do not establish radio equivalence on every supported device.
 
-## Why assess removal before release
+## Platform references
 
-The native transport already owns the most complex BLE behavior, so the replacement scope is limited to discovery and adapter control. It is still a meaningful radio behavior change: scan filtering, duplicate observations, stale addresses, and OEM background limits can affect every connection attempt. It should be implemented and measured as a separate change, with the existing hardware results as a baseline.
-
-The resolved `flutter_blue_plus` 2.2.1 package contains FlutterBluePlus License 1.3. Personal/nonprofit/educational use is permitted under its open-use terms; use by or for a for-profit organization, including commercial use by individuals, requires its commercial license. See [the publisher's license](https://github.com/chipweinberger/flutter_blue_plus/blob/master/packages/flutter_blue_plus/LICENSE.md). Changing Meshenger's source license does not remove that requirement.
-
-This assessment does not claim a dependency removal or radio equivalence test has already happened.
+- [Android BluetoothLeScanner](https://developer.android.com/reference/android/bluetooth/le/BluetoothLeScanner): service-filtered scans avoid Android's unfiltered screen-off scan suspension.
+- [ScanSettings.Builder](https://developer.android.com/reference/android/bluetooth/le/ScanSettings.Builder): API 26 guards for extended advertisements and PHY settings.
+- [ScanResult](https://developer.android.com/reference/android/bluetooth/le/ScanResult): observation timestamps are measured since boot.
+- [Broadcast receiver guidance](https://developer.android.com/develop/background-work/background-tasks/broadcasts): Bluetooth's privileged sender may require an exported receiver.

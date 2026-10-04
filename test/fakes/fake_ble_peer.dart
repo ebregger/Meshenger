@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:bluetooth_app/services/native_ble_radio.dart';
 
 import 'package:bluetooth_app/constants/ble_constants.dart';
 
@@ -29,31 +29,24 @@ class FakeBlePeer {
 
   Stream<Object?> get events => _events.stream;
 
-  ScanResult get advertisement => ScanResult(
-    device: BluetoothDevice.fromId(macAddress),
-    advertisementData: AdvertisementData(
-      advName: 'Meshenger',
-      txPowerLevel: null,
-      appearance: null,
-      connectable: true,
-      manufacturerData: <int, List<int>>{
-        meshManufacturerId: <int>[
-          0x4D,
-          0x45,
-          0x53,
-          0x48,
-          for (var shift = 56; shift >= 0; shift -= 8)
-            (databaseHash >> shift) & 0xFF,
-          ...utf8.encode(
-            nodeId.length >= 4 ? nodeId.substring(0, 4) : nodeId.padRight(4),
-          ),
-        ],
-      },
-      serviceData: <Guid, List<int>>{},
-      serviceUuids: <Guid>[meshServiceUuid],
-    ),
+  MeshScanResult get advertisement => MeshScanResult(
+    macAddress: macAddress,
+    manufacturerData: <int, List<int>>{
+      meshManufacturerId: <int>[
+        0x4D,
+        0x45,
+        0x53,
+        0x48,
+        for (var shift = 56; shift >= 0; shift -= 8)
+          (databaseHash >> shift) & 0xFF,
+        ...utf8.encode(
+          nodeId.length >= 4 ? nodeId.substring(0, 4) : nodeId.padRight(4),
+        ),
+      ],
+    },
+    serviceUuids: [meshServiceUuid],
     rssi: rssi,
-    timeStamp: DateTime.now(),
+    seenAt: DateTime.now(),
   );
 
   void connect() => _emit('server_connect');
