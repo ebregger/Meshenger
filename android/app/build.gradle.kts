@@ -81,11 +81,8 @@ dependencies {
 gradle.taskGraph.whenReady {
     val packagingRelease = allTasks.any { task ->
         val name = task.name
-        name.contains("Release") &&
-            (name.startsWith("assemble") ||
-                name.startsWith("bundle") ||
-                name.startsWith("package") ||
-                name.startsWith("sign"))
+        task.project.path == ":app" &&
+            name.matches(Regex("(assemble|bundle|package|sign).*Release(?:Bundle)?"))
     }
     if (packagingRelease && !keystorePropertiesFile.exists()) {
         throw GradleException(
