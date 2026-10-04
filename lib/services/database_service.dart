@@ -21,10 +21,13 @@ class DatabaseService {
       _deletionStore = deletionStore ?? PreferencesLocalDeletionStore();
 
   DatabaseService.forTesting(
-    SqliteCrdt database, {
+    SqlCrdt database, {
+    Future<void> Function()? closeDatabase,
     LocalDeletionStore? deletionStore,
     int windowRows = recentWindowRows,
   }) : _db = database,
+       _closeDatabase =
+           closeDatabase ?? (database is SqliteCrdt ? database.close : null),
        _windowRows = windowRows,
        _deletionStore = deletionStore ?? MemoryLocalDeletionStore();
 
@@ -32,8 +35,33 @@ class DatabaseService {
 
   final LocalDeletionStore _deletionStore;
 
-  SqliteCrdt? _db;
+  SqlCrdt? _db;
+  Future<void> Function()? _closeDatabase;
   Future<void>? _initTask;
+
+  // SQL completion includes CRDT clock publication and watch notifications.
+  // Serializing only the SQL statements still allows an older clock to be
+  // published after a newer merge. Reads may continue while writes are queued.
+  Future<void> _mutationTail = Future<void>.value();
+
+  Future<T> _mutate<T>(Future<T> Function() action) {
+    final result = _mutationTail.then((_) => action());
+    // A rejected mutation must reach its caller without poisoning later work.
+    _mutationTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
+  Future<void> _executeLocalWrite(String sql, List<Object?> args) =>
+      _mutate(() async {
+        _markDatabaseHashDirty();
+        await _crdt.execute(sql, args);
+        // This is the exact published clock, rather than a predicted increment
+        // computed before another queued mutation could advance it.
+        _recordLocalWriteHlc(_crdt.canonicalTime.toString());
+      });
 
   // Stage 2: DB hash is expensive; cache it and invalidate on known writes/merges.
   int? _cachedDbHashU32;
@@ -54,7 +82,9 @@ class DatabaseService {
     if (_db == null) {
       final docsDir = await getApplicationDocumentsDirectory();
       final dbPath = '${docsDir.path}/mesh_network.db';
-      _db = await SqliteCrdt.open(dbPath);
+      final database = await SqliteCrdt.open(dbPath);
+      _db = database;
+      _closeDatabase = database.close;
     }
 
     // sql_crdt appends is_deleted, hlc, node_id, modified — do not declare them here.
@@ -154,7 +184,7 @@ class DatabaseService {
     }
   }
 
-  SqliteCrdt get _crdt {
+  SqlCrdt get _crdt {
     final db = _db;
     if (db == null) {
       throw StateError('DatabaseService not initialized. Call init() first.');
@@ -952,7 +982,8 @@ class DatabaseService {
     _deepTimer?.cancel();
     _deepTimer = null;
     _onDeepDigestReady = null;
-    await _db?.close();
+    await _mutationTail;
+    await _closeDatabase?.call();
     _db = null;
   }
 
@@ -1066,33 +1097,35 @@ class DatabaseService {
   }) async {
     MeshPayloadLimits.validateChangeset(incoming);
     await init();
-    // Re-sent rows we already hold change nothing, so they must not throw away
-    // the cached hashes and digests that sync depends on.
-    final alreadyKnown = await _changesetIsAlreadyKnown(incoming);
-    if (!alreadyKnown) {
-      _markDatabaseHashDirty();
-      _invalidateVersionVectorCache();
-    }
+    await _mutate(() async {
+      // Re-sent rows we already hold change nothing, so they must not throw away
+      // the cached hashes and digests that sync depends on.
+      final alreadyKnown = await _changesetIsAlreadyKnown(incoming);
+      if (!alreadyKnown) {
+        _markDatabaseHashDirty();
+        _invalidateVersionVectorCache();
+      }
 
-    // A blank live message is a copy some phone deleted for itself. Never take
-    // it over a real message: the real text can come from anyone who has it.
-    final changeset = _withoutLocalBlanks(incoming);
+      // A blank live message is a copy some phone deleted for itself. Never take
+      // it over a real message: the real text can come from anyone who has it.
+      final changeset = _withoutLocalBlanks(incoming);
 
-    final decodeTimer = Stopwatch()..start();
-    final hydrated = _decodeChangeset(jsonEncode(changeset));
-    onStage?.call('decode', decodeTimer.elapsedMicroseconds);
+      final decodeTimer = Stopwatch()..start();
+      final hydrated = _decodeChangeset(jsonEncode(changeset));
+      onStage?.call('decode', decodeTimer.elapsedMicroseconds);
 
-    final mergeTimer = Stopwatch()..start();
-    await _crdt.merge(_castChangeset(hydrated));
-    onStage?.call('crdt_merge', mergeTimer.elapsedMicroseconds);
-    await _scrubMergedDeletedRows(changeset['messages']);
+      final mergeTimer = Stopwatch()..start();
+      await _crdt.merge(_castChangeset(hydrated));
+      onStage?.call('crdt_merge', mergeTimer.elapsedMicroseconds);
+      await _scrubMergedDeletedRows(changeset['messages']);
 
-    // Invalidate again after the mutation so a read queued behind the early
-    // invalidation cannot cache a snapshot from just before the merge.
-    if (!alreadyKnown) {
-      _markDatabaseHashDirty();
-      _invalidateVersionVectorCache();
-    }
+      // Invalidate again after the mutation so a read queued behind the early
+      // invalidation cannot cache a snapshot from just before the merge.
+      if (!alreadyKnown) {
+        _markDatabaseHashDirty();
+        _invalidateVersionVectorCache();
+      }
+    });
 
     final settleTimer = Stopwatch()..start();
     await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -1231,9 +1264,7 @@ class DatabaseService {
 
   Future<void> upsertNodeProfile(NodeProfile value) async {
     await init();
-    _markDatabaseHashDirty();
-    final writeHlc = _crdt.canonicalTime.increment().toString();
-    await _crdt.execute(
+    await _executeLocalWrite(
       '''
       INSERT INTO users (mesh_node_id, display_name, timestamp)
       VALUES (?1, ?2, ?3)
@@ -1243,7 +1274,6 @@ class DatabaseService {
       ''',
       [value.nodeId, value.displayName, value.timestamp.toInt()],
     );
-    _recordLocalWriteHlc(writeHlc);
   }
 
   Future<List<NodeProfile>> fetchNodeProfiles() async {
@@ -1300,9 +1330,7 @@ class DatabaseService {
     final trimmed = name.trim();
 
     final nodeId = await IdentityService().getOrCreateMyNodeId();
-    _markDatabaseHashDirty();
-    final writeHlc = _crdt.canonicalTime.increment().toString();
-    await _crdt.execute(
+    await _executeLocalWrite(
       '''
       INSERT INTO users (mesh_node_id, display_name, timestamp)
       VALUES (?1, ?2, ?3)
@@ -1312,7 +1340,6 @@ class DatabaseService {
       ''',
       [nodeId, trimmed, DateTime.now().millisecondsSinceEpoch],
     );
-    _recordLocalWriteHlc(writeHlc);
   }
 
   /// Publishes this install's X25519 public key. The private seed never enters
@@ -1324,9 +1351,7 @@ class DatabaseService {
     if (trimmedNodeId.isEmpty || trimmedKey.isEmpty) return;
     if (await fetchPublicKey(trimmedNodeId) == trimmedKey) return;
 
-    _markDatabaseHashDirty();
-    final writeHlc = _crdt.canonicalTime.increment().toString();
-    await _crdt.execute(
+    await _executeLocalWrite(
       '''
       INSERT INTO users (mesh_node_id, display_name, timestamp, public_key)
       VALUES (?1, '', ?2, ?3)
@@ -1335,7 +1360,6 @@ class DatabaseService {
       ''',
       [trimmedNodeId, DateTime.now().millisecondsSinceEpoch, trimmedKey],
     );
-    _recordLocalWriteHlc(writeHlc);
   }
 
   Future<String?> fetchPublicKey(String nodeId) async {
@@ -1374,9 +1398,7 @@ class DatabaseService {
     String contentEncoding = 'plain',
   }) async {
     await init();
-    _markDatabaseHashDirty();
-    final writeHlc = _crdt.canonicalTime.increment().toString();
-    await _crdt.execute(
+    await _executeLocalWrite(
       '''
       INSERT INTO messages (
         msg_id,
@@ -1406,7 +1428,6 @@ class DatabaseService {
         contentEncoding,
       ],
     );
-    _recordLocalWriteHlc(writeHlc);
   }
 
   /// Notice row that says "this author deleted the chat up to here". Other
@@ -1463,7 +1484,11 @@ class DatabaseService {
   /// Blanks message text on this phone only. The row (id, hlc, metadata) stays
   /// so sync hashes and version vectors keep matching the other phones, and
   /// nothing is tombstoned, so the blanking never travels.
-  Future<int> _blankMessageText(Iterable<String> messageIds) async {
+  Future<int> _blankMessageText(Iterable<String> messageIds) =>
+      _mutate(() => _blankMessageTextUnlocked(messageIds));
+
+  // Used by a merge that already owns the mutation queue.
+  Future<int> _blankMessageTextUnlocked(Iterable<String> messageIds) async {
     final ids = messageIds.toList(growable: false);
     if (ids.isEmpty) return 0;
     const chunkSize = 300;
@@ -1482,7 +1507,7 @@ class DatabaseService {
         chunk,
       );
     }
-    _crdt.onDatasetChanged(const ['messages'], _crdt.canonicalTime);
+    await _crdt.onDatasetChanged(const ['messages'], _crdt.canonicalTime);
     return ids.length;
   }
 
@@ -1661,7 +1686,7 @@ class DatabaseService {
           if (row['hlc'].toString().compareTo(limit) < 0)
             row['msg_id'].toString(),
       ];
-      await _blankMessageText(stale);
+      await _blankMessageTextUnlocked(stale);
     }
   }
 
@@ -1677,53 +1702,57 @@ class DatabaseService {
     String? participantNodeId,
   }) async {
     await init();
-    _markDatabaseHashDirty();
-    _invalidateVersionVectorCache();
-    final liveRows = await _crdt.query('''
-      SELECT msg_id, timestamp, conversation_id, origin_node_id, recipient_node_id
-      FROM messages
-      WHERE is_deleted = 0
-      ORDER BY msg_id ASC
-      ''');
-    final messageIds = <String>[];
-    for (final row in liveRows) {
-      final messageId = row['msg_id']?.toString() ?? '';
-      if (messageId.isEmpty) continue;
-      final rowConversation = row['conversation_id']?.toString() ?? '';
-      if (conversationId != null && rowConversation != conversationId) {
-        continue;
+    return _mutate(() async {
+      _markDatabaseHashDirty();
+      _invalidateVersionVectorCache();
+      final liveRows = await _crdt.query('''
+        SELECT msg_id, timestamp, conversation_id, origin_node_id, recipient_node_id
+        FROM messages
+        WHERE is_deleted = 0
+        ORDER BY msg_id ASC
+        ''');
+      final messageIds = <String>[];
+      for (final row in liveRows) {
+        final messageId = row['msg_id']?.toString() ?? '';
+        if (messageId.isEmpty) continue;
+        final rowConversation = row['conversation_id']?.toString() ?? '';
+        if (conversationId != null && rowConversation != conversationId) {
+          continue;
+        }
+        if (olderThanTimestampMs != null) {
+          final timestamp = _timestampMillis(row['timestamp']);
+          if (timestamp >= olderThanTimestampMs) continue;
+        }
+        if (participantNodeId != null && rowConversation.isNotEmpty) {
+          final origin = row['origin_node_id']?.toString() ?? '';
+          final recipient = row['recipient_node_id']?.toString() ?? '';
+          final member =
+              origin == participantNodeId ||
+              recipient == participantNodeId ||
+              rowConversation.contains(participantNodeId);
+          if (!member) continue;
+        }
+        messageIds.add(messageId);
       }
-      if (olderThanTimestampMs != null) {
-        final timestamp = _timestampMillis(row['timestamp']);
-        if (timestamp >= olderThanTimestampMs) continue;
+      for (final messageId in messageIds) {
+        await _crdt.execute('DELETE FROM messages WHERE msg_id = ?1', [
+          messageId,
+        ]);
       }
-      if (participantNodeId != null && rowConversation.isNotEmpty) {
-        final origin = row['origin_node_id']?.toString() ?? '';
-        final recipient = row['recipient_node_id']?.toString() ?? '';
-        final member =
-            origin == participantNodeId ||
-            recipient == participantNodeId ||
-            rowConversation.contains(participantNodeId);
-        if (!member) continue;
-      }
-      messageIds.add(messageId);
-    }
-    for (final messageId in messageIds) {
-      await _crdt.execute('DELETE FROM messages WHERE msg_id = ?1', [
-        messageId,
-      ]);
-    }
-    _markDatabaseHashDirty();
-    _invalidateVersionVectorCache();
-    return messageIds.length;
+      _markDatabaseHashDirty();
+      _invalidateVersionVectorCache();
+      return messageIds.length;
+    });
   }
 
   /// Stress-test reset: drop chat rows only; keep [users] display names.
   Future<int> clearTextMessages() async {
     final removed = await deleteTextMessages();
-    await _crdt.execute('DELETE FROM bitmap_chunks');
-    _markDatabaseHashDirty();
-    _invalidateVersionVectorCache();
+    await _mutate(() async {
+      await _crdt.execute('DELETE FROM bitmap_chunks');
+      _markDatabaseHashDirty();
+      _invalidateVersionVectorCache();
+    });
     return removed;
   }
 
@@ -1958,9 +1987,7 @@ class DatabaseService {
 
   Future<void> upsertBitmapChunk(BitmapChunk value) async {
     await init();
-    _markDatabaseHashDirty();
-    final writeHlc = _crdt.canonicalTime.increment().toString();
-    await _crdt.execute(
+    await _executeLocalWrite(
       '''
       INSERT INTO bitmap_chunks (file_id, chunk_index, total_chunks, chunk_data)
       VALUES (?1, ?2, ?3, ?4)
@@ -1970,7 +1997,6 @@ class DatabaseService {
       ''',
       [value.fileId, value.chunkIndex, value.totalChunks, value.chunkData],
     );
-    _recordLocalWriteHlc(writeHlc);
   }
 
   Future<List<BitmapChunk>> fetchBitmapChunks(String fileId) async {

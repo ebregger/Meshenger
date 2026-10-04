@@ -58,8 +58,19 @@ android {
             if (providers.gradleProperty("meshengerBenchmark").orNull == "true") {
                 applicationIdSuffix = ".benchmark"
             }
+            if (providers.gradleProperty("meshengerSignedDeviceTest").orNull == "true") {
+                check(hasReleaseKeystore && providers.gradleProperty("meshengerBenchmark").orNull == "true") {
+                    "Signed debug device tests require the isolated benchmark ID and release credentials."
+                }
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         release {
+            // Signed device checks can use disposable data without replacing
+            // the user's installed identity or chats.
+            if (providers.gradleProperty("meshengerBenchmark").orNull == "true") {
+                applicationIdSuffix = ".benchmark"
+            }
             signingConfig = if (hasReleaseKeystore) {
                 signingConfigs.getByName("release")
             } else {

@@ -1,0 +1,195 @@
+{
+  "date": "2026-10-04",
+  "source": "Reliability fixes committed with this report; native discovery baseline 1672c08",
+  "setup": {
+    "application_id": "com.bregger.edison.meshenger.benchmark",
+    "build_mode": "debug",
+    "devices": [
+      "88LX01L45",
+      "8AKX0UCPK"
+    ],
+    "messages_per_run": 1000,
+    "poll_interval_s": 2,
+    "send_interval_s": 0.1,
+    "profile": "burst",
+    "fresh": "Disposable app data reset before first run",
+    "retained": "Same identities and database as fresh run; runner clears live messages, retaining 1000 tombstones on each phone",
+    "other_instances": "Production installations force-stopped; original data preserved",
+    "third_phone": "No Meshenger process on third phone during either timed run",
+    "raw_artifacts": "build/reliability-20261004 (gitignored)"
+  },
+  "runs": {
+    "fresh": {
+      "success": true,
+      "profile": "burst",
+      "send_interval_s": 0.1,
+      "messages_sent": 1000,
+      "messages_delivered": 1000,
+      "delivery_ratio": 1.0,
+      "elapsed_s": 174.2987970999675,
+      "throughput_msg_s": 5.737274247661383,
+      "latency": {
+        "n": 1000,
+        "mean": 1.5997715708997566,
+        "p50": 1.5509432000108063,
+        "p95": 3.0319938000757247,
+        "max": 4.58904720004648,
+        "sample_sd": 0.786449922931693,
+        "mean_95ci_margin": 0.04874467123370951,
+        "mean_95ci": {
+          "low": 1.5510268996660472,
+          "high": 1.648516242133466
+        }
+      },
+      "paths": [
+        {
+          "sender": "88LX01L45",
+          "receiver": "8AKX0UCPK",
+          "n": 500,
+          "mean": 1.6214355821965727,
+          "sample_sd": 0.8006420897648812,
+          "mean_95ci_margin": 0.0701793734237811,
+          "p50": 1.5661817999789491,
+          "p95": 3.092031699954532,
+          "max": 4.431471099960618,
+          "mean_observation_window_s": 1.4778916211964097,
+          "max_observation_window_s": 2.3861323000164703
+        },
+        {
+          "sender": "8AKX0UCPK",
+          "receiver": "88LX01L45",
+          "n": 500,
+          "mean": 1.5781075596029404,
+          "sample_sd": 0.7721904899305901,
+          "mean_95ci_margin": 0.06768548074089571,
+          "p50": 1.5504422000376508,
+          "p95": 2.898014400037937,
+          "max": 4.58904720004648,
+          "mean_observation_window_s": 1.453376033003209,
+          "max_observation_window_s": 2.8090598999988288
+        }
+      ],
+      "send_failures": 0,
+      "connection_failures": 0,
+      "connection_rejections": 0,
+      "scanner_errors": [],
+      "latency_measurement": {
+        "clock": "host-monotonic",
+        "receipt_event": "first /ui observation",
+        "poll_interval_s": 2.0,
+        "receipt_interval": "between last successful absent poll and first present poll",
+        "confidence_method": "normal approximation for the mean; assumes independent samples"
+      },
+      "device_metadata": [
+        {
+          "serial": "88LX01L45",
+          "model": "Pixel 3",
+          "manufacturer": "Google",
+          "android_sdk": "28",
+          "android_release": "9"
+        },
+        {
+          "serial": "8AKX0UCPK",
+          "model": "Pixel 3",
+          "manufacturer": "Google",
+          "android_sdk": "35",
+          "android_release": "15"
+        }
+      ],
+      "raw_summary_sha256": "07df97c3fac518ffbe4e9137aa268eecb8f0e76bc8ce52a125cf27055e884fb2"
+    },
+    "retained": {
+      "success": true,
+      "profile": "burst",
+      "send_interval_s": 0.1,
+      "messages_sent": 1000,
+      "messages_delivered": 1000,
+      "delivery_ratio": 1.0,
+      "elapsed_s": 168.46319949999452,
+      "throughput_msg_s": 5.936014529986608,
+      "latency": {
+        "n": 1000,
+        "mean": 1.7965808724025265,
+        "p50": 1.5813996000215411,
+        "p95": 3.5297311999602243,
+        "max": 20.98822029994335,
+        "sample_sd": 1.4379178044868344,
+        "mean_95ci_margin": 0.08912306886562676,
+        "mean_95ci": {
+          "low": 1.7074578035368997,
+          "high": 1.8857039412681533
+        }
+      },
+      "paths": [
+        {
+          "sender": "88LX01L45",
+          "receiver": "8AKX0UCPK",
+          "n": 500,
+          "mean": 1.8070832012037281,
+          "sample_sd": 1.4302093226838015,
+          "mean_95ci_margin": 0.12536337448893653,
+          "p50": 1.5785294000525028,
+          "p95": 3.467083499999717,
+          "max": 10.97161030001007,
+          "mean_observation_window_s": 1.4935495771989227,
+          "max_observation_window_s": 2.3155486999312416
+        },
+        {
+          "sender": "8AKX0UCPK",
+          "receiver": "88LX01L45",
+          "n": 500,
+          "mean": 1.7860785436013247,
+          "sample_sd": 1.446941249863967,
+          "mean_95ci_margin": 0.12682999257045807,
+          "p50": 1.5936240000883117,
+          "p95": 3.551909300033003,
+          "max": 20.98822029994335,
+          "mean_observation_window_s": 1.4911455642019864,
+          "max_observation_window_s": 2.3339614999713376
+        }
+      ],
+      "send_failures": 0,
+      "connection_failures": 0,
+      "connection_rejections": 0,
+      "scanner_errors": [],
+      "latency_measurement": {
+        "clock": "host-monotonic",
+        "receipt_event": "first /ui observation",
+        "poll_interval_s": 2.0,
+        "receipt_interval": "between last successful absent poll and first present poll",
+        "confidence_method": "normal approximation for the mean; assumes independent samples"
+      },
+      "device_metadata": [
+        {
+          "serial": "88LX01L45",
+          "model": "Pixel 3",
+          "manufacturer": "Google",
+          "android_sdk": "28",
+          "android_release": "9"
+        },
+        {
+          "serial": "8AKX0UCPK",
+          "model": "Pixel 3",
+          "manufacturer": "Google",
+          "android_sdk": "35",
+          "android_release": "15"
+        }
+      ],
+      "raw_summary_sha256": "e0c27633a8d0bb03c8edc27ac08a4e512a430081e4c7329326f67bd0e20197e9"
+    }
+  },
+  "apks": {
+    "fixed.apk": {
+      "bytes": 169699093,
+      "sha256": "37f46b3d74f0f7650a8e5cbd5a66d51fc307a22a1244d429de6123058bdcd06e"
+    },
+    "production-release.apk": {
+      "bytes": 61833996,
+      "sha256": "dd63d9805d3a82fdee9465e777dd889b861c1b7ba4f05f9c29f6e46e4bf0f645"
+    },
+    "signed-test.apk": {
+      "bytes": 61833996,
+      "sha256": "dd63d9805d3a82fdee9465e777dd889b861c1b7ba4f05f9c29f6e46e4bf0f645"
+    }
+  }
+}

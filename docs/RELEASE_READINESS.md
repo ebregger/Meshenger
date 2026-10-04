@@ -55,7 +55,7 @@ On Windows use `gradlew.bat` and Android Studio's JBR when Java is not on the pa
 - Test denied/revoked permissions, Bluetooth toggles, locked-screen/background operation, battery restrictions, process death/relaunch and signed `adb install -r` updates. Record actual OEM restrictions rather than promising always-on delivery.
 - Check privacy text, bundled dependency notices, APK checksums/signing certificate and release notes on the exact artifacts selected for publication.
 
-The connected Pixel 3 phones provide Android 9 and Android 15 coverage only. Additional versions, OEMs and a third relay phone are separate gates; do not mark them passed based on earlier debug benchmarks.
+The connected phones now include Android 9 and 15 Pixel 3s and an Android 17 Pixel 9 Pro XL. Additional versions and non-Pixel OEM coverage remain separate gates; do not mark signed/background checks passed based on debug benchmarks.
 
 ## Validation record
 
@@ -92,3 +92,5 @@ FlutterBluePlus has been replaced by native filtered discovery and adapter event
 Matching 1,000-message debug runs on the Android 9/15 phones use an isolated `.benchmark` application ID and start with fresh disposable app data for each variant. Original installations retain their identities and existing data; their data was never cleared. Timing and reliability results are recorded in the [before/after performance report](FLUTTER_BLUE_PLUS_BENCHMARK.md).
 
 Load testing exposed debug send API assertions in the existing CRDT library when concurrent writes/merges publish their clocks out of order. The database write can persist before the assertion is raised, so API acknowledgement failures and actual message delivery are recorded separately. Investigate this race and retained-history catch-up delays before publication; do not treat complete eventual delivery as a clean send-API result.
+
+The subsequent [reliability validation](RELIABILITY_VALIDATION.md) fixes the clock race and inbound repair cursor truncation. Two new 1,000-message runs deliver completely with zero send errors. It also records signed three-phone testing and the remaining checks; no release has been published.

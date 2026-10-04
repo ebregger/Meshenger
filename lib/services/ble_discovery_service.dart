@@ -12,6 +12,7 @@ import '../providers/database_provider.dart';
 import 'benchmark_trace.dart';
 import 'catchup_push_budget.dart';
 import 'deep_catchup.dart';
+import 'database_service.dart';
 import 'deferred_repair.dart';
 import 'mesh_advertisement.dart';
 import 'mesh_catchup.dart';
@@ -129,6 +130,30 @@ class BleDiscoveryService {
   /// Rows in one gap-fill page. The same number is asked of the database and
   /// allowed on the wire, so nothing selected is dropped afterwards.
   static const int repairPageRows = 80;
+
+  /// The database repair cursor must advance by the rows this inbound link
+  /// can send. Requesting 80 and then sending only 25 skips unsent candidates
+  /// whenever the peer's fingerprint stays unchanged across held-link turns.
+  static Future<Map<String, dynamic>> inboundRepairPage(
+    DatabaseService db,
+    List<int> remoteBuckets, {
+    required String peerId,
+    List<int>? remoteDeepBuckets,
+  }) async {
+    if (remoteDeepBuckets != null) {
+      final deep = await db.getRowsForDeepMismatch(
+        remoteDeepBuckets,
+        maxRows: MeshCatchup.pageRows,
+        peerKey: peerId,
+      );
+      if (deep.isNotEmpty) return deep;
+    }
+    return db.getRowsForMismatchedBuckets(
+      remoteBuckets,
+      maxRows: MeshCatchup.pageRows,
+      peerKey: peerId,
+    );
+  }
 
   /// Envelope flag on a payload that carries gap-fill rows. Those rows are old
   /// history the receiver was missing, not new messages, so the receiver does
@@ -2921,22 +2946,17 @@ class BleDiscoveryService {
         if (buckets != null && buckets.isNotEmpty) {
           final bucketTimer = Stopwatch()..start();
           final peerDeep = DeepCatchup.peer(peerId);
-          if (peerDeep != null &&
-              peerDeep.hasBuckets &&
-              DeepCatchup.differs(db.freshDeepDigest, peerDeep)) {
-            changeset = await db.getRowsForDeepMismatch(
-              peerDeep.buckets,
-              maxRows: repairPageRows,
-              peerKey: peerId,
-            );
-          }
-          if (changeset.isEmpty) {
-            changeset = await db.getRowsForMismatchedBuckets(
-              buckets,
-              maxRows: repairPageRows,
-              peerKey: peerId,
-            );
-          }
+          changeset = await inboundRepairPage(
+            db,
+            buckets,
+            peerId: peerId,
+            remoteDeepBuckets:
+                peerDeep != null &&
+                    peerDeep.hasBuckets &&
+                    DeepCatchup.differs(db.freshDeepDigest, peerDeep)
+                ? peerDeep.buckets
+                : null,
+          );
           fromVector = false;
           debugPrint(
             '[BLE_TRACE] EVENT:INBOUND_CATCHUP_STAGE | '
@@ -2966,8 +2986,7 @@ class BleDiscoveryService {
         'WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
       );
       if (!fromVector) {
-        // Fingerprint repair rotates its starting row every three seconds.
-        // Preserve that order and wait for the next rotation before retrying.
+        // Give the peer time to refresh its fingerprints between repair pages.
         retryDelay = const Duration(seconds: 3);
       }
       _lastInboundCatchupAt[peerId] = DateTime.now();

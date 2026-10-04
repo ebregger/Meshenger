@@ -490,6 +490,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         adapterStatus: BleAdapterStatus.unauthorized,
         lastPermissionResult: outcome,
       );
+      await refreshMeshHealth();
       return;
     }
     state = state.copyWith(lastPermissionResult: outcome);

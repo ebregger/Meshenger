@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/ble_network_provider.dart';
 import '../providers/database_provider.dart';
 import '../providers/identity_provider.dart';
+import '../utils/ble_permission_result.dart';
 import '../widgets/config/chat_history_settings.dart';
 import '../widgets/config/debug_wake_lock_settings.dart';
 import '../widgets/config/diagnostic_tile.dart';
@@ -153,6 +154,9 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
     final bleState = ref.watch(bleNetworkProvider);
     final notifier = ref.read(bleNetworkProvider.notifier);
     final statuses = bleState.permissionStatuses;
+    final permissionBlocked =
+        bleState.lastPermissionResult != null &&
+        bleState.lastPermissionResult != BlePermissionRequestResult.granted;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -176,15 +180,27 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
               ),
               DiagnosticTile(
                 title: 'BLE Scanner Instance',
-                subtitle: !bleState.scannerHealthy
+                subtitle: permissionBlocked
+                    ? 'Stopped - grant the required permissions'
+                    : !bleState.scannerHealthy
                     ? 'CRITICAL ERROR: Scanner failed to start'
                     : (bleState.scannerStalled
                           ? 'WARNING: No activity detected (Potential Jam)'
                           : 'Healthy - Scanning for peers'),
-                isOk: bleState.scannerHealthy && !bleState.scannerStalled,
-                onFix: () => notifier.resetRadio(),
-                fixLabel: 'Try Reset',
-                warningColor: bleState.scannerHealthy && bleState.scannerStalled
+                isOk:
+                    !permissionBlocked &&
+                    bleState.scannerHealthy &&
+                    !bleState.scannerStalled,
+                onFix: () => permissionBlocked
+                    ? notifier.retryAndroidPermissions()
+                    : notifier.resetRadio(),
+                fixLabel: permissionBlocked
+                    ? 'Request Permissions'
+                    : 'Try Reset',
+                warningColor:
+                    !permissionBlocked &&
+                        bleState.scannerHealthy &&
+                        bleState.scannerStalled
                     ? Colors.orange
                     : null,
               ),
