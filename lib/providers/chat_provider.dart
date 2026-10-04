@@ -14,6 +14,8 @@ import '../services/local_write_hook.dart';
 import '../services/mesh_crypto.dart';
 import '../services/mesh_key_store.dart';
 import '../services/message_delivery_tracker.dart';
+import '../services/peer_key_trust_store.dart';
+import '../services/mesh_payload_limits.dart';
 import 'conversation_provider.dart';
 import 'database_provider.dart';
 import 'identity_provider.dart';
@@ -63,6 +65,7 @@ final chatLimitProvider = StateProvider<int>((ref) {
 /// Single global [StreamProvider] (no `.family`) so the whole app shares one
 /// subscription. The selected conversation and profile updates restart it.
 final chatProvider = StreamProvider<List<TextMessageWithAuthor>>((ref) async* {
+  final keyTrust = ref.watch(peerKeyTrustStoreProvider);
   final db = await ref.watch(databaseProvider.future);
   final conversationId = ref.watch(selectedConversationIdProvider);
   ref.watch(nodeProfilesProvider);
@@ -110,7 +113,11 @@ final chatProvider = StreamProvider<List<TextMessageWithAuthor>>((ref) async* {
     final opened = await MeshCrypto.openForViewer(
       messages: batch,
       identity: identity,
-      publicKeys: await db.fetchPublicKeys(),
+      publicKeys: await keyTrust.keysForViewing(
+        batch,
+        myId,
+        await db.fetchPublicKeys(),
+      ),
       myNodeId: myId,
     );
     debugPrint(
@@ -169,6 +176,7 @@ class ConversationPreview {
 final conversationPreviewsProvider = StreamProvider<List<ConversationPreview>>((
   ref,
 ) async* {
+  final keyTrust = ref.watch(peerKeyTrustStoreProvider);
   final db = await ref.watch(databaseProvider.future);
   var myId = '';
   MeshIdentity? identity;
@@ -214,7 +222,7 @@ final conversationPreviewsProvider = StreamProvider<List<ConversationPreview>>((
       final opened = await MeshCrypto.openForViewer(
         messages: [message],
         identity: identity,
-        publicKeys: publicKeys,
+        publicKeys: await keyTrust.keysForViewing([message], myId, publicKeys),
         myNodeId: myId,
       );
       final text = opened.single.textContent.trim();
@@ -247,6 +255,16 @@ class ChatActions extends StateNotifier<int> {
     lastSendError = null;
     final trimmed = text.trim();
     if (trimmed.isEmpty) return null;
+    if (!MeshPayloadLimits.canSendText(trimmed)) {
+      lastSendError =
+          'Message is too long. Use at most 2,000 characters and 2 KB.';
+      return null;
+    }
+    if (ConversationIds.members(conversationId).length >
+        MeshPayloadLimits.maxGroupMembers) {
+      lastSendError = 'A group can contain at most 16 people.';
+      return null;
+    }
 
     final nodeId = await _ref
         .read(identityServiceProvider)
@@ -275,7 +293,9 @@ class ChatActions extends StateNotifier<int> {
       storedText = await MeshCrypto.seal(
         plaintext: trimmed,
         sender: identity,
-        recipientPublicKey: remoteKey,
+        recipientPublicKey: await _ref
+            .read(peerKeyTrustStoreProvider)
+            .keyForSending(recipient, remoteKey),
         conversationId: conversationId,
         originNodeId: nodeId,
         recipientNodeId: recipient,
@@ -290,6 +310,14 @@ class ChatActions extends StateNotifier<int> {
       final identity = await _ref.read(meshKeyStoreProvider).loadOrCreate();
       final keys = Map<String, String>.from(await db.fetchPublicKeys());
       keys[nodeId] = identity.publicKeyBase64;
+      for (final member in members.where((id) => id != nodeId)) {
+        final key = keys[member];
+        if (key != null) {
+          keys[member] = await _ref
+              .read(peerKeyTrustStoreProvider)
+              .keyForSending(member, key);
+        }
+      }
       final sealed = await MeshCrypto.sealForMembers(
         plaintext: trimmed,
         sender: identity,

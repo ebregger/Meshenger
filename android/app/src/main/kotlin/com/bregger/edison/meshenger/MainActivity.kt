@@ -1,4 +1,4 @@
-package com.example.bluetooth_app
+package com.bregger.edison.meshenger
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -13,6 +13,7 @@ import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -161,7 +162,7 @@ class MainActivity : FlutterActivity() {
     heldClientTraceAttemptId = null
     heldClientLeaseStartedAtMs = 0L
     heldClientReleaseReason = null
-    try { g?.disconnect() } catch (_: Throwable) {}
+    try { g?.disconnect() } catch (_: SecurityException) {} catch (_: Throwable) {}
   }
   @Volatile private var heldClientIdleMs = 4000L
   @Volatile private var heldClientMaxLeaseMs = 15000L
@@ -309,8 +310,6 @@ class MainActivity : FlutterActivity() {
     }
   }
 
-  private val REQUEST_BLUETOOTH_PERMS = 4312
-
   private fun traceBle(
     event: String,
     mac: String? = null,
@@ -350,7 +349,23 @@ class MainActivity : FlutterActivity() {
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
 
-    requestBluetoothPermissionsIfNeeded()
+    val identityStorage = MeshIdentityStorage(applicationContext)
+    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.bregger.edison.meshenger/identity")
+      .setMethodCallHandler { call, result ->
+        try {
+          when (call.method) {
+            "read_seed" -> result.success(identityStorage.readSeed())
+            "write_seed" -> {
+              identityStorage.writeSeed(call.argument<String>("seed") ?: error("Missing identity seed"))
+              result.success(null)
+            }
+            else -> result.notImplemented()
+          }
+        } catch (error: Exception) {
+          // Never expose seed material or silently replace a failed identity.
+          result.error("IDENTITY_STORAGE", "Could not access this phone's protected identity", null)
+        }
+      }
 
     val methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.featherfawks.mesh/ble")
     val eventChannel = EventChannel(flutterEngine.dartExecutor.binaryMessenger, "com.featherfawks.mesh/ble_events")
@@ -490,6 +505,17 @@ class MainActivity : FlutterActivity() {
   }
 
   private fun startMeshForegroundService(result: MethodChannel.Result) {
+    // Flutter owns the permission prompt. Verify Android's actual grants before
+    // scheduling a connectedDevice service, whose asynchronous start can crash
+    // the app if permissions are still pending or have just been revoked.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && arrayOf(
+        Manifest.permission.BLUETOOTH_SCAN,
+        Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.BLUETOOTH_ADVERTISE,
+      ).any { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
+      result.error("BLUETOOTH_PERMISSION_REQUIRED", "Allow Nearby Devices before starting the mesh", null)
+      return
+    }
     if (MeshForegroundService.isRunning()) {
       Log.i(TAG, "Mesh foreground service is already running")
       MeshForegroundService.setMeshRadioActive(true)
@@ -551,27 +577,6 @@ class MainActivity : FlutterActivity() {
     } catch (t: Throwable) {
       Log.e(TAG, "Failed to power-cycle Bluetooth", t)
       result.error("reset_failed", t.message, null)
-    }
-  }
-
-  private fun requestBluetoothPermissionsIfNeeded() {
-    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
-    val needed = arrayOf(
-      Manifest.permission.BLUETOOTH_CONNECT,
-      Manifest.permission.BLUETOOTH_ADVERTISE,
-      Manifest.permission.BLUETOOTH_SCAN
-    )
-
-    val missing = needed.filter {
-      ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-    }
-
-    if (missing.isNotEmpty()) {
-      ActivityCompat.requestPermissions(
-        this,
-        missing.toTypedArray(),
-        REQUEST_BLUETOOTH_PERMS
-      )
     }
   }
 
@@ -1312,7 +1317,7 @@ class MainActivity : FlutterActivity() {
             characteristic,
             bytes,
             BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-          ) == BluetoothGatt.GATT_SUCCESS
+          ) == BluetoothStatusCodes.SUCCESS
         } else {
           @Suppress("DEPRECATION")
           characteristic.value = bytes
@@ -1659,6 +1664,7 @@ class MainActivity : FlutterActivity() {
   }
 
   @SuppressLint("MissingPermission")
+  @RequiresApi(Build.VERSION_CODES.O)
   private fun restartModernAdvertisingForHash(hex: String, reason: String) {
     Log.w(TAG, "[ADV] Restarting Modern AdvertisingSet after in-place update $reason hex=$hex")
     clearPendingScanResponseUpdate()
@@ -2012,12 +2018,11 @@ class MainActivity : FlutterActivity() {
 
       val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
       val adapter: BluetoothAdapter = bluetoothManager.adapter
-      // On Android 12+ (API 31), we MUST specify ADDRESS_TYPE_RANDOM for all BLE peers.
-      // Android randomizes MAC addresses for privacy by default (Resolvable Private Addresses).
-      // Always use ADDRESS_TYPE_RANDOM if the scanner reports it.
-      val addressType = if (isRandom) BluetoothDevice.ADDRESS_TYPE_RANDOM else BluetoothDevice.ADDRESS_TYPE_PUBLIC
-      val device = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-        Log.d(TAG, "getRemoteLeDevice mac=$macAddress using type=$addressType (API 31+)")
+      // Explicit LE address types are available through this API on Android 13+.
+      // Older Android versions resolve scanned addresses through getRemoteDevice.
+      val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val addressType = if (isRandom) BluetoothDevice.ADDRESS_TYPE_RANDOM else BluetoothDevice.ADDRESS_TYPE_PUBLIC
+        Log.d(TAG, "getRemoteLeDevice mac=$macAddress using type=$addressType (API 33+)")
         adapter.getRemoteLeDevice(macAddress, addressType)
       } else {
         @Suppress("DEPRECATION")
@@ -2427,7 +2432,7 @@ class MainActivity : FlutterActivity() {
                     )
                     synchronized(lock) { lastWriteOk = null }
                     val started = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                      g.writeDescriptor(descriptor, cccdValue) == BluetoothGatt.GATT_SUCCESS
+                      g.writeDescriptor(descriptor, cccdValue) == BluetoothStatusCodes.SUCCESS
                     } else {
                       @Suppress("DEPRECATION")
                       descriptor.value = cccdValue
@@ -2847,7 +2852,7 @@ class MainActivity : FlutterActivity() {
             attemptId,
             mapOf(
               "TIMEOUT_MS" to connectTimeoutMs,
-              "ADDRESS_TYPE" to addressType,
+              "ADDRESS_TYPE" to if (isRandom) "random" else "public",
             ),
           )
           gatt = device.connectGatt(
@@ -2953,7 +2958,7 @@ class MainActivity : FlutterActivity() {
               writeChar,
               feedback,
               BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-            ) == BluetoothGatt.GATT_SUCCESS
+            ) == BluetoothStatusCodes.SUCCESS
           } else {
             @Suppress("DEPRECATION")
             writeChar.value = feedback

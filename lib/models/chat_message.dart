@@ -1,5 +1,5 @@
 /// How far an outbound message has progressed on this phone.
-enum MessageDeliveryState { none, sent, delivered }
+enum MessageDeliveryState { none, sent, relayed }
 
 /// UI-friendly message used to render the local chat transcript.
 class ChatMessage {
@@ -10,7 +10,7 @@ class ChatMessage {
     required this.isSent,
     required this.timestamp,
     this.delivery = MessageDeliveryState.none,
-    this.deliveredPeerCount = 0,
+    this.relayedPeerCount = 0,
     this.locked = false,
     this.retired = false,
   });
@@ -21,7 +21,7 @@ class ChatMessage {
   final bool isSent;
   final DateTime timestamp;
   final MessageDeliveryState delivery;
-  final int deliveredPeerCount;
+  final int relayedPeerCount;
   final bool locked;
 
   /// The other person deleted this chat; shown grayed out, kept on this phone.

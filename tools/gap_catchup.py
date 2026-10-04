@@ -49,7 +49,7 @@ import time
 import urllib.request
 from dataclasses import dataclass, field
 
-PACKAGE = "com.example.bluetooth_app"
+PACKAGE = "com.bregger.edison.meshenger"
 DB_PATH = "app_flutter/mesh_network.db"
 REMOTE_TMP = "/data/local/tmp/gap_catchup.db"
 LIVE_ROOM_MESSAGES = (

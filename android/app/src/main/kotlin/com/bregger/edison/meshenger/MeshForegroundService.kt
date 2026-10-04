@@ -1,4 +1,4 @@
-package com.example.bluetooth_app
+package com.bregger.edison.meshenger
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -76,14 +76,21 @@ class MeshForegroundService : Service() {
     MeshForegroundServiceEvents.clearDetachedStopRequest()
     meshRadioActive = true
     val notification = buildNotification()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      startForeground(
-        NOTIFICATION_ID,
-        notification,
-        ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-      )
-    } else {
-      startForeground(NOTIFICATION_ID, notification)
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        startForeground(
+          NOTIFICATION_ID,
+          notification,
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+        )
+      } else {
+        startForeground(NOTIFICATION_ID, notification)
+      }
+    } catch (error: SecurityException) {
+      // A grant can be revoked between the Activity's check and this callback.
+      android.util.Log.w(tag, "Mesh service permissions are unavailable", error)
+      MeshForegroundServiceEvents.requestMeshStop()
+      stopSelf(startId)
     }
     return START_NOT_STICKY
   }
@@ -202,13 +209,13 @@ class MeshForegroundService : Service() {
   }
 
   companion object {
-    const val ACTION_START = "com.example.bluetooth_app.action.START_MESH"
-    const val ACTION_STOP = "com.example.bluetooth_app.action.STOP_MESH"
+    const val ACTION_START = "com.bregger.edison.meshenger.action.START_MESH"
+    const val ACTION_STOP = "com.bregger.edison.meshenger.action.STOP_MESH"
     private const val CHANNEL_ID = "mesh_activity"
     private const val NOTIFICATION_ID = 6201
     private const val REQUEST_OPEN_APP = 6202
     private const val REQUEST_STOP_MESH = 6203
-    private const val DEBUG_WAKE_LOCK_TAG = "MeshengerDebugBleTestWakeLock"
+    private const val DEBUG_WAKE_LOCK_TAG = "Meshenger:DebugBleTestWakeLock"
 
     @Volatile
     private var runningInstance: MeshForegroundService? = null

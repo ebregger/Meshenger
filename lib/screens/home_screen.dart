@@ -12,6 +12,7 @@ import '../providers/conversation_provider.dart';
 import '../providers/identity_provider.dart';
 import '../providers/node_profiles_provider.dart';
 import '../screens/config_screen.dart';
+import 'key_verification_screen.dart';
 import '../services/local_message_notification_service.dart';
 import '../services/mesh_key_store.dart';
 import '../services/message_delivery_hook.dart';
@@ -157,6 +158,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (conversationId.isEmpty) peerStrip,
+          if (conversationId.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Text(
+                'Everyone is public. Nearby phones can read, store and relay these messages.',
+              ),
+            ),
           Expanded(
             child: Stack(
               children: [
@@ -200,12 +208,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                         .watch(messageDeliveryProvider)
                                         .stateFor(tm.msgId)
                                   : MessageDeliveryState.none;
-                              final delivery = !isSent
-                                  ? MessageDeliveryState.none
-                                  : deliveryState ==
-                                        MessageDeliveryState.delivered
-                                  ? MessageDeliveryState.delivered
-                                  : MessageDeliveryState.sent;
+                              final delivery = deliveryState;
 
                               final bubble = ChatMessage(
                                 id: tm.msgId,
@@ -216,7 +219,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                   tm.timestamp.toInt(),
                                 ),
                                 delivery: delivery,
-                                deliveredPeerCount: isSent
+                                relayedPeerCount: isSent
                                     ? ref
                                           .watch(messageDeliveryProvider)
                                           .peerCount(tm.msgId)
@@ -375,6 +378,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final location = ref.watch(chatLocationProvider);
     final inThread = !location.showingList;
     final conversationTitle = _conversationTitle(location);
+    final verifyKeysButton =
+        inThread && ConversationIds.isPrivate(location.conversationId)
+        ? IconButton(
+            key: const Key('verify_keys_button'),
+            tooltip: 'Verify encryption keys',
+            icon: const Icon(Icons.verified_user_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => KeyVerificationScreen(
+                  conversationId: location.conversationId,
+                ),
+              ),
+            ),
+          )
+        : null;
     final backButton = BackButton(
       onPressed: () => ref.read(chatLocationProvider.notifier).showList(),
     );
@@ -395,14 +413,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             title: conversationTitle,
             statusBarHeight: topInset,
             leading: inThread ? backButton : null,
-            trailing: inThread ? null : settingsButton,
+            trailing: inThread ? verifyKeysButton : settingsButton,
           )
         : AppBar(
             title: Text(conversationTitle),
             centerTitle: true,
             automaticallyImplyLeading: false,
             leading: inThread ? backButton : null,
-            actions: [if (!inThread) settingsButton],
+            actions: [
+              if (!inThread) settingsButton,
+              ?verifyKeysButton,
+            ],
           );
 
     return Scaffold(

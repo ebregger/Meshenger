@@ -154,7 +154,7 @@ class ConversationList extends ConsumerWidget {
   String _subtitleFor(String conversationId, ConversationPreview? preview) {
     final text = preview?.preview.trim() ?? '';
     if (text.isNotEmpty) return text;
-    if (conversationId.isEmpty) return 'Shared room';
+    if (conversationId.isEmpty) return 'Public room · shared with nearby phones';
     if (ConversationIds.isGroup(conversationId)) return 'Group chat';
     return 'Private chat';
   }

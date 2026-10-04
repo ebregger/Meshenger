@@ -1004,7 +1004,7 @@ def maybe_clear_chat_messages(ports, preserve_messages=False):
 
 def wipe_mesh_dbs(serials):
     """Full DB delete (messages + profiles). Prefer [clear_chat_messages] for stress."""
-    pkg = "com.example.bluetooth_app"
+    pkg = "com.bregger.edison.meshenger"
     for serial in serials:
         subprocess.run(
             ["adb", "-s", serial, "shell", "am", "force-stop", pkg],

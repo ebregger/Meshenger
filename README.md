@@ -26,7 +26,9 @@ Sync happens when nearby phones discover one another and have an opportunity to 
 
 Meshenger has no central server. The shared room is still a public conversation: anyone running Meshenger nearby can read it, and those messages are stored in plaintext so every peer can show them. Do not put sensitive information in the shared room.
 
-Direct chats are encrypted. Each install keeps an X25519 private key on the phone and publishes only the public key. A private message is sealed with AES-GCM under a key derived from the two participants' keys. Relays store and forward the ciphertext, and the app shows them "Private message" instead of the contents. User IDs, timestamps, and the fact that a private chat exists still travel with the mesh record. A passive Bluetooth capture of a private message is not readable without one of the two private keys.
+Direct and group chats are encrypted. Each install keeps an X25519 private key encrypted under an Android Keystore key and publishes only the public key. Private messages use AES-GCM; relays store and forward ciphertext. Participant IDs, timestamps, and chat membership still travel with the mesh record. The first key used for a peer's private chat or verification is pinned; sending stops if that key changes. Open **Verify keys** in a private chat and compare the full fingerprints with the other person's phone through a trusted channel before sharing sensitive information. First contact alone does not authenticate a person, and this encryption does not provide forward secrecy.
+
+Android backup and device-to-device data transfer are disabled. Uninstalling Meshenger loses that install's identity and local history. Updating with the same application ID and signing key preserves them. The permanent Android ID is `com.bregger.edison.meshenger`; earlier `com.example.bluetooth_app` development installs remain separate and do not migrate automatically.
 
 ## Screenshots
 
@@ -41,7 +43,7 @@ Direct chats are encrypted. Each install keeps an X25519 private key on the phon
 3. Open Meshenger on each phone and keep the screens on and unlocked while trying the first sync. Debug builds request that the screen stay on while Meshenger is in the foreground; this does not wake a sleeping display or bypass the lock screen. Release builds follow the phone's normal screen timeout.
 4. Send a sample message. Nearby peers should appear as chips, and the message should arrive as the phones sync.
 
-Messages opens on a chat list. Chips along the top show who is nearby or reachable. **Everyone** is the shared room. Long-press a message there, or tap a peer chip and choose **Private chat**, to message someone privately. The button at the bottom right starts a new private chat or group with people you choose. Choosing people who already share a chat opens that chat. Your own messages show **Sent** until a later sync finishes, then **Delivered**. Long-press a chat in the list to delete it. Deleting only ever changes your own phone: a one-to-one chat stays on the other person's phone with the old messages grayed out and a **Remove from this phone** button, and new messages start a fresh chat. Deleting a group leaves everyone else's copy untouched.
+Messages opens on a chat list. Chips along the top show who is nearby or reachable. **Everyone** is the shared room. Long-press a message there, or tap a peer chip and choose **Private chat**, to message someone privately. The button at the bottom right starts a new private chat or group with people you choose. Choosing people who already share a chat opens that chat. Your own messages show **Sent** when saved locally and **Relayed** after a successful transfer containing that message to a known peer. Relayed means another phone accepted the record; it does not confirm that the intended recipient received or read it. Messages are limited to 2,000 characters and 2 KB of UTF-8 text, and groups to 16 people. Long-press a chat in the list to delete it. Deleting only ever changes your own phone: a one-to-one chat stays on the other person's phone with the old messages grayed out and a **Remove from this phone** button, and new messages start a fresh chat. Deleting a group leaves everyone else's copy untouched.
 
 The settings button opens display name, message history, notifications, permissions, and radio diagnostics. Keeping messages for 1, 7, or 30 days removes older messages you sent or received from this phone only. Relayed private chats you are not part of stay on the phone so they can still reach their recipients. Debug Android builds also show a **Developer Testing** option to hold a partial CPU wake lock during screen-off BLE tests. It leaves the display and lock screen unchanged, and turns off when disabled or when the mesh foreground service stops.
 
@@ -51,7 +53,8 @@ The settings button opens display name, message history, notifications, permissi
 - Shared chat history that syncs and merges across peers, including through a phone that is in range of both sides.
 - Encrypted direct and group conversations relayed as ciphertext.
 - Chat clearing and retention controls that remove messages from this phone only; other phones keep their copies.
-- Sent and delivered progress on your own messages.
+- Sent and relayed progress on your own messages.
+- Peer key fingerprints and protection against silent encryption-key changes.
 - Display names, peer presence indicators, sync status, and basic radio diagnostics.
 
 Keep the app open and phones nearby while evaluating sync. Android background and battery limits can interrupt scanning or connections when the app is not in use.
@@ -90,3 +93,9 @@ powershell -File tools/create_release_keystore.ps1
 ```
 
 That writes `android/key.properties` and `android/app/upload-keystore.jks`. Both are gitignored. Running the script again leaves the existing key in place. `assembleRelease` and `bundleRelease` fail with setup instructions when those files are missing. Debug builds still install without them.
+
+The release workflow builds signed **candidate artifacts only**. It does not publish a GitHub release. See [the release checklist](docs/RELEASE_READINESS.md) for signing secrets, validation and the remaining phone test matrix.
+
+## Licensing
+
+Meshenger's own source is currently **unlicensed**; no open-source license has been granted. Dependencies keep their separate licenses. Settings includes **Third-party licenses**, including FlutterBluePlus's additional BSD notices. See [the license overview](docs/LICENSING.md), [dependency notices](THIRD_PARTY_NOTICES.md), and [the FlutterBluePlus removal assessment](docs/FLUTTER_BLUE_PLUS_REMOVAL.md).

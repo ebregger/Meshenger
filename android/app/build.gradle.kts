@@ -15,7 +15,7 @@ if (hasReleaseKeystore) {
 }
 
 android {
-    namespace = "com.example.bluetooth_app"
+    namespace = "com.bregger.edison.meshenger"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -30,8 +30,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.bluetooth_app"
+        // Permanent Android identity; keep this unchanged for upgrade compatibility.
+        applicationId = "com.bregger.edison.meshenger"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -65,8 +65,11 @@ android {
     }
 
     lint {
-        abortOnError = false
-        checkReleaseBuilds = false
+        abortOnError = true
+        checkReleaseBuilds = true
+        // Flutter generates Windows SDK paths in local.properties. This file
+        // is local build configuration and is never packaged in the APK.
+        disable += "PropertyEscape"
     }
 }
 

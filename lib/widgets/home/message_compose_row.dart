@@ -6,6 +6,7 @@ import '../../providers/chat_provider.dart';
 import '../../providers/conversation_provider.dart';
 import '../../providers/identity_provider.dart';
 import '../../providers/message_draft_provider.dart';
+import '../../services/peer_key_trust_store.dart';
 
 /// Multiline composer + Send; styled for a bottom chat bar.
 class MessageComposeRow extends ConsumerStatefulWidget {
@@ -136,6 +137,15 @@ class _MessageComposeRowState extends ConsumerState<MessageComposeRow> {
       }
       ref.read(messageDraftProvider.notifier).clear();
       _controller.clear();
+    } catch (error) {
+      if (mounted) {
+        final message = error is PeerKeyChangedException
+            ? error.toString()
+            : 'Could not send this message. Your draft has been kept. Try again.';
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(message)));
+      }
     } finally {
       if (mounted) setState(() => _sending = false);
     }

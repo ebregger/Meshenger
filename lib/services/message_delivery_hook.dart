@@ -5,12 +5,12 @@ import '../services/message_delivery_tracker.dart';
 
 bool _deliveryHookInstalled = false;
 
-/// Connects finished mesh syncs to local delivery receipts.
+/// Connects successful transfers to exact per-message relay progress.
 void installMessageDeliverySyncHook() {
   if (_deliveryHookInstalled) return;
   _deliveryHookInstalled = true;
-  BleDiscoveryService.addSyncCompletedListener(
-    messageDeliveryTracker.notePeerSync,
+  BleDiscoveryService.addMessagesRelayedListener(
+    messageDeliveryTracker.noteMessagesRelayed,
   );
 }
 

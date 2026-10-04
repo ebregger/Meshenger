@@ -13,6 +13,7 @@ import 'deep_index.dart';
 import 'identity_service.dart';
 import 'database_mappers.dart';
 import 'local_deletion_store.dart';
+import 'mesh_payload_limits.dart';
 
 class DatabaseService {
   DatabaseService({LocalDeletionStore? deletionStore})
@@ -1063,6 +1064,7 @@ class DatabaseService {
     Map<String, dynamic> incoming, {
     void Function(String stage, int elapsedUs)? onStage,
   }) async {
+    MeshPayloadLimits.validateChangeset(incoming);
     await init();
     // Re-sent rows we already hold change nothing, so they must not throw away
     // the cached hashes and digests that sync depends on.

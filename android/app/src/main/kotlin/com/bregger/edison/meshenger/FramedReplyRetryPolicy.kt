@@ -1,4 +1,4 @@
-package com.example.bluetooth_app
+package com.bregger.edison.meshenger
 
 /** Bounded retransmission policy for a framed server reply. */
 internal object FramedReplyRetryPolicy {

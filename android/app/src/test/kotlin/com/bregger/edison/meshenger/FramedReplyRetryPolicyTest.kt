@@ -1,4 +1,4 @@
-package com.example.bluetooth_app
+package com.bregger.edison.meshenger
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

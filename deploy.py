@@ -3,7 +3,7 @@ import subprocess
 import os
 import re
 
-APP_PACKAGE = "com.example.bluetooth_app"
+APP_PACKAGE = "com.bregger.edison.meshenger"
 APP_ACTIVITY = ".MainActivity"
 BASE_PORT = 18081
 # Flutter stable requires API 24+ (Android 7). Older tablets (e.g. Nexus 7 @ API 18)

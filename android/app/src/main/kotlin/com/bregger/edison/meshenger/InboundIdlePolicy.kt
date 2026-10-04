@@ -1,4 +1,4 @@
-package com.example.bluetooth_app
+package com.bregger.edison.meshenger
 
 /**
  * Decides when a silent inbound GATT client is a zombie that should be dropped.

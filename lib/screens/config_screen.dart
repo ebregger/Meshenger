@@ -13,6 +13,7 @@ import '../widgets/config/debug_wake_lock_settings.dart';
 import '../widgets/config/diagnostic_tile.dart';
 import '../widgets/config/diagnostics_action_button.dart';
 import '../widgets/config/message_notification_settings.dart';
+import '../widgets/config/privacy_and_licenses.dart';
 
 final localDisplayNameProvider = FutureProvider<String?>((ref) async {
   final myId = await ref.watch(myNodeIdProvider.future);
@@ -123,6 +124,8 @@ class _ConfigurationScreenState extends ConsumerState<ConfigurationScreen> {
             ),
             const SizedBox(height: 10),
             const MessageNotificationSettings(),
+            const SizedBox(height: 24),
+            const PrivacyAndLicenses(),
             const SizedBox(height: 24),
             if (kDebugMode &&
                 defaultTargetPlatform == TargetPlatform.android) ...[

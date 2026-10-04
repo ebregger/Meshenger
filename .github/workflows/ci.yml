@@ -28,6 +28,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: '3.47.5'
           cache: true
 
       - name: Install dependencies
@@ -57,6 +58,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: '3.47.5'
           cache: true
 
       - name: Install dependencies
@@ -64,6 +66,13 @@ jobs:
 
       - name: Build Android Debug APK
         run: flutter build apk --debug
+
+      - name: Run native tests and Android release lint
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest :app:lintRelease --console=plain
+
+      - name: Run tooling tests
+        run: python3 -m unittest discover -s tools -p 'test_*.py'
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4

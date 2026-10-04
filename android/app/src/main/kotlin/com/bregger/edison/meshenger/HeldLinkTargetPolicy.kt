@@ -1,4 +1,4 @@
-package com.example.bluetooth_app
+package com.bregger.edison.meshenger
 
 /** A held GATT client link may only carry payloads addressed to that peer. */
 internal object HeldLinkTargetPolicy {

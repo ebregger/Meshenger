@@ -17,6 +17,7 @@ import 'deferred_repair.dart';
 import 'mesh_advertisement.dart';
 import 'mesh_catchup.dart';
 import 'mesh_dial_policy.dart';
+import 'mesh_payload_limits.dart';
 import 'native_mesh_service.dart';
 import 'native_mesh_urgent.dart';
 import 'peer_hash_observation.dart';
@@ -223,6 +224,24 @@ class BleDiscoveryService {
 
   static final List<void Function(String peerNodeId)> _syncCompletedListeners =
       <void Function(String peerNodeId)>[];
+
+  static final List<void Function(String, List<String>)>
+  _messagesRelayedListeners = [];
+
+  static void addMessagesRelayedListener(
+    void Function(String, List<String>) listener,
+  ) {
+    _messagesRelayedListeners.add(listener);
+  }
+
+  static void markMessagesRelayed(String peerId, List<String> messageIds) {
+    if (peerId.isEmpty || messageIds.isEmpty) return;
+    for (final listener in List<void Function(String, List<String>)>.of(
+      _messagesRelayedListeners,
+    )) {
+      listener(peerId, messageIds);
+    }
+  }
 
   /// Notified after [markSyncComplete] records a finished bidirectional sync.
   static void addSyncCompletedListener(
@@ -1779,17 +1798,12 @@ class BleDiscoveryService {
           },
         );
       }
-      var inboundMac = _resolveInboundMacForPeer(
-        inboundPeer,
-        activeServerMacs,
-      );
+      var inboundMac = _resolveInboundMacForPeer(inboundPeer, activeServerMacs);
       if (inboundMac != null) {
-        activeServerMacs =
-            (await _readInboundServerState(forceRefresh: true))['active']!;
-        inboundMac = _resolveInboundMacForPeer(
-          inboundPeer,
-          activeServerMacs,
-        );
+        activeServerMacs = (await _readInboundServerState(
+          forceRefresh: true,
+        ))['active']!;
+        inboundMac = _resolveInboundMacForPeer(inboundPeer, activeServerMacs);
       }
       if (inboundMac != null) {
         if (!forceNewestPush) {
@@ -1890,19 +1904,6 @@ class BleDiscoveryService {
       '[BENCHMARK] TARGET_MAC:$targetMac | EVENT:SCAN_HIT | TIMESTAMP:${DateTime.now().millisecondsSinceEpoch}',
     );
 
-    StreamSubscription<BluetoothConnectionState>? stateSub;
-    try {
-      // Best-effort state listener: we no longer use FlutterBluePlus for the actual GATT
-      // transfer, but this can still reveal unexpected stack transitions.
-      stateSub = device.connectionState.listen((
-        BluetoothConnectionState state,
-      ) {
-        if (state == BluetoothConnectionState.connected) {
-        } else if (state == BluetoothConnectionState.disconnected) {}
-      });
-    } catch (_) {
-      // Some platform implementations may not support this stream reliably.
-    }
     try {
       final db = await _ref.read(databaseProvider.future);
       Future<T> traceUrgentStage<T>(
@@ -2138,7 +2139,9 @@ class BleDiscoveryService {
       final macAddress = device.remoteId.str;
       // Android mesh advertisers use Random Resolvable Addresses.
       // We pass isRandom: true to ensure the native layer uses the correct addressing mode.
-      if (resolvedPeer != null) markBluetoothActivity(resolvedPeer);
+      if (resolvedPeer != null) {
+        markBluetoothActivity(resolvedPeer);
+      }
       final finalOfferDataRaw = offerEnvelope['initiator_data'];
       final finalOfferData = finalOfferDataRaw is Map
           ? Map<String, dynamic>.from(finalOfferDataRaw)
@@ -2160,6 +2163,9 @@ class BleDiscoveryService {
         bypassDeadCache: forceNewestPush,
         benchmarkMessageIds: offerMessageIds,
       );
+      if (resolvedPeer != null) {
+        markMessagesRelayed(resolvedPeer, offerMessageIds);
+      }
       if (resolvedPeer != null) markBluetoothActivity(resolvedPeer);
       debugPrint(
         '✅ [DISCOVERY] Offer sent to $targetMac (${payload.length} bytes) — awaiting delta reply',
@@ -2275,9 +2281,6 @@ class BleDiscoveryService {
       // the Delta reply back via NOTIFY. The Client's onCharacteristicChanged handler
       // will close the connection cleanly when it receives the "||EOF||" notify chunk.
       // The 60-second transferWatchdog guards against a server that never replies.
-      try {
-        await stateSub?.cancel();
-      } catch (_) {}
       _connectingHashes.remove(remoteHashInt);
       if (peerNodeId != null) _connectingNodeIds.remove(peerNodeId);
       _notifyConnectionPhase();
@@ -2648,12 +2651,13 @@ class BleDiscoveryService {
       if (pushPath != 'urgent_newest') ...DeepCatchup.envelopeFields(db),
       'data': changeset,
     };
-    final payload = zlib.encode(utf8.encode(jsonEncode(envelope)));
+    final payload = MeshPayloadLimits.encodeDelta(envelope);
+    final sentChangeset = Map<String, dynamic>.from(envelope['data'] as Map);
     final peerId = macToNodeId[mac];
-    final includedMessageIds = benchmarkMessageIds(changeset);
-    final totalRows = MeshCatchup.rowCount(changeset);
+    final includedMessageIds = benchmarkMessageIds(sentChangeset);
+    final totalRows = MeshCatchup.rowCount(sentChangeset);
     var tombstoneRows = 0;
-    for (final rows in changeset.values) {
+    for (final rows in sentChangeset.values) {
       if (rows is! List) continue;
       for (final row in rows) {
         if (row is! Map) continue;
@@ -2672,7 +2676,7 @@ class BleDiscoveryService {
     );
     traceBenchmarkMessageRows(
       'INBOUND_PUSH_INCLUDED',
-      changeset,
+      sentChangeset,
       fields: {
         'TARGET_MAC': mac,
         'PEER_NODE': peerId,
@@ -2686,8 +2690,9 @@ class BleDiscoveryService {
       Uint8List.fromList(payload),
       benchmarkMessageIds: includedMessageIds,
     );
+    if (peerId != null) markMessagesRelayed(peerId, includedMessageIds);
     if (peerId != null) markBluetoothActivity(peerId);
-    final rowCounts = changeset.map(
+    final rowCounts = sentChangeset.map(
       (t, rows) => MapEntry(t, (rows as List).length),
     );
     debugPrint(
@@ -2987,7 +2992,9 @@ class BleDiscoveryService {
         );
         return true;
       }
-      final shouldYieldBurst = CatchupPushBudget.shared.shouldYieldBurst(peerId);
+      final shouldYieldBurst = CatchupPushBudget.shared.shouldYieldBurst(
+        peerId,
+      );
       if (shouldYieldBurst) {
         CatchupPushBudget.shared.resetBurst(peerId);
         // Pause between bursts so peer can respond, exchange fresh fingerprints,

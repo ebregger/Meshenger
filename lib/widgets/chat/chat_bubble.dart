@@ -12,11 +12,11 @@ class ChatBubble extends StatelessWidget {
   final VoidCallback? onMessagePrivately;
 
   String _deliveryLabel(ChatMessage message) {
-    if (message.delivery == MessageDeliveryState.delivered) {
-      if (message.deliveredPeerCount > 1) {
-        return 'Delivered to ${message.deliveredPeerCount} peers';
+    if (message.delivery == MessageDeliveryState.relayed) {
+      if (message.relayedPeerCount > 1) {
+        return 'Relayed to ${message.relayedPeerCount} peers';
       }
-      return 'Delivered';
+      return 'Relayed';
     }
     return 'Sent';
   }

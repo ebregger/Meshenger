@@ -1,5 +1,6 @@
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:permission_handler/permission_handler.dart';
 
 import 'ble_permission_result.dart';
@@ -48,7 +49,7 @@ class PermissionsHelper {
   /// Returns a full report of hardware and runtime permission states.
   static Future<BleHealthReport> checkMeshHealth() async {
     final Map<Permission, PermissionStatus> permissionsMap = {};
-    
+
     bool btEnabled = false;
     bool locEnabled = false;
 
@@ -64,12 +65,10 @@ class PermissionsHelper {
               Permission.bluetoothScan,
               Permission.bluetoothAdvertise,
               Permission.bluetoothConnect,
-              Permission.location,  // Required for manufacturer data in scan results
+              Permission
+                  .location, // Required for manufacturer data in scan results
             ]
-          : [
-              Permission.location,
-              Permission.bluetooth,
-            ];
+          : [Permission.location, Permission.bluetooth];
 
       for (final p in toCheck) {
         permissionsMap[p] = await p.status;
@@ -77,7 +76,7 @@ class PermissionsHelper {
 
       // Check hardware toggles
       locEnabled = await Permission.location.serviceStatus.isEnabled;
-      // For BT hardware state, we usually rely on FlutterBluePlus stream, 
+      // For BT hardware state, we usually rely on FlutterBluePlus stream,
       // but we can check initial state here if needed.
       // However, Permission.bluetooth.serviceStatus isn't reliable for "Hardware On".
       // We'll use FlutterBluePlus.adapterStateNow in the provider.
@@ -96,7 +95,8 @@ class PermissionsHelper {
 
   /// Requests the correct BLE-related permissions for this Android version.
   /// Non-Android: returns [BlePermissionRequestResult.granted] (OS prompts via Info.plist on iOS).
-  static Future<BlePermissionRequestResult> requestAndroidBlePermissions() async {
+  static Future<BlePermissionRequestResult>
+  requestAndroidBlePermissions() async {
     if (!_isAndroid) {
       return BlePermissionRequestResult.granted;
     }
@@ -111,19 +111,27 @@ class PermissionsHelper {
             Permission.bluetoothScan,
             Permission.bluetoothAdvertise,
             Permission.bluetoothConnect,
-            Permission.location,  // Required for manufacturer data in scan results
+            Permission
+                .location, // Required for manufacturer data in scan results
           ]
-        : const [
-            Permission.location,
-            Permission.bluetooth,
-          ];
+        : const [Permission.location, Permission.bluetooth];
 
     final statuses = await permissions.request();
 
-    if (statuses.values.any((s) => s.isPermanentlyDenied)) {
+    return permissionRequestOutcome(permissions, statuses);
+  }
+
+  /// An interrupted Android prompt may return an empty or partial map. It must
+  /// never authorize radio work without every requested permission granted.
+  static BlePermissionRequestResult permissionRequestOutcome(
+    List<Permission> requested,
+    Map<Permission, PermissionStatus> statuses,
+  ) {
+    if (requested.any((p) => statuses[p]?.isPermanentlyDenied == true)) {
       return BlePermissionRequestResult.permanentlyDenied;
     }
-    if (statuses.values.every((s) => s.isGranted)) {
+    if (requested.isNotEmpty &&
+        requested.every((p) => statuses[p]?.isGranted == true)) {
       return BlePermissionRequestResult.granted;
     }
     return BlePermissionRequestResult.denied;

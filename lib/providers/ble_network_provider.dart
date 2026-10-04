@@ -18,6 +18,7 @@ import '../services/deep_catchup.dart';
 import '../services/offer_reply_planner.dart';
 import '../services/framed_reply_retry_state.dart';
 import '../services/local_write_hook.dart';
+import '../services/mesh_payload_limits.dart';
 import '../services/native_mesh_service.dart';
 import '../utils/ble_permission_result.dart';
 import '../utils/permissions_helper.dart';
@@ -34,6 +35,7 @@ class _IncomingFramedReply {
   String? attemptId;
   String? connectionId;
   final FramedReplyRetryState feedbackState = FramedReplyRetryState();
+  int bufferedBytes = 0;
 }
 
 int _blePayloadCrc32(List<int> bytes) {
@@ -77,6 +79,35 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       <String, Map<String, String>>{};
   final Map<String, _IncomingFramedReply> _incomingFramedRepliesByMac =
       <String, _IncomingFramedReply>{};
+  final Map<String, Timer> _incomingExpiryByMac = {};
+  final Set<String> _rejectedIncomingMacs = {};
+
+  void _discardIncoming(String mac, {bool reject = false}) {
+    _incomingBuffersByMac.remove(mac);
+    _incomingTransferByMac.remove(mac);
+    _incomingFramedRepliesByMac.remove(mac);
+    _incomingExpiryByMac.remove(mac)?.cancel();
+    if (reject) {
+      if (_rejectedIncomingMacs.length >= 64) {
+        _rejectedIncomingMacs.remove(_rejectedIncomingMacs.first);
+      }
+      _rejectedIncomingMacs.add(mac);
+    } else {
+      _rejectedIncomingMacs.remove(mac);
+    }
+  }
+
+  void _clearIncoming() {
+    for (final timer in _incomingExpiryByMac.values) {
+      timer.cancel();
+    }
+    _incomingExpiryByMac.clear();
+    _incomingBuffersByMac.clear();
+    _incomingTransferByMac.clear();
+    _incomingFramedRepliesByMac.clear();
+    _rejectedIncomingMacs.clear();
+  }
+
   bool _meshSessionActive = false;
   bool _meshSessionReady = false;
   bool _pendingLocalDatabaseWrite = false;
@@ -723,9 +754,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       if (incoming.isServerConnect) {
         // A previous transfer may have lost its EOF when this MAC disconnected.
         // Its compressed bytes cannot be part of the new connection's offer.
-        _incomingBuffersByMac.remove(incoming.macAddress);
-        _incomingTransferByMac.remove(incoming.macAddress);
-        _incomingFramedRepliesByMac.remove(incoming.macAddress);
+        _discardIncoming(incoming.macAddress);
         _discovery.onServerClientConnected(incoming.macAddress);
         return;
       }
@@ -742,6 +771,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           _incomingBuffersByMac.clear();
           _incomingTransferByMac.clear();
           _incomingFramedRepliesByMac.clear();
+          for (final timer in _incomingExpiryByMac.values) {
+            timer.cancel();
+          }
+          _incomingExpiryByMac.clear();
+          _rejectedIncomingMacs.clear();
           _discovery.clearInboundServerState();
         } else {
           final activeConnectionId =
@@ -749,9 +783,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           if (incoming.connectionId == null ||
               activeConnectionId == null ||
               activeConnectionId == incoming.connectionId) {
-            _incomingBuffersByMac.remove(incoming.macAddress);
-            _incomingTransferByMac.remove(incoming.macAddress);
-            _incomingFramedRepliesByMac.remove(incoming.macAddress);
+            _discardIncoming(incoming.macAddress);
           }
           _discovery.onServerClientDisconnected(incoming.macAddress);
         }
@@ -760,15 +792,33 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       final eofMarker = utf8.encode('||EOF||');
       final senderMac = incoming.macAddress;
       var chunk = incoming.bytes;
+      if (_rejectedIncomingMacs.contains(senderMac)) {
+        if (incoming.isReplyStart || listEquals(chunk, eofMarker)) {
+          _discardIncoming(senderMac);
+        }
+        if (!incoming.isReplyStart) return;
+      }
+      if (chunk.length > MeshPayloadLimits.maxChunkBytes ||
+          (!_incomingExpiryByMac.containsKey(senderMac) &&
+              _incomingExpiryByMac.length >=
+                  MeshPayloadLimits.maxIncomingTransfers)) {
+        _discardIncoming(senderMac, reject: true);
+        return;
+      }
       final existingConnectionId =
           _incomingTransferByMac[senderMac]?['CONNECTION_ID'];
       if (existingConnectionId != null &&
           incoming.connectionId != null &&
           existingConnectionId != incoming.connectionId) {
-        _incomingBuffersByMac.remove(senderMac);
-        _incomingTransferByMac.remove(senderMac);
-        _incomingFramedRepliesByMac.remove(senderMac);
+        _discardIncoming(senderMac);
       }
+      _incomingExpiryByMac.putIfAbsent(
+        senderMac,
+        () => Timer(
+          MeshPayloadLimits.transferTimeout,
+          () => _discardIncoming(senderMac, reject: true),
+        ),
+      );
       final transfer = _incomingTransferByMac.putIfAbsent(
         senderMac,
         () => <String, String>{},
@@ -799,6 +849,15 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       }
 
       if (incoming.isReplyStart) {
+        if (incoming.replyTotalBytes == null ||
+            incoming.replyTotalBytes! < 0 ||
+            incoming.replyTotalBytes! > MeshPayloadLimits.maxCompressedBytes ||
+            incoming.replyChunkCount == null ||
+            incoming.replyChunkCount! < 0 ||
+            incoming.replyChunkCount! > MeshPayloadLimits.maxChunks) {
+          _discardIncoming(senderMac, reject: true);
+          return;
+        }
         final framedReply = _IncomingFramedReply()
           ..transferId = incoming.replyTransferId
           ..chunkCount = incoming.replyChunkCount
@@ -832,7 +891,18 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         if (incoming.connectionId?.isNotEmpty == true) {
           framedReply.connectionId = incoming.connectionId;
         }
-        if (index <= 0xFFFF && framedReply.chunks.length <= 0xFFFF) {
+        final nextBytes =
+            framedReply.bufferedBytes -
+            (framedReply.chunks[index]?.length ?? 0) +
+            incoming.bytes.length;
+        if (index < 0 ||
+            index >= MeshPayloadLimits.maxChunks ||
+            nextBytes > MeshPayloadLimits.maxCompressedBytes) {
+          _discardIncoming(senderMac, reject: true);
+          return;
+        }
+        if (index < MeshPayloadLimits.maxChunks) {
+          framedReply.bufferedBytes = nextBytes;
           framedReply.chunks[index] = incoming.bytes;
           _incomingFramedRepliesByMac[senderMac] = framedReply;
         }
@@ -869,9 +939,10 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         replyFeedbackRound = replyFeedbackState.beginRound();
         if (chunkCount == null ||
             chunkCount < 0 ||
-            chunkCount > 0xFFFF ||
+            chunkCount > MeshPayloadLimits.maxChunks ||
             totalBytes == null ||
             totalBytes < 0 ||
+            totalBytes > MeshPayloadLimits.maxCompressedBytes ||
             expectedCrc32 == null) {
           debugPrint(
             '[BLE_TRACE] EVENT:CLIENT_REPLY_END_METADATA_INVALID | '
@@ -1023,15 +1094,16 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           debugPrint(
             '⚠️ [SYNC] Empty buffer at EOF from $senderMac — ignoring',
           );
-          _incomingBuffersByMac.remove(senderMac);
-          _incomingTransferByMac.remove(senderMac);
+          _discardIncoming(senderMac);
           return;
         }
         // Detach the complete frame now. A new transfer on the same MAC can
         // arrive while the asynchronous merge below is still running.
         final payloadBytes = List<int>.from(buffer);
+        _incomingExpiryByMac.remove(senderMac)?.cancel();
         _incomingBuffersByMac.remove(senderMac);
         _incomingTransferByMac.remove(senderMac);
+        _incomingFramedRepliesByMac.remove(senderMac);
 
         Future<void>.microtask(() async {
           final serverSyncTotal = Stopwatch()..start();
@@ -1081,27 +1153,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
               '🔄 [SYNC] Decompressing payload from $senderMac (${payloadBytes.length} bytes)...',
             );
             final decodeTimer = Stopwatch()..start();
-            final decompressed = zlib.decode(payloadBytes);
-            final String jsonStr = utf8.decode(decompressed);
-            final decodedJson = jsonDecode(jsonStr);
+            final decodedJson = MeshPayloadLimits.decodeEnvelope(payloadBytes);
             traceServerSyncStage(
               'payload_decode',
               decodeTimer.elapsedMicroseconds,
             );
-            if (decodedJson is! Map) {
-              debugPrint('❌ [SYNC] Decoded JSON is not a Map from $senderMac');
-              if (replyTransferId != null) {
-                if (markReplyFeedbackSent()) {
-                  await _nativeMesh.sendReplyFeedback(
-                    senderMac,
-                    transferId: replyTransferId,
-                    accepted: false,
-                    retryAll: true,
-                  );
-                }
-              }
-              return;
-            }
             final root = Map<String, dynamic>.from(decodedJson);
             final type = root['type'] as String?;
             if (type != null && type != 'offer' && type != 'delta') {
@@ -1127,7 +1183,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 transferId: replyTransferId,
                 accepted: true,
               );
-              _incomingFramedRepliesByMac.remove(senderMac);
               traceServerSyncStage(
                 'reply_payload_ack_sent',
                 serverSyncTotal.elapsedMicroseconds,
@@ -1606,6 +1661,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
                 Uint8List.fromList(outBytes),
                 benchmarkMessageIds: replyMessageIds,
               );
+              if (senderId != null) {
+                BleDiscoveryService.markMessagesRelayed(
+                  senderId,
+                  replyMessageIds,
+                );
+              }
               traceServerSyncStage('offer_reply_submit', 0);
               debugPrint(
                 '✅ [SYNC] Delta reply sent to $targetMac via NOTIFY (${outBytes.length} bytes)',
@@ -1863,6 +1924,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
           }
         });
       } else {
+        if (buffer.length + chunk.length >
+            MeshPayloadLimits.maxCompressedBytes) {
+          _discardIncoming(senderMac, reject: true);
+          return;
+        }
         buffer.addAll(chunk);
         debugPrint(
           '📡 [SYNC] Chunk from $senderMac: ${chunk.length} bytes (total buffer: ${buffer.length})',
@@ -1976,6 +2042,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     );
     _meshSessionActive = false;
     _meshSessionReady = false;
+    _clearIncoming();
     _localNodeId = null;
     _neighborRefreshTimer?.cancel();
     _neighborRefreshTimer = null;
@@ -2044,6 +2111,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       _localProfilesSub = null;
       _meshSessionActive = false;
       _meshSessionReady = false;
+      _clearIncoming();
       await _nativeMesh.resetServer();
       await _nativeMesh.stopMeshForegroundService();
       _publishRadioFlags();
@@ -2105,6 +2173,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
   Future<void> stopNetwork() async {
     _meshSessionActive = false;
     _meshSessionReady = false;
+    _clearIncoming();
     await _nativePayloadSub?.cancel();
     _nativePayloadSub = null;
     await _localMessagesSub?.cancel();
@@ -2119,6 +2188,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
 
   @override
   void dispose() {
+    _clearIncoming();
     _meshSessionActive = false;
     _meshSessionReady = false;
     if (identical(onLocalCrdtWrite, _localWriteHook)) {
