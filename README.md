@@ -77,6 +77,8 @@ Newer debug-build runs:
 | One phone missing 80 scattered messages of 100 | caught up in 7.1 s |
 | One phone missing 99 of 100 messages | caught up in 10.0 s |
 | Three phones (two Pixel 3s and a Pixel 9 Pro XL), 100 live messages from one sender | 100/100 delivered in 38 s, UI latency p50 1.79 s, p95 2.70 s, max 3.00 s |
+| Three phones (two Pixel 3s and a Pixel 9 Pro XL), 100 round-robin messages | 100/100 delivered in 38.0 s, throughput 2.63 msg/s, UI latency mean 1.97 s, p50 1.98 s, max 3.42 s (20.9 s outlier eliminated) |
+| Same three phones, 1,000-message resilience run | 1,000/1,000 delivered in 490 s, throughput 2.04 msg/s, 400 held-link reuses, 0 deadlocks |
 | Same three phones, two of them each missing a different block of 40 old messages | both caught up (3.9 s and 19.4 s); the complete phone stayed at 100 |
 
 ## Release signing
