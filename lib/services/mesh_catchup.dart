@@ -106,7 +106,12 @@ class MeshLeasePolicy {
     final desiredMs = (baseLeaseMs + (pages * 3000) + loadBonusMs)
         .clamp(baseLeaseMs, fairnessCapMs)
         .toInt();
-    final idleMs = (desiredMs ~/ 3).clamp(3200, 4500).toInt();
+    // 2-node links can afford a 3-4s idle cushion because no third node is starved.
+    // 3+ node meshes must yield idle held links quickly (1.2-2.0s) so other nodes
+    // can initiate or receive turns without multi-second head-of-line blocking.
+    final idleMs = nodes == 2
+        ? (desiredMs ~/ 3).clamp(2500, 4500).toInt()
+        : (desiredMs ~/ 4).clamp(1200, 2000).toInt();
 
     return (
       idle: Duration(milliseconds: idleMs),

@@ -94,7 +94,7 @@ class BleDiscoveryService {
   static const Duration peerHashMaxAge = Duration(minutes: 3);
 
   /// Match the scanner's cached-result cutoff before using an RPA to dial.
-  static const Duration dialMacFreshnessWindow = Duration(seconds: 3);
+  static const Duration dialMacFreshnessWindow = Duration(seconds: 6);
 
   /// Stable nodeId -> last version vector we believe that peer held.
   /// Used so initiator pushes are true deltas instead of the entire DB every dial.
@@ -1037,7 +1037,7 @@ class BleDiscoveryService {
         for (final r in sortedResults) {
           // Ignore FBP's cached historical sightings — they overwrite dial MACs with
           // dead RPAs and make urgent sync dial ghosts (Red→Clear timeouts).
-          if (scanNow.difference(r.timeStamp).inSeconds > 3) {
+          if (scanNow.difference(r.timeStamp).inSeconds > 6) {
             continue;
           }
           if (!_isLikelyNativeMeshAdvert(r)) {
@@ -2802,13 +2802,8 @@ class BleDiscoveryService {
       return true;
     }
 
-    final last = _lastInboundCatchupAt[peerId];
-    if (last != null) {
-      final waitMs = 400 - DateTime.now().difference(last).inMilliseconds;
-      if (waitMs > 0) {
-        await Future<void>.delayed(Duration(milliseconds: waitMs));
-      }
-    }
+    // Urgent newest-N messages preempt background catch-up pacing. Do not throttle
+    // urgent user-visible writes with the 400ms catch-up pacing delay.
     _lastInboundCatchupAt[peerId] = DateTime.now();
 
     try {
@@ -2890,6 +2885,11 @@ class BleDiscoveryService {
     final connected = (await _readInboundServerState())['ready']!;
     final mac = _resolveInboundMacForPeer(peerId, connected);
     if (mac == null || mac.isEmpty) return false;
+    if (_inboundUrgentPending.contains(peerId) || _urgentSyncDirty) {
+      // Urgent live writes take precedence over background catchup streaming.
+      _inboundCatchupPending.add(peerId);
+      return false;
+    }
     if (!_inboundPushBusy.add(peerId)) {
       _inboundCatchupPending.add(peerId);
       return true;
@@ -2976,7 +2976,7 @@ class BleDiscoveryService {
         retryDelay = const Duration(seconds: 3);
       }
       _lastInboundCatchupAt[peerId] = DateTime.now();
-      if (!fromVector && !CatchupPushBudget.shared.tryUse(peerId)) {
+      if (!CatchupPushBudget.shared.tryUse(peerId)) {
         // These pages are aimed by fingerprints the peer sent a while ago and
         // may be well out of date. Stop until it reports again; its request
         // for fresh ones may be waiting for this link to go quiet.
@@ -2986,6 +2986,18 @@ class BleDiscoveryService {
           'WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
         );
         return true;
+      }
+      final shouldYieldBurst = CatchupPushBudget.shared.shouldYieldBurst(peerId);
+      if (shouldYieldBurst) {
+        CatchupPushBudget.shared.resetBurst(peerId);
+        // Pause between bursts so peer can respond, exchange fresh fingerprints,
+        // and allow other mesh nodes to connect or discover each other.
+        retryDelay = const Duration(milliseconds: 1500);
+        debugPrint(
+          '[BLE_TRACE] EVENT:INBOUND_CATCHUP_BURST_YIELD | '
+          'PEER_NODE_ID:$peerId | '
+          'WALL_MS:${DateTime.now().millisecondsSinceEpoch}',
+        );
       }
       await _pushChangesetOverInbound(
         myNodeId,
@@ -3025,7 +3037,8 @@ class BleDiscoveryService {
           }),
         );
       }
-      if (hasMore || pending) {
+      // If an urgent write is pending, yield: _tryInboundUrgentPush will resume catchup in its own finally.
+      if ((hasMore || pending) && !urgentPending) {
         unawaited(
           Future<void>.delayed(retryDelay, () {
             unawaited(_tryInboundCatchupPush(myNodeId, peerId));
@@ -3625,6 +3638,11 @@ class BleDiscoveryService {
           heldClientPeerId: heldClientPeer,
           shouldInitiatePeer: (id) => _shouldInitiateUrgentPeer(myNodeId, id),
         );
+        if (heldClientPeer != null &&
+            freshPeers.isNotEmpty &&
+            !freshPeers.contains(heldClientPeer)) {
+          unawaited(_nativeMesh.releaseHeldClient('urgent_switch'));
+        }
         final heldPeerIsNonElected =
             heldClientPeer != null &&
             !_shouldInitiateUrgentPeer(myNodeId, heldClientPeer);

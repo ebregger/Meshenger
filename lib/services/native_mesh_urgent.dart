@@ -37,6 +37,16 @@ extension NativeMeshUrgent on NativeMeshService {
     }
   }
 
+  Future<void> releaseHeldClient([String? reason]) async {
+    try {
+      await _ch.invokeMethod<void>('release_held_client', {
+        'reason': reason ?? 'explicit',
+      });
+    } on PlatformException catch (e) {
+      debugPrint('🔥 Native release_held_client failed: ${e.message}');
+    }
+  }
+
   Future<void> disconnectInbound() async {
     try {
       await _ch.invokeMethod<void>('disconnect_inbound');

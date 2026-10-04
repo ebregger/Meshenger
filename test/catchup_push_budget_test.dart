@@ -19,14 +19,48 @@ void main() {
     expect(budget.remaining('p'), 0);
   });
 
-  test('peers have separate budgets', () {
-    final budget = CatchupPushBudget(limit: 1);
-    expect(budget.tryUse('a'), isTrue);
-    expect(budget.tryUse('b'), isTrue);
-    expect(budget.tryUse('a'), isFalse);
+  test('burst limit yields after consecutive pages and resets on resetBurst', () {
+    final budget = CatchupPushBudget(limit: 10, burstLimit: 3);
+    expect(budget.shouldYieldBurst('p'), isFalse);
+
+    // Page 1
+    expect(budget.tryUse('p'), isTrue);
+    expect(budget.currentBurst('p'), 1);
+    expect(budget.shouldYieldBurst('p'), isFalse);
+
+    // Page 2
+    expect(budget.tryUse('p'), isTrue);
+    expect(budget.currentBurst('p'), 2);
+    expect(budget.shouldYieldBurst('p'), isFalse);
+
+    // Page 3: reaches burst limit
+    expect(budget.tryUse('p'), isTrue);
+    expect(budget.currentBurst('p'), 3);
+    expect(budget.shouldYieldBurst('p'), isTrue);
+
+    // After yielding, resetBurst clears the burst counter while retaining overall budget
+    budget.resetBurst('p');
+    expect(budget.currentBurst('p'), 0);
+    expect(budget.shouldYieldBurst('p'), isFalse);
+    expect(budget.remaining('p'), 7);
+
+    // Second burst can proceed
+    expect(budget.tryUse('p'), isTrue);
+    expect(budget.currentBurst('p'), 1);
   });
 
-  test('a changed bucket report refills the budget', () {
+  test('peers have separate budgets and burst counters', () {
+    final budget = CatchupPushBudget(limit: 5, burstLimit: 2);
+    expect(budget.tryUse('a'), isTrue);
+    expect(budget.tryUse('a'), isTrue);
+    expect(budget.shouldYieldBurst('a'), isTrue);
+    expect(budget.shouldYieldBurst('b'), isFalse);
+
+    expect(budget.tryUse('b'), isTrue);
+    expect(budget.currentBurst('b'), 1);
+  });
+
+  test('a changed bucket report refills the budget and resets burst', () {
     final shared = CatchupPushBudget.shared;
     BleDiscoveryService.rememberPeerBuckets('p', [1, 2, 3]);
     while (shared.tryUse('p')) {}
@@ -36,6 +70,7 @@ void main() {
 
     BleDiscoveryService.rememberPeerBuckets('p', [1, 2, 4]);
     expect(shared.tryUse('p'), isTrue);
+    expect(shared.currentBurst('p'), 1);
   });
 
   test('a changed whole-history hash refills the budget', () {

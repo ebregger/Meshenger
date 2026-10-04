@@ -475,6 +475,11 @@ class MainActivity : FlutterActivity() {
           cancelOutboundClient()
           result.success(null)
         }
+        "release_held_client" -> {
+          val reason = call.argument<String>("reason") ?: "explicit"
+          releaseHeldClientNow(reason)
+          result.success(null)
+        }
         "disconnect_inbound" -> {
           disconnectInboundClients()
           result.success(null)
