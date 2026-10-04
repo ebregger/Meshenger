@@ -1768,7 +1768,7 @@ class BleDiscoveryService {
       // connection while that server-side link is being set up, but let urgent
       // traffic reuse an idle client link that is already open to this MAC.
       final activeServerLookupTimer = Stopwatch()..start();
-      final activeServerMacs = (await _readInboundServerState())['active']!;
+      var activeServerMacs = (await _readInboundServerState())['active']!;
       if (forceNewestPush) {
         _traceUrgentFlow(
           'URGENT_PRE_SEND_STAGE',
@@ -1779,10 +1779,18 @@ class BleDiscoveryService {
           },
         );
       }
-      final inboundMac = _resolveInboundMacForPeer(
+      var inboundMac = _resolveInboundMacForPeer(
         inboundPeer,
         activeServerMacs,
       );
+      if (inboundMac != null) {
+        activeServerMacs =
+            (await _readInboundServerState(forceRefresh: true))['active']!;
+        inboundMac = _resolveInboundMacForPeer(
+          inboundPeer,
+          activeServerMacs,
+        );
+      }
       if (inboundMac != null) {
         if (!forceNewestPush) {
           debugPrint(
@@ -2723,8 +2731,10 @@ class BleDiscoveryService {
     return null;
   }
 
-  Future<Map<String, List<String>>> _readInboundServerState() async {
-    if (_inboundServerStateInitialized) {
+  Future<Map<String, List<String>>> _readInboundServerState({
+    bool forceRefresh = false,
+  }) async {
+    if (_inboundServerStateInitialized && !forceRefresh) {
       return <String, List<String>>{
         'active': _activeInboundServerMacs.toList(growable: false),
         'ready': _notifyReadyInboundServerMacs.toList(growable: false),
@@ -2853,7 +2863,7 @@ class BleDiscoveryService {
     final stopwatch = Stopwatch()..start();
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
-      final state = await _readInboundServerState();
+      final state = await _readInboundServerState(forceRefresh: true);
       final readyMac = _resolveInboundMacForPeer(peerId, state['ready']!);
       if (readyMac != null && await _tryInboundUrgentPush(myNodeId, peerId)) {
         _traceUrgentFlow(

@@ -1461,6 +1461,15 @@ class MainActivity : FlutterActivity() {
         val device = bm.adapter.getRemoteDevice(mac)
         bluetoothGattServer?.cancelConnection(device)
       } catch (_: Throwable) {}
+      Handler(Looper.getMainLooper()).post {
+        eventSink?.success(
+          hashMapOf(
+            "event" to "server_disconnect",
+            "mac" to mac,
+            "connectionId" to "",
+          ),
+        )
+      }
     }
     updateServerBusyState()
     Log.d(TAG, "[SERVER] disconnect_inbound cleared ${macs.size} client(s)")
@@ -1503,12 +1512,13 @@ class MainActivity : FlutterActivity() {
       // A dead link may never deliver STATE_DISCONNECTED; free the slot anyway.
       inboundIdleHandler.postDelayed({
         var released = false
+        var connectionId: String? = null
         synchronized(serverClientLock) {
           if (connectedServerClients.remove(mac) != null) {
             notifyReadyServerClients.remove(mac)
             serverClientConnectedAtMs.remove(mac)
             serverClientLastActivityAtMs.remove(mac)
-            serverConnectionIds.remove(mac)
+            connectionId = serverConnectionIds.remove(mac)
             serverClientEvicting.remove(mac)
             serverMtuMap.remove(mac)
             activeInboundServers.set(connectedServerClients.size)
@@ -1516,8 +1526,17 @@ class MainActivity : FlutterActivity() {
           }
         }
         if (released) {
-          traceBle("SERVER_IDLE_SLOT_RELEASED", mac)
+          traceBle("SERVER_IDLE_SLOT_RELEASED", mac, connectionId = connectionId)
           updateServerBusyState()
+          Handler(Looper.getMainLooper()).post {
+            eventSink?.success(
+              hashMapOf(
+                "event" to "server_disconnect",
+                "mac" to mac,
+                "connectionId" to (connectionId ?: ""),
+              ),
+            )
+          }
         }
       }, 3_000L)
     }
