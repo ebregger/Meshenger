@@ -1,25 +1,66 @@
 {
   "date": "2026-10-04",
-  "base_commit": "5ff3f14",
-  "receipt_tools_commits": ["12376eb", "96bf404"],
-  "scope": "Two Pixel 3 controlled catch-up and API receipts; physical paired runs pending Android 15 debugging connection",
+  "scope": "Android 9 and Android 15 Pixel 3 only; isolated benchmark data",
   "application_id": "com.bregger.edison.meshenger.benchmark",
-  "apk": {
-    "local_path": "build/catchup-20261004/profile-repair-debug.apk",
-    "bytes": 169699649,
-    "sha256": "952382b28762f91ea254b450f140de5d0919dcae824770bce80e3624da313db3",
-    "certificate_sha256": "d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5",
-    "build_mode": "debug"
+  "artifacts": {
+    "baseline": {
+      "local_path": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/profile-repair-debug.apk",
+      "source_commit": "0e20c9bd8b21ec4979f63e8b51e2a29811ec7113",
+      "bytes": 169699649,
+      "sha256": "952382b28762f91ea254b450f140de5d0919dcae824770bce80e3624da313db3",
+      "build_mode": "debug",
+      "certificate_sha256": "d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5"
+    },
+    "probe_only": {
+      "local_path": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/neighbor-probe-debug.apk",
+      "source_commit": "89ba697f4630315d204c17e08c8010e1f2951ac5",
+      "bytes": 169699693,
+      "sha256": "88f960cce9c328389d469ec5d116b8bf3cffccc259b8b875af46253ec31992a5",
+      "build_mode": "debug",
+      "certificate_sha256": "d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5"
+    },
+    "deferred_retry": {
+      "local_path": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/deep-retry-debug.apk",
+      "source_commit": "d996cb5e9bbbf8d170b0537810f8790d4b7eb4b8",
+      "bytes": 169699725,
+      "sha256": "4d6d40c4dcc7884364798b8b49c41f755b392e244cf9ca39cd34a3899a88c79f",
+      "build_mode": "debug",
+      "certificate_sha256": "d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5"
+    },
+    "initial_buckets": {
+      "local_path": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/bootstrap-repair-debug.apk",
+      "source_commit": "cd35f632ad9dddee0a48b9d43c2e992b6a65c64c",
+      "bytes": 169700141,
+      "sha256": "099cfb1c0cf8e13657c40e4539e62935fac0376d8c2a973203a68ef0b5402dbb",
+      "build_mode": "debug",
+      "certificate_sha256": "d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5"
+    },
+    "corrected_debug": {
+      "local_path": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/inbound-budget-debug.apk",
+      "source_commit": "bd4e99b9eb86f114e545f3f50ecae5b7450db7e0",
+      "bytes": 169699057,
+      "sha256": "a8d14771262043282cbd2b7faa76dd4a2d226db6b7bedefbac14b7dff791c3dc",
+      "build_mode": "debug",
+      "certificate_sha256": "d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5"
+    },
+    "corrected_release": {
+      "local_path": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/inbound-budget-release.apk",
+      "source_commit": "bd4e99b9eb86f114e545f3f50ecae5b7450db7e0",
+      "bytes": 62452168,
+      "sha256": "e3110decbfc91154524c2afa4677345b7a66ae9fb3c891e883f97e4c5d0383e1",
+      "build_mode": "release",
+      "certificate_sha256": "d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5"
+    }
   },
-  "pre_profile_fix_apk": {
-    "local_path": "build/catchup-20261004/receipt-debug.apk",
-    "bytes": 169695533,
-    "sha256": "73694c1ae03e73da174e79f8993d6f02bb70a165243920cb25f7e9ca77897dc0"
+  "control_connections": {
+    "android9": "USB ADB",
+    "android15": "wireless ADB; USB reconnected for power and verified separately"
   },
+  "android15_rom": "LineageOS 22.1-20250407-NIGHTLY-blueline, API 35",
   "receipt_source": "database",
   "validation": {
     "flutter_analysis": "clean",
-    "flutter_tests": 155,
+    "flutter_tests": 161,
     "python_tests": 73,
     "profile_repair_regressions": {
       "before_fix_failed": 3,
@@ -29,7 +70,7 @@
         "whole-history repair of those profiles",
         "one-row repair budget with three profiles from one writer"
       ],
-      "paired_performance_measurement": "pending"
+      "paired_performance_measurement": "Not isolated; no performance attribution to profile-key correction"
     },
     "android9_paging_check": {
       "database_message_ids_before": 1163,
@@ -37,10 +78,980 @@
       "unbounded_ui_messages": 1162,
       "bounded_ui_messages": 200,
       "node_identity_preserved": true
+    },
+    "kotlin_tests": 9,
+    "android_release_lint": "passed",
+    "hosted_ci": {
+      "source_commit": "bd4e99b9eb86f114e545f3f50ecae5b7450db7e0",
+      "status": "passed",
+      "url": "https://github.com/ebregger/Meshenger/actions/runs/37258781780"
     }
   },
+  "network_policy_recovery": {
+    "uid": 10274,
+    "original_policy": 262144,
+    "original_name": "REJECT_ALL",
+    "during_tests": 0,
+    "package_scope": "disposable benchmark app only",
+    "evidence": [
+      "8080 loopback listener present but local connect timed out; another local port reachable",
+      "policy zero immediately restored HTTP 200 and existing node ID",
+      "USB echo and separately forwarded USB API succeeded afterward"
+    ],
+    "restored": true
+  },
   "excluded_trials": [
-    "Seed preflight stopped when Android 15 API was unreachable; no timed messages were sent."
+    "Initial seed preflight stopped at unreachable Android 15 API; no timed messages sent.",
+    "First oldest Android 9 trace collector queried PID too early after restart and aborted; app healed. Clean repeat used for timing.",
+    "One scattered-gap preflight started before the preceding trial completed; unequal ID sets were rejected before mutation."
   ],
-  "physical_runs": []
+  "physical_runs": [
+    {
+      "name": "seed-1500",
+      "kind": "stress",
+      "artifact": "baseline",
+      "success": true,
+      "messages_sent": 1500,
+      "messages_delivered": 1500,
+      "elapsed_s": 374.5803483999334,
+      "latency": {
+        "n": 1500,
+        "mean": 2.3080008486632724,
+        "p50": 1.8240250000962988,
+        "p95": 4.660299599985592,
+        "max": 55.04963159991894,
+        "sample_sd": 3.0258942132900195,
+        "mean_95ci_margin": 0.15313137516731315,
+        "mean_95ci": {
+          "low": 2.154869473495959,
+          "high": 2.4611322238305857
+        }
+      },
+      "latency_stages": {
+        "send_api_submit_s": {
+          "n": 1500,
+          "mean": 0.14534252219903282,
+          "p50": 0.08865439996588975,
+          "p95": 0.3784412000095472,
+          "max": 11.67734989989549
+        },
+        "api_accept_to_all_receivers_s": {
+          "n": 1500,
+          "mean": 2.1626583264642396,
+          "p50": 1.6956106999423355,
+          "p95": 4.5399889999534935,
+          "max": 54.940772100002505
+        },
+        "end_to_end_lower_bound_s": {
+          "n": 1500,
+          "mean": 0.5383052174659291,
+          "p50": 0.0,
+          "p95": 2.146222500014119,
+          "max": 52.676471399958245
+        },
+        "end_to_end_upper_bound_s": {
+          "n": 1500,
+          "mean": 2.3080008486632724,
+          "p50": 1.8240250000962988,
+          "p95": 4.660299599985592,
+          "max": 55.04963159991894
+        },
+        "end_to_end_observation_window_width_s": {
+          "n": 1500,
+          "mean": 1.7696956311973433,
+          "p50": 1.8240250000962988,
+          "p95": 2.7123547999653965,
+          "max": 13.043934999965131
+        }
+      },
+      "latency_measurement": {
+        "clock": "host-monotonic",
+        "receipt_event": "first /messages observation",
+        "receipt_source": "database",
+        "poll_interval_s": 2.0,
+        "receipt_interval": "between last successful absent request start and first present response",
+        "confidence_method": "normal approximation for the mean; assumes independent samples"
+      },
+      "send_failures": 0,
+      "connection_failures": 1,
+      "connection_rejections": 0,
+      "scanner_errors": 0,
+      "paging": {
+        "18081": {
+          "requested_unbounded": false,
+          "applied": true
+        },
+        "18082": {
+          "requested_unbounded": false,
+          "applied": true
+        }
+      },
+      "native_failures_by_phase_and_error": {
+        "services_discovered": {
+          "CHAR_NOT_FOUND": 1
+        },
+        "writing": {
+          "transfer_timeout": 1,
+          "WRITE_FAILED": 1
+        }
+      },
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/seed-1500.json",
+      "preserve_messages": false
+    },
+    {
+      "name": "retained-1000",
+      "kind": "stress",
+      "artifact": "corrected_debug",
+      "success": true,
+      "messages_sent": 1000,
+      "messages_delivered": 1000,
+      "elapsed_s": 290.58260030008387,
+      "latency": {
+        "n": 1000,
+        "mean": 29.096608443096514,
+        "p50": 2.2258434999966994,
+        "p95": 215.85718559997622,
+        "max": 235.80317899992224,
+        "sample_sd": 67.38524707193955,
+        "mean_95ci_margin": 4.176580884234214,
+        "mean_95ci": {
+          "low": 24.9200275588623,
+          "high": 33.273189327330726
+        }
+      },
+      "latency_stages": {
+        "send_api_submit_s": {
+          "n": 1000,
+          "mean": 0.17702444789838045,
+          "p50": 0.11466550000477582,
+          "p95": 0.4856442000018433,
+          "max": 0.8200781000778079
+        },
+        "api_accept_to_all_receivers_s": {
+          "n": 1000,
+          "mean": 28.91958399519813,
+          "p50": 2.0394858999643475,
+          "p95": 215.71649759996217,
+          "max": 235.67201889993157
+        },
+        "end_to_end_lower_bound_s": {
+          "n": 1000,
+          "mean": 27.091243562099873,
+          "p50": 0.0,
+          "p95": 213.2502453000052,
+          "max": 233.2997258999385
+        },
+        "end_to_end_upper_bound_s": {
+          "n": 1000,
+          "mean": 29.096608443096514,
+          "p50": 2.2258434999966994,
+          "p95": 215.85718559997622,
+          "max": 235.80317899992224
+        },
+        "end_to_end_observation_window_width_s": {
+          "n": 1000,
+          "mean": 2.00536488099664,
+          "p50": 2.210752399987541,
+          "p95": 2.838560799951665,
+          "max": 3.7522660000249743
+        }
+      },
+      "latency_measurement": {
+        "clock": "host-monotonic",
+        "receipt_event": "first /messages observation",
+        "receipt_source": "database",
+        "poll_interval_s": 2.0,
+        "receipt_interval": "between last successful absent request start and first present response",
+        "confidence_method": "normal approximation for the mean; assumes independent samples"
+      },
+      "send_failures": 0,
+      "connection_failures": 3,
+      "connection_rejections": 0,
+      "scanner_errors": 0,
+      "paging": {
+        "18081": {
+          "requested_unbounded": false,
+          "applied": true
+        },
+        "18082": {
+          "requested_unbounded": false,
+          "applied": true
+        }
+      },
+      "native_failures_by_phase_and_error": {
+        "discover_services": {
+          "transfer_timeout": 2
+        },
+        "connecting": {
+          "connect_timeout": 1
+        }
+      },
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/retained-1000.json",
+      "preserve_messages": true
+    },
+    {
+      "name": "oldest-android15",
+      "kind": "gap",
+      "artifact": "baseline",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 56.8,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 15,
+      "first_missing_rows_observed_at_s": 19.0,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          19.0,
+          1280
+        ],
+        [
+          29.6,
+          1360
+        ],
+        [
+          39.6,
+          1438
+        ],
+        [
+          46.0,
+          1489
+        ],
+        [
+          56.8,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/oldest-android15.json"
+    },
+    {
+      "name": "oldest-android9",
+      "kind": "gap",
+      "artifact": "baseline",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 138.2,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 9,
+      "first_missing_rows_observed_at_s": 101.4,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          101.4,
+          1280
+        ],
+        [
+          111.6,
+          1360
+        ],
+        [
+          121.7,
+          1438
+        ],
+        [
+          128.7,
+          1489
+        ],
+        [
+          138.2,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/oldest-android9.json"
+    },
+    {
+      "name": "scatter-android9",
+      "kind": "gap",
+      "artifact": "baseline",
+      "passed": true,
+      "target": 1500,
+      "mode": "scatter",
+      "gap": 700,
+      "all_full_at_s": 141.8,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 9,
+      "first_missing_rows_observed_at_s": 8.4,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          800
+        ],
+        [
+          8.4,
+          807
+        ],
+        [
+          38.9,
+          887
+        ],
+        [
+          45.6,
+          967
+        ],
+        [
+          56.3,
+          1047
+        ],
+        [
+          63.8,
+          1127
+        ],
+        [
+          73.7,
+          1192
+        ],
+        [
+          83.7,
+          1250
+        ],
+        [
+          93.3,
+          1299
+        ],
+        [
+          103.7,
+          1338
+        ],
+        [
+          114.4,
+          1379
+        ],
+        [
+          124.9,
+          1423
+        ],
+        [
+          131.8,
+          1467
+        ],
+        [
+          141.8,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/scatter-android9.json"
+    },
+    {
+      "name": "probe-oldest-android9",
+      "kind": "gap",
+      "artifact": "probe_only",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 144.1,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 9,
+      "first_missing_rows_observed_at_s": 102.5,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          102.5,
+          1280
+        ],
+        [
+          116.0,
+          1360
+        ],
+        [
+          122.9,
+          1438
+        ],
+        [
+          133.5,
+          1489
+        ],
+        [
+          144.1,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/probe-oldest-android9.json"
+    },
+    {
+      "name": "retry-oldest-android9",
+      "kind": "gap",
+      "artifact": "deferred_retry",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 124.4,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 9,
+      "first_missing_rows_observed_at_s": 29.0,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          29.0,
+          1280
+        ],
+        [
+          53.1,
+          1360
+        ],
+        [
+          59.8,
+          1380
+        ],
+        [
+          101.4,
+          1453
+        ],
+        [
+          124.4,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/retry-oldest-android9.json"
+    },
+    {
+      "name": "retry-oldest-android15",
+      "kind": "gap",
+      "artifact": "deferred_retry",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 65.7,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 15,
+      "first_missing_rows_observed_at_s": 17.6,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          17.6,
+          1280
+        ],
+        [
+          34.5,
+          1360
+        ],
+        [
+          48.0,
+          1438
+        ],
+        [
+          54.9,
+          1489
+        ],
+        [
+          65.7,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/retry-oldest-android15.json"
+    },
+    {
+      "name": "retry-oldest-android9-repeat",
+      "kind": "gap",
+      "artifact": "deferred_retry",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 169.1,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 9,
+      "first_missing_rows_observed_at_s": 124.3,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          124.3,
+          1280
+        ],
+        [
+          138.2,
+          1360
+        ],
+        [
+          148.6,
+          1438
+        ],
+        [
+          158.6,
+          1489
+        ],
+        [
+          169.1,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/retry-oldest-android9-repeat.json"
+    },
+    {
+      "name": "bootstrap-oldest-android9",
+      "kind": "gap",
+      "artifact": "initial_buckets",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 70.9,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 9,
+      "first_missing_rows_observed_at_s": 8.7,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          8.7,
+          1280
+        ],
+        [
+          15.6,
+          1300
+        ],
+        [
+          29.7,
+          1380
+        ],
+        [
+          36.1,
+          1400
+        ],
+        [
+          52.1,
+          1464
+        ],
+        [
+          59.4,
+          1473
+        ],
+        [
+          70.9,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/bootstrap-oldest-android9.json"
+    },
+    {
+      "name": "bootstrap-oldest-android15",
+      "kind": "gap",
+      "artifact": "initial_buckets",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 109.4,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 15,
+      "first_missing_rows_observed_at_s": 11.8,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          11.8,
+          1280
+        ],
+        [
+          18.5,
+          1349
+        ],
+        [
+          46.1,
+          1429
+        ],
+        [
+          87.2,
+          1489
+        ],
+        [
+          109.4,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/bootstrap-oldest-android15.json"
+    },
+    {
+      "name": "final-oldest-android15",
+      "kind": "gap",
+      "artifact": "corrected_debug",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 26.1,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 15,
+      "first_missing_rows_observed_at_s": 12.1,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          12.1,
+          1280
+        ],
+        [
+          15.3,
+          1350
+        ],
+        [
+          19.3,
+          1425
+        ],
+        [
+          22.5,
+          1493
+        ],
+        [
+          26.1,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/final-oldest-android15.json"
+    },
+    {
+      "name": "final-oldest-android9",
+      "kind": "gap",
+      "artifact": "corrected_debug",
+      "passed": true,
+      "target": 1500,
+      "mode": "oldest",
+      "gap": 300,
+      "all_full_at_s": 25.6,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 9,
+      "first_missing_rows_observed_at_s": 12.1,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          1200
+        ],
+        [
+          12.1,
+          1280
+        ],
+        [
+          15.8,
+          1300
+        ],
+        [
+          19.1,
+          1400
+        ],
+        [
+          22.3,
+          1473
+        ],
+        [
+          25.6,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/final-oldest-android9.json"
+    },
+    {
+      "name": "final-scatter-android9",
+      "kind": "gap",
+      "artifact": "corrected_debug",
+      "passed": true,
+      "target": 1500,
+      "mode": "scatter",
+      "gap": 700,
+      "all_full_at_s": 121.5,
+      "history_ids_sha256": "085706fe4b83b84db67ade29a6711df20865a9d074db7bfc166b5902092185c2",
+      "lagging_android": 9,
+      "first_missing_rows_observed_at_s": 11.7,
+      "complete_phone_preserved_every_id": true,
+      "progress_milestones": [
+        [
+          0,
+          800
+        ],
+        [
+          11.7,
+          806
+        ],
+        [
+          21.9,
+          868
+        ],
+        [
+          31.7,
+          948
+        ],
+        [
+          41.7,
+          1028
+        ],
+        [
+          48.8,
+          1108
+        ],
+        [
+          59.2,
+          1188
+        ],
+        [
+          69.3,
+          1267
+        ],
+        [
+          76.6,
+          1311
+        ],
+        [
+          86.9,
+          1353
+        ],
+        [
+          97.2,
+          1393
+        ],
+        [
+          104.2,
+          1436
+        ],
+        [
+          114.9,
+          1485
+        ],
+        [
+          121.5,
+          1500
+        ]
+      ],
+      "raw_summary": "C:/Users/Edison/Projects/Meshenger/build/catchup-20261004/final-scatter-android9.json"
+    }
+  ],
+  "limitations": [
+    "Sequential physical trials, not randomized replicated performance pairs",
+    "Gap time includes app restart, discovery, PID trace setup and 3-second API polling",
+    "Database observations do not prove decryption, rendering or reading",
+    "Host log arrival can lag; phone monotonic stage timings only compare within that phone",
+    "Natural long unplugged Doze, other Android versions/OEMs and three-phone performance remain open"
+  ],
+  "signed_background": {
+    "source_commit": "bd4e99b9eb86f114e545f3f50ecae5b7450db7e0",
+    "receiver_build": "non-debuggable release, release-key signed",
+    "sender_build": "debug API",
+    "background_seconds_per_receiver": 300,
+    "forced_idle_seconds_per_receiver": 120,
+    "screens": "Started on; PowerManager Dozing at Android 15 end under enforced five-minute admin timeout. See per-stage snapshots.",
+    "receipt_evidence": "exact-ID MERGED traces, then persisted /messages after debug update",
+    "runs": [
+      {
+        "receiver": "8AKX0UCPK",
+        "sender": "88LX01L45",
+        "receiver_node_id": "24374aff-27c6-43f1-bbab-3c12065b0352",
+        "sender_node_id": "7787a451-5f20-49bd-9fd5-b83cbef41ab4",
+        "before_live_ids": 2500,
+        "whitelisted": false,
+        "states": {
+          "home": {
+            "power": [
+              "mWakefulness=Awake"
+            ],
+            "idle": [
+              "mForceIdle=false",
+              "mScreenOn=true",
+              "mCharging=true",
+              "mState=ACTIVE",
+              "mLightState=ACTIVE"
+            ],
+            "benchmark_resumed": false,
+            "foreground_service": true,
+            "debug_partial_wake_lock": false
+          },
+          "forced_idle_start": {
+            "power": [
+              "mWakefulness=Awake"
+            ],
+            "idle": [
+              "mForceIdle=true",
+              "mScreenOn=true",
+              "mCharging=true",
+              "mState=IDLE",
+              "mLightState=OVERRIDE"
+            ],
+            "benchmark_resumed": false,
+            "foreground_service": true,
+            "debug_partial_wake_lock": false
+          },
+          "forced_idle_end": {
+            "power": [
+              "mWakefulness=Dozing"
+            ],
+            "idle": [
+              "mForceIdle=true",
+              "mScreenOn=true",
+              "mCharging=true",
+              "mState=IDLE",
+              "mLightState=OVERRIDE"
+            ],
+            "benchmark_resumed": false,
+            "foreground_service": true,
+            "debug_partial_wake_lock": false
+          },
+          "after_idle": {
+            "power": [
+              "mWakefulness=Dozing"
+            ],
+            "idle": [
+              "mForceIdle=false",
+              "mScreenOn=true",
+              "mCharging=true",
+              "mState=ACTIVE",
+              "mLightState=ACTIVE"
+            ],
+            "benchmark_resumed": false,
+            "foreground_service": true,
+            "debug_partial_wake_lock": false
+          }
+        },
+        "messages": [
+          {
+            "id": "4a982bda-70b3-49e0-a310-fba02a2b4071",
+            "sent_at_s": 0.1242803999921307,
+            "phase": "home",
+            "merged_before_idle_exit": true
+          },
+          {
+            "id": "cb8e9143-2861-47b0-8422-5799ea40f0f1",
+            "sent_at_s": 60.11204439995345,
+            "phase": "home",
+            "merged_before_idle_exit": true
+          },
+          {
+            "id": "19470d10-c145-41b6-b321-f0cd10ebca11",
+            "sent_at_s": 120.10948580002878,
+            "phase": "home",
+            "merged_before_idle_exit": true
+          },
+          {
+            "id": "e8743b25-6c9e-4775-827d-f9ee1c7034a3",
+            "sent_at_s": 180.59339829999954,
+            "phase": "forced_idle",
+            "merged_before_idle_exit": true
+          },
+          {
+            "id": "30249675-67eb-43cc-a8a3-0f393f87fd35",
+            "sent_at_s": 240.09851619997062,
+            "phase": "forced_idle",
+            "merged_before_idle_exit": true
+          }
+        ],
+        "force_idle_response": "Now forced in to deep idle mode"
+      }
+    ],
+    "restoration": {
+      "88LX01L45": {
+        "original_timeout": "1800000",
+        "timeout_after": "1800000",
+        "debug_restarted": true
+      },
+      "8AKX0UCPK": {
+        "original_timeout": "300000",
+        "error": "Command '['adb', '-s', '8AKX0UCPK', 'shell', 'dumpsys', 'deviceidle', 'unforce']' timed out after 25 seconds"
+      }
+    },
+    "error": "timed out",
+    "verification_status": "Android 15 signed IDs and all prior exact IDs verified after transport recovery; initial error was post-update API/control verification."
+  },
+  "after_signed_recovery": {
+    "physical_serial": "8AKX0UCPK",
+    "network_policy_after_update": 262144,
+    "network_policy_during_remaining_tests": 0,
+    "timeout_restored": 300000,
+    "live_ids": 2505,
+    "signed_ids_present": 5,
+    "signed_ids_persisted": true,
+    "identity_preserved": true,
+    "peers": {
+      "peers": []
+    },
+    "prior_expected_ids": 2500,
+    "prior_ids_present": 2500,
+    "all_prior_exact_ids_preserved": true
+  },
+  "post_retained_paging": {
+    "expected_exact_ids": 2500,
+    "devices": {
+      "88LX01L45": {
+        "node_id": "7787a451-5f20-49bd-9fd5-b83cbef41ab4",
+        "live_database_ids": 2500,
+        "expected_ids_present": 2500,
+        "every_expected_id_present": true,
+        "ui_message_count": 200,
+        "ui_snapshot_keys": [
+          "revision",
+          "changedAtMs",
+          "count",
+          "messages"
+        ]
+      },
+      "8AKX0UCPK": {
+        "node_id": "24374aff-27c6-43f1-bbab-3c12065b0352",
+        "live_database_ids": 2500,
+        "expected_ids_present": 2500,
+        "every_expected_id_present": true,
+        "ui_message_count": 200,
+        "ui_snapshot_keys": [
+          "revision",
+          "changedAtMs",
+          "count",
+          "messages"
+        ]
+      }
+    }
+  },
+  "restoration": {
+    "pending_signed_android9": true,
+    "devices": {
+      "88LX01L45": {
+        "screen_off_timeout": "1800000",
+        "stay_on_while_plugged_in": "7",
+        "debug_pid": "29261"
+      },
+      "8AKX0UCPK": {
+        "screen_off_timeout": "300000",
+        "stay_on_while_plugged_in": "0",
+        "debug_pid": "19518"
+      }
+    },
+    "android15_network_policy": 262144,
+    "android15_network_policy_verified": true,
+    "test_forwards_removed": true
+  },
+  "signed_android9_status": "pending Android 15 unlock"
 }
