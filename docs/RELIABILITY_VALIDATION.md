@@ -85,3 +85,7 @@ The expected test package is `com.bregger.edison.meshenger.benchmark`; `dumpsys 
 ## Build validation
 
 Flutter analysis is clean; 152 Flutter tests, 63 Python tooling tests and 9 Kotlin tests pass. Full Android release lint passes. Universal and ARM64/ARMv7/x86-64 production candidates were rebuilt, their signatures verified, and checksums refreshed in `build/release-candidates/`. The production package remains `com.bregger.edison.meshenger`, version `1.0.0+1`, min API 24, target API 36. The release certificate SHA-256 is `d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5`.
+
+## Subsequent benchmark receipt work
+
+The [Pixel 3 catch-up validation](CATCHUP_VALIDATION.md) moves default receipt accounting to exact database IDs, independent of the UI page, and makes UI projection timing an explicit option. It preserves the meaning of the historical UI measurements above. Controlled paired physical runs remain pending a stable Android 15 debugging connection; the failed seed preflight sent no timed messages.

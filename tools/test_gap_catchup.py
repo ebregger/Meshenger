@@ -1,7 +1,9 @@
 import os
 import sqlite3
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools import gap_catchup
 
@@ -49,6 +51,20 @@ class MessageCountTests(unittest.TestCase):
         self.assertEqual(gap_catchup.parse_message_count({"messages": [{}]}), 1)
         self.assertEqual(gap_catchup.parse_message_count({"status": "ok"}), 0)
 
+    def test_exact_ids_exclude_blanks_and_cannot_be_replaced_by_other_rows(self):
+        expected = {"old", "new"}
+        actual = gap_catchup.parse_message_ids({"messages": [
+            {"msgId": "new", "textContent": "hi"},
+            {"msgId": "unrelated", "textContent": "hi"},
+            {"msgId": "old", "textContent": ""},
+        ]})
+        self.assertEqual(len(actual), 2)
+        self.assertEqual(len(actual & expected), 1)
+
+    def test_api_error_is_not_an_empty_successful_history(self):
+        with self.assertRaises(ValueError):
+            gap_catchup.parse_message_ids({"error": "unavailable"})
+
 
 class SummarizeTests(unittest.TestCase):
     def test_passes_when_everyone_reaches_the_target(self):
@@ -81,6 +97,45 @@ class SummarizeTests(unittest.TestCase):
 
 
 class PunchGapTests(unittest.TestCase):
+    def test_failed_injection_copy_is_not_masked_by_sidecar_cleanup(self):
+        def fail_copy(_serial, *args, **kwargs):
+            if "cp" in args:
+                raise subprocess.CalledProcessError(1, args)
+        with patch("tools.gap_catchup.adb", side_effect=fail_copy) as command:
+            with self.assertRaises(subprocess.CalledProcessError):
+                gap_catchup.push_db("test-phone", "copy.db")
+            self.assertEqual(command.call_count, 2)
+
+    def test_pull_preserves_rows_present_only_in_wal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "source.db")
+            target = os.path.join(directory, "target.db")
+            connection = sqlite3.connect(source)
+            try:
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("CREATE TABLE messages (msg_id TEXT)")
+                connection.commit()
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                connection.execute("INSERT INTO messages VALUES ('pending')")
+                connection.commit()
+
+                def copy_file(_serial, *args, stdout, **kwargs):
+                    path = source + ("-wal" if args[-1].endswith("-wal") else "")
+                    with open(path, "rb") as handle:
+                        stdout.write(handle.read())
+                    return subprocess.CompletedProcess(args, 0, stderr=b"")
+
+                with patch("tools.gap_catchup.adb", side_effect=copy_file):
+                    gap_catchup.pull_db("test-phone", target)
+                restored = sqlite3.connect(target)
+                try:
+                    self.assertEqual(restored.execute("SELECT * FROM messages").fetchall(),
+                                     [("pending",)])
+                finally:
+                    restored.close()
+            finally:
+                connection.close()
+
     def test_removes_only_live_room_messages(self):
         path = os.path.join(tempfile.mkdtemp(), "t.db")
         connection = sqlite3.connect(path)

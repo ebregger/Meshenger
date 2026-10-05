@@ -31,7 +31,7 @@ def mean_latency_confidence(values, target_precision_s=0.01):
 
 
 def path_latency_stats(sent_messages, receipt_at, receipt_windows=None):
-    """Summarize host-monotonic send-to-UI-observation latency per direction."""
+    """Summarize host-monotonic send-to-receipt-observation latency per direction."""
     receipt_windows = receipt_windows or {}
     sent_by_tag = {message["tag"]: message for message in sent_messages}
     samples = {}
@@ -73,9 +73,9 @@ def path_latency_stats(sent_messages, receipt_at, receipt_windows=None):
 
 
 def latency_stage_stats(sent_messages, completed_at, receipt_windows):
-    """Separate local send API time from propagation and bound UI polling error."""
+    """Separate local send API time from propagation and bound receipt polling error."""
     api_submit = []
-    accepted_to_ui = []
+    accepted_to_receipt = []
     lower_bounds = []
     upper_bounds = []
     observation_widths = []
@@ -88,7 +88,7 @@ def latency_stage_stats(sent_messages, completed_at, receipt_windows):
         tag = message["tag"]
         if accepted_at is None or tag not in completed_at:
             continue
-        accepted_to_ui.append(completed_at[tag] - accepted_at)
+        accepted_to_receipt.append(completed_at[tag] - accepted_at)
         path_windows = [
             window
             for (sender, _receiver, window_tag), window in receipt_windows.items()
@@ -116,7 +116,7 @@ def latency_stage_stats(sent_messages, completed_at, receipt_windows):
 
     return {
         "send_api_submit_s": describe(api_submit),
-        "api_accept_to_all_receivers_ui_s": describe(accepted_to_ui),
+        "api_accept_to_all_receivers_s": describe(accepted_to_receipt),
         "end_to_end_lower_bound_s": describe(lower_bounds),
         "end_to_end_upper_bound_s": describe(upper_bounds),
         "end_to_end_observation_window_width_s": describe(observation_widths),
@@ -1077,7 +1077,12 @@ def summarize_run(result):
         "device_metadata": result.get("device_metadata", []),
         "latency_measurement": {
             "clock": "host-monotonic",
-            "receipt_event": "first /ui observation",
+            "receipt_event": (
+                "first /messages observation"
+                if result.get("receipt_source", "ui") == "database"
+                else "first /ui observation"
+            ),
+            "receipt_source": result.get("receipt_source", "ui"),
             "poll_interval_s": poll_interval_s,
             "receipt_interval": "between last successful absent poll and first present poll",
             "confidence_method": "normal approximation for the mean; assumes independent samples",
@@ -1257,7 +1262,7 @@ def print_run_summary(stream, result, details_path):
             "plus MTU/GATT failure lines are copied to the details log.\n"
         )
     if result.get("profile") == "interactive":
-        stream.write("  Profile: interactive (waited for all peer UIs per message)\n")
+        stream.write("  Profile: interactive (waited for all peer receipts per message)\n")
     else:
         offered_rate = (
             1.0 / result["send_interval_s"]
@@ -1281,7 +1286,7 @@ def print_run_summary(stream, result, details_path):
 
         paths = summary["paths"]
         if paths:
-            stream.write("\nPer-direction UI-observed latency\n")
+            stream.write("\nPer-direction receipt-observed latency\n")
             for path in paths:
                 stream.write(
                     f"  {path['sender'][-6:]}→{path['receiver'][-6:]}: "
@@ -1291,12 +1296,13 @@ def print_run_summary(stream, result, details_path):
                 )
 
         stream.write(
-            "\nEnd-to-end timing: host monotonic clock, first /ui observation; "
+            "\nEnd-to-end timing: host monotonic clock, "
+            f"{summary['latency_measurement']['receipt_event']}; "
             f"poll interval {result.get('poll_interval_s', 2.0):g}s.\n"
         )
         stages = summary["latency_stages"]
         api_stage = stages["send_api_submit_s"]
-        propagation_stage = stages["api_accept_to_all_receivers_ui_s"]
+        propagation_stage = stages["api_accept_to_all_receivers_s"]
         observation_stage = stages["end_to_end_observation_window_width_s"]
         if api_stage or propagation_stage:
             stream.write("  Host-monotonic stage split")
@@ -1306,7 +1312,7 @@ def print_run_summary(stream, result, details_path):
                 )
             if propagation_stage:
                 stream.write(
-                    f" | API acceptance→all UIs mean="
+                    f" | API acceptance→all receivers mean="
                     f"{propagation_stage['mean']:.3f}s"
                 )
             if observation_stage:
@@ -1383,7 +1389,7 @@ def print_run_summary(stream, result, details_path):
                     f"±0.01s would need about {confidence['target_samples']:,} "
                     "independent messages.\n"
                     f"  CI is for host-observed completion; "
-                    f"{result.get('poll_interval_s', 2.0):g}s UI polling and "
+                    f"{result.get('poll_interval_s', 2.0):g}s receipt polling and "
                     "within-run BLE correlation limit its interpretation.\n"
                 )
                 stream.write(confidence_text)

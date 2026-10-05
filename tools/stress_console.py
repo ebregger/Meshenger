@@ -85,7 +85,7 @@ def format_data_rate(bytes_per_second):
         value /= 1024
 
 
-def poll_ui_status(
+def poll_receipt_status(
     request,
     ports,
     port_to_device,
@@ -96,7 +96,11 @@ def poll_ui_status(
     receipt_at=None,
     receipt_windows=None,
     last_absent_at=None,
+    receipt_source="database",
 ):
+    """Track first receipt independently of a chat page or later API outages."""
+    if receipt_source not in ("database", "ui"):
+        raise ValueError("receipt source must be database or ui")
     receipt_at = receipt_at if receipt_at is not None else {}
     receipt_windows = receipt_windows if receipt_windows is not None else {}
     last_absent_at = last_absent_at if last_absent_at is not None else {}
@@ -104,18 +108,24 @@ def poll_ui_status(
     observed_at_by_device = {}
     total_bytes = 0
     for port in ports:
-        result = request(port, "/ui")
+        result = request(port, "/messages" if receipt_source == "database" else "/ui")
         observed_at = time.monotonic()
-        if not isinstance(result, dict):
+        if not isinstance(result, dict) or not isinstance(result.get("messages"), list):
             continue
         messages = result.get("messages") or []
         total_bytes += len(str(messages).encode("utf-8"))
         device = port_to_device.get(port, str(port))
-        device_messages[device] = {
+        texts = {
             (m.get("textContent") or m.get("text") or m.get("body") or "")
             for m in messages
             if isinstance(m, dict)
         }
+        ids = {
+            m.get("msgId") for m in messages
+            if isinstance(m, dict) and m.get("msgId")
+            and (m.get("textContent") or m.get("text") or m.get("body"))
+        }
+        device_messages[device] = (ids, texts)
         observed_at_by_device[device] = observed_at
 
     fully_propagated = 0
@@ -124,12 +134,22 @@ def poll_ui_status(
         sender = sent["sender_device"]
         sent_count[sender] += 1
         receiver_times = []
-        for device, texts in device_messages.items():
+        for device in port_to_device.values():
             if device == sender:
                 continue
             receipt_key = (sender, device, sent["tag"])
+            # Once observed, a receipt survives pagination, local clears and
+            # failed polls. Those cannot undo delivery already measured.
+            if receipt_key in receipt_at:
+                receiver_times.append(receipt_at[receipt_key])
+                continue
+            if device not in device_messages:
+                continue
+            ids, texts = device_messages[device]
             observed_at = observed_at_by_device[device]
-            if sent["tag"] in texts:
+            message_id = sent.get("message_id")
+            found = message_id in ids if message_id else sent["tag"] in texts
+            if found:
                 receipt_matrix[sender][device].add(sent["tag"])
                 if receipt_key not in receipt_at:
                     receipt_at[receipt_key] = observed_at
@@ -172,3 +192,8 @@ def poll_ui_status(
         "behind_by_path": behind,
         "total_kb": total_bytes / 1024,
     }
+
+
+def poll_ui_status(*args, **kwargs):
+    """Compatibility entry point for explicit painted-list measurements."""
+    return poll_receipt_status(*args, **kwargs, receipt_source="ui")

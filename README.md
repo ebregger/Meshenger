@@ -61,7 +61,7 @@ Keep the app open and phones nearby while evaluating sync. Android background an
 
 ## Recent test results
 
-Latency is measured from message submission until the message first appears in the receiving phone's `/ui` chat list. The test polls every 100 ms. Throughput counts messages that reached all peers per second of run time.
+The historical results below measure from message submission until the receiving phone's `/ui` snapshot first reports it, with 100 ms polling. Throughput counts messages that reached all peers per second of run time. The current runner defaults to exact database receipts through `/messages`, independent of UI pagination; its summaries label the receipt source. Use `--receipt-source ui` to measure the UI projection explicitly. Database receipt does not establish decryption, rendering or reading.
 
 | Test | Delivery | UI-observed latency (mean / p50 / p95 / max) | Throughput |
 | --- | --- | --- | --- |

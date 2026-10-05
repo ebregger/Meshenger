@@ -14,7 +14,7 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter, defaultdict
 
-from tools.stress_console import DetailLog, ProgressDisplay, poll_ui_status
+from tools.stress_console import DetailLog, ProgressDisplay, poll_receipt_status
 from tools.stress_summary import print_run_summary
 from tools.bluetooth_diagnostics import (
     LiveBtsnoopSocketCapture,
@@ -1002,6 +1002,21 @@ def maybe_clear_chat_messages(ports, preserve_messages=False):
     clear_chat_messages(ports)
 
 
+def configure_chat_paging(ports, receipt_source):
+    """Unbounded pages are only needed for an explicit UI benchmark."""
+    unbounded = receipt_source == "ui"
+    settings = {}
+    for port in ports:
+        response = request(port, "/config", "POST", {"unboundedChat": unbounded})
+        settings[str(port)] = {
+            "requested_unbounded": unbounded,
+            "applied": (response.get("unboundedChat") == unbounded
+                        if isinstance(response, dict) and "unboundedChat" in response
+                        else None),
+        }
+    return settings
+
+
 def wipe_mesh_dbs(serials):
     """Full DB delete (messages + profiles). Prefer [clear_chat_messages] for stress."""
     pkg = "com.bregger.edison.meshenger"
@@ -1047,6 +1062,7 @@ def run_benchmark(
     sender_device=None,
     single_sender=False,
     preserve_messages=False,
+    receipt_source="database",
     ports=None,
     profile="burst",
     send_interval_s=None,
@@ -1059,6 +1075,8 @@ def run_benchmark(
     send_interval_s, poll_interval_s = resolve_profile_settings(
         profile, send_interval_s, poll_interval_s
     )
+    if receipt_source not in ("database", "ui"):
+        raise ValueError("receipt source must be database or ui")
     if num_messages <= 0:
         raise ValueError("message count must be positive")
     if not math.isfinite(message_timeout_s) or message_timeout_s <= 0:
@@ -1417,6 +1435,8 @@ def run_benchmark(
     # old rows can drive catch-up traffic during the BLE reset and monopolize
     # the older phone's single inbound GATT slot throughout preflight.
     maybe_clear_chat_messages(all_ports, preserve_messages)
+    preflight_record["receipt_source"] = receipt_source
+    preflight_record["chat_paging"] = configure_chat_paging(all_ports, receipt_source)
 
     def scanner_error_snapshot():
         with telemetry.lock:
@@ -1519,27 +1539,27 @@ def run_benchmark(
     runtime_sampler_thread.start()
 
     sent_messages_lock = threading.Lock()
-    ui_monitor_stop = threading.Event()
-    ui_monitor_state_lock = threading.Lock()
-    ui_monitor_state = {"status": dict(status)}
-    ui_monitor_errors = []
-    ui_monitor_thread = None
+    receipt_monitor_stop = threading.Event()
+    receipt_monitor_state_lock = threading.Lock()
+    receipt_monitor_state = {"status": dict(status)}
+    receipt_monitor_errors = []
+    receipt_monitor_thread = None
 
-    def latest_ui_status():
-        with ui_monitor_state_lock:
-            return dict(ui_monitor_state["status"])
+    def latest_receipt_status():
+        with receipt_monitor_state_lock:
+            return dict(receipt_monitor_state["status"])
 
-    def monitor_burst_ui():
+    def monitor_burst_receipts():
         def monitor_request(port, path):
             return request(port, path, timeout=5)
 
         next_signal_sample_at = time.monotonic() + 5.0
-        while not ui_monitor_stop.is_set():
+        while not receipt_monitor_stop.is_set():
             with sent_messages_lock:
                 sent_snapshot = list(sent_messages)
             if sent_snapshot:
                 try:
-                    observed_status = add_transfer_metrics(poll_ui_status(
+                    observed_status = add_transfer_metrics(poll_receipt_status(
                         monitor_request,
                         all_ports,
                         port_to_device,
@@ -1550,11 +1570,12 @@ def run_benchmark(
                         receipt_at,
                         receipt_windows,
                         last_absent_at,
+                        receipt_source=receipt_source,
                     ))
-                    with ui_monitor_state_lock:
-                        ui_monitor_state["status"] = observed_status
+                    with receipt_monitor_state_lock:
+                        receipt_monitor_state["status"] = observed_status
                 except Exception as error:
-                    ui_monitor_errors.append(
+                    receipt_monitor_errors.append(
                         f"{type(error).__name__}: {error}"
                     )
             if time.monotonic() >= next_signal_sample_at:
@@ -1569,15 +1590,15 @@ def run_benchmark(
                     peer_signal_samples.append(signal_sample)
                 print(f"[PEER_RSSI] {json.dumps(signal_sample, sort_keys=True)}")
                 next_signal_sample_at = time.monotonic() + 5.0
-            ui_monitor_stop.wait(poll_interval_s)
+            receipt_monitor_stop.wait(poll_interval_s)
 
     if profile == "burst":
-        ui_monitor_thread = threading.Thread(
-            target=monitor_burst_ui,
-            name="stress-ui-monitor",
+        receipt_monitor_thread = threading.Thread(
+            target=monitor_burst_receipts,
+            name="stress-receipt-monitor",
             daemon=True,
         )
-        ui_monitor_thread.start()
+        receipt_monitor_thread.start()
 
     print(
         f"\n{Colors.HEADER}--- BENCHMARK: {profile} profile, "
@@ -1608,7 +1629,7 @@ def run_benchmark(
                 break
             deadline = time.monotonic() + message_timeout_s
             while tag not in completed_at and time.monotonic() < deadline:
-                status = add_transfer_metrics(poll_ui_status(
+                status = add_transfer_metrics(poll_receipt_status(
                     request,
                     all_ports,
                     port_to_device,
@@ -1619,6 +1640,7 @@ def run_benchmark(
                     receipt_at,
                     receipt_windows,
                     last_absent_at,
+                    receipt_source=receipt_source,
                 ))
                 console.render("Interactive", i + 1, num_messages, status)
                 if tag in completed_at:
@@ -1638,33 +1660,31 @@ def run_benchmark(
             if send_interval_s > 0 and i + 1 < num_messages:
                 time.sleep(send_interval_s)
             if i % 5 == 0 or i + 1 == num_messages:
-                status = latest_ui_status()
+                status = latest_receipt_status()
                 console.render("Sending", i + 1, num_messages, status)
                 print(f"Sending {i + 1}/{num_messages}: {status}")
     print()
     sending_finished_at = time.monotonic()
 
     if profile == "burst":
-        print(f"\n{Colors.OKBLUE}Waiting for propagation (polling /ui — painted chat list)...{Colors.ENDC}")
+        print(f"\n{Colors.OKBLUE}Waiting for propagation (receipt source: {receipt_source})...{Colors.ENDC}")
     drain_started_at = time.monotonic()
     last_progress_print_at = drain_started_at
     max_wait = max(message_timeout_s, num_messages * 4) if profile == "burst" else 0
 
-    # Track per-device UI revisions so we can print when the painted list changes
-    last_ui_revision = {port: 0 for port in all_ports}
     total_kb_received = 0.0
-    status = latest_ui_status() if ui_monitor_thread is not None else status
+    status = latest_receipt_status() if receipt_monitor_thread is not None else status
     fully_propagated = status.get("propagated", 0)
 
     while profile == "burst" and time.monotonic() - drain_started_at < max_wait:
-        status = latest_ui_status()
+        status = latest_receipt_status()
         fully_propagated = status["propagated"]
         total_kb_received = status["total_kb"]
         if fully_propagated < num_messages:
             console.render("Syncing", fully_propagated, num_messages, status)
 
         if fully_propagated >= num_messages:
-            print(f"\n{Colors.OKGREEN}[SUCCESS] All {num_messages} messages painted on all device UIs!{Colors.ENDC}\n")
+            print(f"\n{Colors.OKGREEN}[SUCCESS] All {num_messages} messages observed on all receivers ({receipt_source})!{Colors.ENDC}\n")
             break
         if time.monotonic() - last_progress_print_at >= max(1.0, poll_interval_s):
             print(f"Propagation {fully_propagated}/{num_messages}: {status}")
@@ -1674,16 +1694,16 @@ def run_benchmark(
         if profile == "burst" and fully_propagated < len(sent_messages):
             print(f"\n{Colors.WARNING}[TIMEOUT] Propagation did not finish within {max_wait:.1f}s{Colors.ENDC}\n")
 
-    if ui_monitor_thread is not None:
-        ui_monitor_stop.set()
-        ui_monitor_thread.join(timeout=5 * len(all_ports) + 5)
-        status = latest_ui_status()
+    if receipt_monitor_thread is not None:
+        receipt_monitor_stop.set()
+        receipt_monitor_thread.join(timeout=5 * len(all_ports) + 5)
+        status = latest_receipt_status()
         fully_propagated = status.get("propagated", 0)
         total_kb_received = status.get("total_kb", 0.0)
-        if ui_monitor_errors:
+        if receipt_monitor_errors:
             print(
-                f"{Colors.WARNING}UI monitor errors: "
-                f"{ui_monitor_errors[-1]}{Colors.ENDC}"
+                f"{Colors.WARNING}Receipt monitor errors: "
+                f"{receipt_monitor_errors[-1]}{Colors.ENDC}"
             )
 
     final_peer_signal_sample = capture_peer_signal_snapshot(
@@ -1729,7 +1749,7 @@ def run_benchmark(
                     transfer_lats.append(t_diff)
                     trans_bytes.append(d['bytes'])
         
-        # End-to-end timing is measured by the host's monotonic clock when /ui
+        # End-to-end timing is measured by the host's monotonic clock when the receipt API
         # first shows each message. Do not subtract timestamps from different
         # phones here: their wall clocks are not synchronized.
         print(f"\n{Colors.BOLD}--- Per-device phase deltas (same-device log timestamps) ---{Colors.ENDC}")
@@ -1788,8 +1808,8 @@ def run_benchmark(
         else:
             print(f"  {Colors.WARNING}No UI_CHANGED logcat events captured{Colors.ENDC}")
 
-        # --- PER-DEVICE RECEIPT MATRIX (sourced from /ui polling — painted list) ---
-        print(f"\n{Colors.BOLD}--- Device-to-Device Receipt Matrix (UI) ---{Colors.ENDC}")
+        # --- PER-DEVICE RECEIPT MATRIX (selected receipt API) ---
+        print(f"\n{Colors.BOLD}--- Device-to-Device Receipt Matrix ({receipt_source}) ---{Colors.ENDC}")
         all_devices = sorted(port_to_device.values())
         sent_count = defaultdict(int)
         for sent in sent_messages:
@@ -1874,6 +1894,7 @@ def run_benchmark(
     return {
         "success": fully_propagated >= num_messages,
         "profile": profile,
+        "receipt_source": receipt_source,
         "send_interval_s": send_interval_s,
         "poll_interval_s": poll_interval_s,
         "sender_port": sender_port,
@@ -1916,7 +1937,7 @@ if __name__ == '__main__':
         "--profile",
         choices=("interactive", "burst"),
         default="burst",
-        help="Interactive waits for all peer UIs after each send; burst queues sends.",
+        help="Interactive waits for all peer receipts after each send; burst queues sends.",
     )
     parser.add_argument(
         "--send-interval-s",
@@ -1926,7 +1947,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--poll-interval-s",
         type=float,
-        help="UI polling interval; defaults to 0.1s interactive and 2s burst.",
+        help="Receipt polling interval; defaults to 0.1s interactive and 2s burst.",
     )
     parser.add_argument(
         "--message-timeout-s",
@@ -1958,6 +1979,12 @@ if __name__ == '__main__':
         "--single-sender",
         action="store_true",
         help="Send all messages from the first live device only.",
+    )
+    parser.add_argument(
+        "--receipt-source",
+        choices=("database", "ui"),
+        default="database",
+        help="Database receipts ignore UI pagination; ui measures the painted list.",
     )
     parser.add_argument(
         "--preserve-messages",
@@ -2018,6 +2045,7 @@ if __name__ == '__main__':
                 sender_device=args.sender_device,
                 single_sender=args.single_sender,
                 preserve_messages=args.preserve_messages,
+                receipt_source=args.receipt_source,
                 ports=selected_ports,
                 devices=selected_devices,
                 profile=args.profile,

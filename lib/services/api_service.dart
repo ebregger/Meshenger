@@ -124,18 +124,23 @@ class ApiService {
               dropRate = 0.0;
               ignoreMac = null;
             }
+            if (body.containsKey('unboundedChat')) {
+              ChatPaging.showEverything = body['unboundedChat'] == true;
+              container
+                  .read(chatLimitProvider.notifier)
+                  .state = ChatPaging.showEverything
+                  ? ChatPaging.unbounded
+                  : ChatPaging.initialLimit;
+            }
 
             _respond(request, 200, {
               'status': 'configured',
               'dropRate': dropRate,
               'ignoreMac': ignoreMac,
+              'unboundedChat': ChatPaging.showEverything,
             });
           } else if (path == '/clear_messages' && request.method == 'POST') {
             // Stress reset: wipe chat only — keep display names in `users`.
-            // Runs verify every message was painted, so load whole threads.
-            ChatPaging.showEverything = true;
-            container.read(chatLimitProvider.notifier).state =
-                ChatPaging.unbounded;
             final db = await container.read(databaseProvider.future);
             final cleared = await db.clearTextMessages();
             container.read(bleNetworkProvider.notifier).onLocalDatabaseWrite();

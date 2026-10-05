@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-04",
+  "base_commit": "5ff3f14",
+  "scope": "Two Pixel 3 controlled catch-up and API receipts; physical paired runs pending Android 15 debugging connection",
+  "application_id": "com.bregger.edison.meshenger.benchmark",
+  "apk": {
+    "bytes": 169695533,
+    "sha256": "73694c1ae03e73da174e79f8993d6f02bb70a165243920cb25f7e9ca77897dc0",
+    "certificate_sha256": "d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5",
+    "build_mode": "debug"
+  },
+  "receipt_source": "database",
+  "validation": {
+    "flutter_analysis": "clean",
+    "flutter_tests": 152,
+    "python_tests": 72,
+    "android9_paging_check": {
+      "database_message_ids_before": 1163,
+      "database_message_ids_after": 1163,
+      "unbounded_ui_messages": 1162,
+      "bounded_ui_messages": 200,
+      "node_identity_preserved": true
+    }
+  },
+  "excluded_trials": [
+    "Seed preflight stopped when Android 15 API was unreachable; no timed messages were sent."
+  ],
+  "physical_runs": []
+}

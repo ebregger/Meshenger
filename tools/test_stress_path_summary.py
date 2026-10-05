@@ -93,7 +93,7 @@ class DirectedPathSummaryTests(unittest.TestCase):
         stages = summary["latency_stages"]
         self.assertAlmostEqual(stages["send_api_submit_s"]["mean"], 0.3)
         self.assertAlmostEqual(
-            stages["api_accept_to_all_receivers_ui_s"]["mean"], 1.7
+            stages["api_accept_to_all_receivers_s"]["mean"], 1.7
         )
         self.assertAlmostEqual(stages["end_to_end_lower_bound_s"]["mean"], 1.5)
         self.assertAlmostEqual(stages["end_to_end_upper_bound_s"]["mean"], 2.0)
@@ -139,6 +139,11 @@ class DirectedPathSummaryTests(unittest.TestCase):
         self.assertEqual(summary["paths"][0]["mean"], 1.0)
         self.assertEqual(summary["connection_rejections"], 1)
         self.assertEqual(summary["send_failures"], 1)
+        self.assertEqual(summary["latency_measurement"]["receipt_event"],
+                         "first /ui observation")
+        result["receipt_source"] = "database"
+        self.assertEqual(summarize_run(result)["latency_measurement"]["receipt_event"],
+                         "first /messages observation")
         self.assertEqual(summary["bluetooth_socket_captures"][0]["packets"], 12)
         self.assertEqual(
             summary["peer_signal_samples"][0]["peers_by_device"]["phoneA"][0][
