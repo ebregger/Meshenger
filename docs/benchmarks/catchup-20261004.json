@@ -1,19 +1,36 @@
 {
   "date": "2026-10-04",
   "base_commit": "5ff3f14",
+  "receipt_tools_commits": ["12376eb", "96bf404"],
   "scope": "Two Pixel 3 controlled catch-up and API receipts; physical paired runs pending Android 15 debugging connection",
   "application_id": "com.bregger.edison.meshenger.benchmark",
   "apk": {
-    "bytes": 169695533,
-    "sha256": "73694c1ae03e73da174e79f8993d6f02bb70a165243920cb25f7e9ca77897dc0",
+    "local_path": "build/catchup-20261004/profile-repair-debug.apk",
+    "bytes": 169699649,
+    "sha256": "952382b28762f91ea254b450f140de5d0919dcae824770bce80e3624da313db3",
     "certificate_sha256": "d76c6ed68d36b194fbc5f4da300d5e5c4bd86a03e0efcd461bbf304922b7adb5",
     "build_mode": "debug"
+  },
+  "pre_profile_fix_apk": {
+    "local_path": "build/catchup-20261004/receipt-debug.apk",
+    "bytes": 169695533,
+    "sha256": "73694c1ae03e73da174e79f8993d6f02bb70a165243920cb25f7e9ca77897dc0"
   },
   "receipt_source": "database",
   "validation": {
     "flutter_analysis": "clean",
-    "flutter_tests": 152,
+    "flutter_tests": 155,
     "python_tests": 73,
+    "profile_repair_regressions": {
+      "before_fix_failed": 3,
+      "after_fix_passed": 3,
+      "covers": [
+        "recent repair of two missing profiles from one writer below its known clock",
+        "whole-history repair of those profiles",
+        "one-row repair budget with three profiles from one writer"
+      ],
+      "paired_performance_measurement": "pending"
+    },
     "android9_paging_check": {
       "database_message_ids_before": 1163,
       "database_message_ids_after": 1163,

@@ -446,7 +446,7 @@ class DatabaseService {
     }
 
     await collect('messages', 'msg_id');
-    await collect('users', 'node_id');
+    await collect('users', 'mesh_node_id');
     await collect('bitmap_chunks', "file_id || ':' || chunk_index");
     rows.sort((a, b) {
       final byHlc = b.hlc.compareTo(a.hlc);
@@ -528,7 +528,7 @@ class DatabaseService {
     if (users.isNotEmpty) {
       final marks = List.filled(users.length, '?').join(',');
       queries['users'] = (
-        'SELECT * FROM users WHERE is_deleted = 0 AND node_id IN ($marks)',
+        'SELECT * FROM users WHERE is_deleted = 0 AND mesh_node_id IN ($marks)',
         users,
       );
     }
@@ -745,7 +745,7 @@ class DatabaseService {
   /// fingerprint is built from (empty when it only counts towards the hash).
   static const Map<String, ({String key, String id})> _deepTables = {
     'messages': (key: 'msg_id', id: 'msg_id'),
-    'users': (key: 'mesh_node_id', id: 'node_id'),
+    'users': (key: 'mesh_node_id', id: 'mesh_node_id'),
     'bitmap_chunks': (key: "file_id || ':' || chunk_index", id: "''"),
   };
 
@@ -974,7 +974,12 @@ class DatabaseService {
 
   static String _rowStableId(dynamic row) {
     if (row is! Map) return '';
-    final id = row['msg_id'] ?? row['msgId'] ?? row['id'] ?? row['node_id'];
+    final id =
+        row['msg_id'] ??
+        row['msgId'] ??
+        row['mesh_node_id'] ??
+        row['id'] ??
+        row['node_id'];
     return id?.toString() ?? '';
   }
 

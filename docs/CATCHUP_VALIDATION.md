@@ -8,11 +8,17 @@ The stress runner defaults to `/messages` and matches the IDs returned by `/send
 
 `--receipt-source ui` explicitly selects the UI projection. Chat clearing no longer forces unbounded rendering; the runner requests an unbounded page only in UI mode, including retained-history runs. The selected receipt source and paging configuration are recorded in each summary. Earlier UI-observed measurements retain their original meaning and are not a paired comparison with the new database measurements.
 
-On Android 9, switching the debug API's chat setting from unbounded to bounded changed its UI snapshot from 1,162 messages to 200 while preserving all 1,163 database message IDs and the node identity. Flutter analysis is clean; all 152 Flutter tests and 73 Python tooling tests pass. Regression tests cover exact IDs, duplicate text, blank cleared rows, remembered receipts, failed and slow polls, all 1,000 receipts beyond a UI page, copying writes that exist only in SQLite's WAL, and rejecting a failed gap injection.
+On Android 9, switching the debug API's chat setting from unbounded to bounded changed its UI snapshot from 1,162 messages to 200 while preserving all 1,163 database message IDs and the node identity. Flutter analysis is clean; all 155 Flutter tests and 73 Python tooling tests pass. Regression tests cover exact IDs, duplicate text, blank cleared rows, remembered receipts, failed and slow polls, all 1,000 receipts beyond a UI page, copying writes that exist only in SQLite's WAL, and rejecting a failed gap injection.
+
+## Profile repair correction
+
+Three additional database tests reproduced a profile repair defect before the fix and pass afterward. Recent and whole-history fingerprints used the CRDT writer's `node_id` for profiles rather than the profile's primary key, `mesh_node_id`. Two missing profiles from one writer could cancel in the XOR digest even when the receiver already knew that writer's latest clock. Fetching one selected writer ID could also return every profile written by that node, exceeding the repair row budget.
+
+Both digests, selected-row lookup and rotating hash-repair ordering now use `mesh_node_id` for profiles. The tests restore two missing profiles one row at a time through each digest path and verify the one-row budget with three profiles from one writer. This changes profile fingerprint semantics; paired checks must use the same APK on both phones. It does not change the database schema, stored identities or keys. It has not been established as the cause of the earlier slow message benchmark, and no performance improvement is claimed without paired measurements.
 
 ## Controlled history checks
 
-The gap harness verifies equal starting message IDs rather than equal counts. It backs up the stopped disposable database, checkpoints copied WAL writes, removes the selected live shared-room rows, and measures recovery of those exact baseline IDs. Startup/discovery time is included. Unrelated rows cannot replace missing receipts in its pass criterion.
+The gap harness verifies equal starting message IDs rather than equal counts. It backs up the stopped disposable database, checkpoints copied WAL writes, removes the selected live shared-room rows, and measures recovery of those exact baseline IDs. Startup/discovery time is included. Unrelated rows cannot replace missing receipts in its pass criterion. Backup filenames also support wireless ADB device addresses on Windows.
 
 Planned checks, using one fixed APK and two-phone topology:
 

@@ -320,7 +320,8 @@ def run_test(args):
     removed_by_device = {}
     for index, serial in enumerate(lagging):
         stop_app(serial)
-        local = os.path.join(work, f"{serial}.db")
+        # Wireless ADB serials can be IP:port, which is not a Windows filename.
+        local = os.path.join(work, f"device-{index}.db")
         pull_db(serial, local)
         shutil.copyfile(local, local + ".before.db")
         removed, remaining = punch_gap(
