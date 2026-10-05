@@ -36,6 +36,19 @@ class DeepCatchup {
 
   static final Map<String, PeerDeepDigest> _peers = {};
   static final Map<String, _Progress> _progress = {};
+  static final Set<String> _probed = {};
+
+  /// Nearby peers whose whole-history digest we have not asked for yet.
+  /// A digest can finish before scanning finds a neighbor, so its completion
+  /// callback alone cannot start every initial probe. Periodic presence checks
+  /// use this list without consuming rounds for already-known mismatches.
+  static Iterable<String> unprobedNeighbors(Iterable<String> neighbors) =>
+      neighbors.where((id) => !_peers.containsKey(id) && !_probed.contains(id));
+
+  /// Offer our deep digest once per neighbor per mesh session. Call only after
+  /// our digest is ready and the recent windows match.
+  static bool claimProbe(String peerId) =>
+      !_peers.containsKey(peerId) && _probed.add(peerId);
 
   /// Envelope fields for our deep digest, or empty while it is out of date.
   /// The bucket fingerprints are included only when [withBuckets] is set.
@@ -111,6 +124,7 @@ class DeepCatchup {
   static void reset() {
     _peers.clear();
     _progress.clear();
+    _probed.clear();
   }
 }
 

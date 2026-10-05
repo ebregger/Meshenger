@@ -306,6 +306,12 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       directNeighborIds: direct,
       indirectNeighborIds: indirect,
     );
+    // Scans with matching recent hashes skip the discovery/handshake callback.
+    // If our deep digest finished before this neighbor appeared, probe it here
+    // rather than waiting for the 90-second periodic anti-entropy handshake.
+    for (final peerId in DeepCatchup.unprobedNeighbors(direct)) {
+      _continueDeepCatchup(peerId);
+    }
   }
 
   String? _findRoute(String targetId, Set<String> directNodes) {
@@ -593,9 +599,6 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     }
   }
 
-  /// Neighbors we have already offered our deep digest to this session.
-  final Set<String> _deepProbed = <String>{};
-
   /// Older-history catch-up with [peerId], once our recent windows agree.
   ///
   /// Runs after the new messages have been exchanged, never before, and only
@@ -618,7 +621,7 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       if (peer == null) {
         // Matching recent windows never trigger a handshake by themselves, so
         // offer our digest once per neighbor and learn theirs in the reply.
-        if (_deepProbed.add(peerId)) {
+        if (DeepCatchup.claimProbe(peerId)) {
           debugPrint('🗄️ [SYNC] Deep catch-up probe to $peerId');
           _discovery.requestHashRepair(myId, peerId, theirTail);
         }

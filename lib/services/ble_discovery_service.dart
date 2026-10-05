@@ -980,6 +980,7 @@ class BleDiscoveryService {
       peerObservedHash.clear();
       lastKnownPeerVector.clear();
       lastKnownPeerBuckets.clear();
+      DeepCatchup.reset();
       CatchupPushBudget.shared.clear();
       _activeBluetoothNodeId = null;
       _lastBluetoothActivityAt = null;
