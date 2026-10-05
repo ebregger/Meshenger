@@ -2364,6 +2364,20 @@ class BleDiscoveryService {
                 DateTime.now().isBefore(_urgentRadioHoldUntil!)))) {
       return false;
     }
+    if (requireIdle) {
+      final inboundMac = _resolveInboundMacForPeer(
+        peerId,
+        _activeInboundServerMacs.toList(growable: false),
+      );
+      if (inboundMac != null) {
+        if (_notifyReadyInboundServerMacs.contains(inboundMac)) {
+          // Streaming already has its own page/no-progress budget. An empty
+          // active-link check must not spend a whole-history handshake round.
+          unawaited(_tryInboundCatchupPush(myNodeId, peerId));
+        }
+        return false;
+      }
+    }
     final now = DateTime.now();
     final last = _lastHashRepairAttempt[peerId];
     if (last != null && now.difference(last) < const Duration(seconds: 2)) {
