@@ -105,9 +105,11 @@ def poll_receipt_status(
     receipt_windows = receipt_windows if receipt_windows is not None else {}
     last_absent_at = last_absent_at if last_absent_at is not None else {}
     device_messages = {}
+    poll_started_at_by_device = {}
     observed_at_by_device = {}
     total_bytes = 0
     for port in ports:
+        poll_started_at = time.monotonic()
         result = request(port, "/messages" if receipt_source == "database" else "/ui")
         observed_at = time.monotonic()
         if not isinstance(result, dict) or not isinstance(result.get("messages"), list):
@@ -126,6 +128,7 @@ def poll_receipt_status(
             and (m.get("textContent") or m.get("text") or m.get("body"))
         }
         device_messages[device] = (ids, texts)
+        poll_started_at_by_device[device] = poll_started_at
         observed_at_by_device[device] = observed_at
 
     fully_propagated = 0
@@ -163,7 +166,10 @@ def poll_receipt_status(
                     }
                 receiver_times.append(receipt_at[receipt_key])
             elif receipt_key not in receipt_at:
-                last_absent_at[receipt_key] = observed_at
+                # The database/snapshot was read somewhere inside the request.
+                # Its absent response can finish after the row has arrived;
+                # only request start is a safe lower bound on delivery.
+                last_absent_at[receipt_key] = poll_started_at_by_device[device]
         if len(receiver_times) >= len(ports) - 1:
             fully_propagated += 1
             completed_at.setdefault(sent["tag"], max(receiver_times))

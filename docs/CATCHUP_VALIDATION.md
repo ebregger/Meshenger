@@ -4,11 +4,11 @@ The next controlled checks use the Android 9 and Android 15 Pixel 3s only. Origi
 
 ## Receipt accounting
 
-The stress runner defaults to `/messages` and matches the IDs returned by `/send`. Its record survives subsequent page changes and API outages; an unsuccessful poll does not tighten a receipt's observation interval. A send that failed to return an ID can still be checked by its unique benchmark tag, with its send API error recorded separately. These are database receipts, not evidence of decryption, rendering or reading.
+The stress runner defaults to `/messages` and matches the IDs returned by `/send`. Its record survives subsequent page changes and API outages; an unsuccessful poll does not tighten a receipt's observation interval. Successful absent polls bound delivery from request start, because a slow response may finish after the message arrives. A send that failed to return an ID can still be checked by its unique benchmark tag, with its send API error recorded separately. These are database receipts, not evidence of decryption, rendering or reading.
 
 `--receipt-source ui` explicitly selects the UI projection. Chat clearing no longer forces unbounded rendering; the runner requests an unbounded page only in UI mode, including retained-history runs. The selected receipt source and paging configuration are recorded in each summary. Earlier UI-observed measurements retain their original meaning and are not a paired comparison with the new database measurements.
 
-On Android 9, switching the debug API's chat setting from unbounded to bounded changed its UI snapshot from 1,162 messages to 200 while preserving all 1,163 database message IDs and the node identity. Flutter analysis is clean; all 152 Flutter tests and 72 Python tooling tests pass. Regression tests cover exact IDs, duplicate text, blank cleared rows, remembered receipts, failed polls, all 1,000 receipts beyond a UI page, copying writes that exist only in SQLite's WAL, and rejecting a failed gap injection.
+On Android 9, switching the debug API's chat setting from unbounded to bounded changed its UI snapshot from 1,162 messages to 200 while preserving all 1,163 database message IDs and the node identity. Flutter analysis is clean; all 152 Flutter tests and 73 Python tooling tests pass. Regression tests cover exact IDs, duplicate text, blank cleared rows, remembered receipts, failed and slow polls, all 1,000 receipts beyond a UI page, copying writes that exist only in SQLite's WAL, and rejecting a failed gap injection.
 
 ## Controlled history checks
 

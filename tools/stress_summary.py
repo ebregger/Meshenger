@@ -1084,7 +1084,7 @@ def summarize_run(result):
             ),
             "receipt_source": result.get("receipt_source", "ui"),
             "poll_interval_s": poll_interval_s,
-            "receipt_interval": "between last successful absent poll and first present poll",
+            "receipt_interval": "between last successful absent request start and first present response",
             "confidence_method": "normal approximation for the mean; assumes independent samples",
         },
         "device_runtime_state": result.get("device_runtime_state", {}),

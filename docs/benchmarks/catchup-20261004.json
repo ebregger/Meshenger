@@ -13,7 +13,7 @@
   "validation": {
     "flutter_analysis": "clean",
     "flutter_tests": 152,
-    "python_tests": 72,
+    "python_tests": 73,
     "android9_paging_check": {
       "database_message_ids_before": 1163,
       "database_message_ids_after": 1163,

@@ -38,7 +38,7 @@ class PollUiStatusTests(unittest.TestCase):
 
         with patch(
             "tools.stress_console.time.monotonic",
-            side_effect=[100.0, 100.2, 100.5, 100.6],
+            side_effect=[99.9, 100.0, 100.1, 100.2, 100.4, 100.5, 100.6],
         ):
             status = poll_ui_status(
                 request,
@@ -67,7 +67,7 @@ class PollUiStatusTests(unittest.TestCase):
         responses[18083] = {"messages": [{"body": tag}]}
         with patch(
             "tools.stress_console.time.monotonic",
-            side_effect=[101.0, 101.1, 101.4, 101.5],
+            side_effect=[100.9, 101.0, 101.05, 101.1, 101.3, 101.4, 101.5],
         ):
             status = poll_ui_status(
                 request,
@@ -86,7 +86,7 @@ class PollUiStatusTests(unittest.TestCase):
         self.assertEqual(receipt_at[("phoneA", "phoneC", tag)], 101.4)
         self.assertEqual(
             receipt_windows[("phoneA", "phoneC", tag)],
-            {"lower": 100.5, "upper": 101.4},
+            {"lower": 100.4, "upper": 101.4},
         )
         self.assertEqual(completed_at[tag], 101.4)
         self.assertAlmostEqual(status["average_latency_ms"], 10400.0)
@@ -131,6 +131,16 @@ class DatabaseReceiptTests(unittest.TestCase):
         previous = dict(self.absent)
         self.poll({"error": "unavailable"})
         self.assertEqual(self.absent, previous)
+
+    def test_slow_absent_response_uses_request_start_as_safe_lower_bound(self):
+        with patch("tools.stress_console.time.monotonic",
+                   side_effect=[10.0, 10.1, 10.2, 14.0, 14.1]):
+            self.poll({"messages": []})
+        with patch("tools.stress_console.time.monotonic",
+                   side_effect=[14.2, 14.3, 14.4, 14.5, 14.6]):
+            self.poll({"messages": [{"msgId": "wanted", "textContent": "same text"}]})
+        self.assertEqual(self.windows[("a", "b", "same text")],
+                         {"lower": 10.2, "upper": 14.5})
 
     def test_blank_local_clear_is_not_a_receipt(self):
         self.assertEqual(self.poll({"messages": [
