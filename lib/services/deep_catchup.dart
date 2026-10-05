@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'catchup_push_budget.dart';
 import 'database_service.dart';
 
-/// What a peer told us about its whole history. [buckets] stays empty until a
-/// mismatch makes the peer send them.
+/// What a peer told us about its whole history. Hash-only updates can omit
+/// [buckets]; an initial ordinary offer or a mismatch supplies them.
 class PeerDeepDigest {
   const PeerDeepDigest(this.hash, [this.buckets = const []]);
   final int hash;
@@ -19,9 +19,10 @@ class PeerDeepDigest {
 /// windows agree can still disagree about older history. Each handshake can
 /// carry a second, longer digest of everything a phone holds. It is sent only
 /// when it is already computed, so it never delays a handshake, and never on
-/// the urgent new-message path. Only the 8-byte hash travels every time; the
-/// bucket fingerprints (a few KB) are added once the hashes are known to
-/// differ. Then the phones trade the old rows that sit in the mismatched
+/// the urgent new-message path. The first ordinary offer includes bucket
+/// fingerprints (a few KB), so a missing older-history page can be returned
+/// immediately. Later offers use just the hash until a mismatch. Then the
+/// phones trade the old rows that sit in the mismatched
 /// buckets, a page at a time.
 class DeepCatchup {
   DeepCatchup._();
@@ -59,6 +60,17 @@ class DeepCatchup {
       hashKey: digest.hash,
       if (withBuckets) bucketsKey: base64Encode(digest.buckets),
     };
+  }
+
+  /// Bootstrap the peer's repair index in the first ordinary offer. Waiting
+  /// for a hash-only reply requires a second handshake, which may be skipped
+  /// while an inbound link is open and exhaust the no-progress round budget.
+  static Map<String, dynamic> offerFields(DatabaseService db, String? peerId) {
+    final known = peerId == null ? null : peer(peerId);
+    return envelopeFields(
+      db,
+      withBuckets: known == null || differs(db.freshDeepDigest, known),
+    );
   }
 
   /// Reads the peer's deep digest from an offer or delta envelope.

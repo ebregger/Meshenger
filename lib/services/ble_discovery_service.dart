@@ -2075,18 +2075,9 @@ class BleDiscoveryService {
         'bucket_fingerprints',
         db.getBucketFingerprintBlob,
       );
-      final peerDeepKnown = resolvedPeer == null
-          ? null
-          : DeepCatchup.peer(resolvedPeer);
       final deepFields = forceNewestPush
           ? const <String, dynamic>{}
-          : DeepCatchup.envelopeFields(
-              db,
-              withBuckets: DeepCatchup.differs(
-                db.freshDeepDigest,
-                peerDeepKnown,
-              ),
-            );
+          : DeepCatchup.offerFields(db, resolvedPeer);
       final offerEnvelope = <String, dynamic>{
         'type': 'offer',
         'sender_id': myNodeId2,

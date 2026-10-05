@@ -1,9 +1,40 @@
 import 'package:bluetooth_app/services/deep_catchup.dart';
+import 'package:bluetooth_app/services/database_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite_crdt/sqlite_crdt.dart';
 
 void main() {
   setUp(DeepCatchup.reset);
   tearDown(DeepCatchup.reset);
+
+  test(
+    'first ordinary offer supplies buckets; converged offers stay small',
+    () async {
+      final db = DatabaseService.forTesting(await SqliteCrdt.openInMemory());
+      addTearDown(db.dispose);
+      await db.init();
+      final digest = (await db.computeDeepDigest())!;
+      final first = DeepCatchup.parse(DeepCatchup.offerFields(db, 'new-peer'))!;
+      expect(first.hash, digest.hash);
+      expect(first.hasBuckets, isTrue);
+      expect(first.buckets.length, DatabaseService.deepBucketCount);
+      expect(
+        DeepCatchup.parse(DeepCatchup.offerFields(db, null))!.hasBuckets,
+        isTrue,
+      );
+
+      DeepCatchup.remember('new-peer', PeerDeepDigest(digest.hash));
+      expect(
+        DeepCatchup.parse(DeepCatchup.offerFields(db, 'new-peer'))!.hasBuckets,
+        isFalse,
+      );
+      DeepCatchup.remember('new-peer', PeerDeepDigest(digest.hash ^ 1));
+      expect(
+        DeepCatchup.parse(DeepCatchup.offerFields(db, 'new-peer'))!.hasBuckets,
+        isTrue,
+      );
+    },
+  );
 
   test('a neighbor arriving after digest completion still gets one probe', () {
     // Digest completion runs before the first scan observes any neighbors.
