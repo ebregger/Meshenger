@@ -1,6 +1,6 @@
 {
   "date": "2026-10-04",
-  "source": "Reliability fixes committed with this report; native discovery baseline 1672c08",
+  "source": "Clock/catch-up fixes 743dab6; subsequent native recovery fixes documented in RELIABILITY_VALIDATION.md",
   "setup": {
     "application_id": "com.bregger.edison.meshenger.benchmark",
     "build_mode": "debug",
@@ -181,15 +181,133 @@
   "apks": {
     "fixed.apk": {
       "bytes": 169699093,
-      "sha256": "37f46b3d74f0f7650a8e5cbd5a66d51fc307a22a1244d429de6123058bdcd06e"
+      "sha256": "37f46b3d74f0f7650a8e5cbd5a66d51fc307a22a1244d429de6123058bdcd06e",
+      "application_id": "com.bregger.edison.meshenger.benchmark",
+      "build_mode": "debug"
     },
     "production-release.apk": {
       "bytes": 61833996,
-      "sha256": "dd63d9805d3a82fdee9465e777dd889b861c1b7ba4f05f9c29f6e46e4bf0f645"
+      "sha256": "266e325e1b3b25f3feb071c3ae27688457e6c8c392d60d0211ded7a7905c18a1",
+      "application_id": "com.bregger.edison.meshenger",
+      "build_mode": "release"
     },
     "signed-test.apk": {
-      "bytes": 61833996,
-      "sha256": "dd63d9805d3a82fdee9465e777dd889b861c1b7ba4f05f9c29f6e46e4bf0f645"
+      "bytes": 62386632,
+      "sha256": "6b10f1c2861749a740d4826d74fc28299831125ba433dd9b7d8c48670eba5f98",
+      "application_id": "com.bregger.edison.meshenger.benchmark",
+      "build_mode": "release"
+    },
+    "signed-debug-final.apk": {
+      "bytes": 195341964,
+      "sha256": "5e89a97eb05e99b56d6542eacc519ac503fed4887d5b36688e73026cf8375f41",
+      "application_id": "com.bregger.edison.meshenger.benchmark",
+      "build_mode": "debug"
     }
-  }
+  },
+  "artifact_note": "fixed.apk was used for the paired Android 9/15 runs; the other APKs are subsequent recovery candidates, not those timed binaries. Preliminary incorrectly selected signed APKs were excluded.",
+  "supplemental_native_recovery": {
+    "setup": {
+      "devices": [
+        "88LX01L45",
+        "adb-46071FDAS009EH-r4QuBZ._adb-tls-connect._tcp"
+      ],
+      "application_id": "com.bregger.edison.meshenger.benchmark",
+      "build_mode": "debug",
+      "apk": "signed-debug-final.apk",
+      "initial_history": "Unequal retained history after signed checks and an aborted bounded-UI trial; normal runner clear retains tombstones",
+      "third_phone": "Android 15 test relay initially active; force-stopped during catch-up after USB debugging recovered",
+      "topology_change": {
+        "wall_ms": 1791159200891,
+        "action": "force-stop disposable Android 15 relay during supplemental Android 9/17 run",
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "scope": "Supplemental delivery/recovery observation; different devices/history/topology, not a paired performance comparison"
+    },
+    "result": {
+      "success": true,
+      "profile": "burst",
+      "send_interval_s": 0.1,
+      "messages_sent": 1000,
+      "messages_delivered": 1000,
+      "delivery_ratio": 1.0,
+      "elapsed_s": 771.8433766000671,
+      "throughput_msg_s": 1.295599638886521,
+      "latency": {
+        "n": 1000,
+        "mean": 155.22149364589748,
+        "p50": 127.925928200013,
+        "p95": 445.1791404999094,
+        "max": 757.9536470000166,
+        "sample_sd": 158.21077221312305,
+        "mean_95ci_margin": 9.806005255123926,
+        "mean_95ci": {
+          "low": 145.41548839077356,
+          "high": 165.0274989010214
+        }
+      },
+      "paths": [
+        {
+          "sender": "88LX01L45",
+          "receiver": "adb-46071FDAS009EH-r4QuBZ._adb-tls-connect._tcp",
+          "n": 500,
+          "mean": 193.37894646719005,
+          "sample_sd": 185.72577120321813,
+          "mean_95ci_margin": 16.27958162369157,
+          "p50": 185.3940336999949,
+          "p95": 605.1558226000052,
+          "max": 757.9536470000166,
+          "mean_observation_window_s": 2.036312094790395,
+          "max_observation_window_s": 2.4106695000082254
+        },
+        {
+          "sender": "adb-46071FDAS009EH-r4QuBZ._adb-tls-connect._tcp",
+          "receiver": "88LX01L45",
+          "n": 500,
+          "mean": 117.06404082460492,
+          "sample_sd": 112.69240600825917,
+          "mean_95ci_margin": 9.87792491099295,
+          "p50": 80.69197620009072,
+          "p95": 345.75923690001946,
+          "max": 415.06397900008596,
+          "mean_observation_window_s": 2.0600102548117283,
+          "max_observation_window_s": 2.2565050999401137
+        }
+      ],
+      "send_failures": 0,
+      "connection_failures": 3,
+      "connection_rejections": 1,
+      "scanner_errors": [],
+      "latency_measurement": {
+        "clock": "host-monotonic",
+        "receipt_event": "first /ui observation",
+        "poll_interval_s": 2.0,
+        "receipt_interval": "between last successful absent poll and first present poll",
+        "confidence_method": "normal approximation for the mean; assumes independent samples"
+      },
+      "device_metadata": [
+        {
+          "serial": "88LX01L45",
+          "model": "Pixel 3",
+          "manufacturer": "Google",
+          "android_sdk": "28",
+          "android_release": "9"
+        },
+        {
+          "serial": "adb-46071FDAS009EH-r4QuBZ._adb-tls-connect._tcp",
+          "model": "Pixel 9 Pro XL",
+          "manufacturer": "Google",
+          "android_sdk": "37",
+          "android_release": "17"
+        }
+      ]
+    },
+    "raw_summary_sha256": "294cad44777f017c93d3913357afaecbd531276af4c1b9444da85165f3cd2f8a",
+    "remaining_work": "Profile large unequal-history catch-up; complete delivery with zero send API errors does not erase multi-minute latency or connection failures"
+  },
+  "excluded_trials": [
+    "Final Android 9/15 attempts stopped in preflight while Android 15 USB debugging/API was unavailable; no timed workload started.",
+    "--preserve-messages Android 9/17 attempt was aborted because the UI was still bounded to its recent page, invalidating complete UI receipt accounting."
+  ]
 }

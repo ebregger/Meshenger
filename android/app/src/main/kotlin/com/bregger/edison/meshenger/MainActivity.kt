@@ -65,8 +65,17 @@ class MainActivity : FlutterActivity() {
 
   private var eventSink: EventChannel.EventSink? = null
   private var bleRadio: NativeBleRadio? = null
+  private var activityDestroyed = false
 
   override fun onDestroy() {
+    activityDestroyed = true
+    // This Activity owns the GATT callbacks and Flutter payload stream. An old
+    // server must not survive its engine: Android can otherwise route writes
+    // into its detached event sink after a later Activity opens another server.
+    eventSink = null
+    resetNativeServer(null)
+    inboundIdleHandler.removeCallbacks(inboundIdleSweep)
+    stopService(Intent(this, MeshForegroundService::class.java))
     bleRadio?.close()
     bleRadio = null
     super.onDestroy()
@@ -620,6 +629,7 @@ class MainActivity : FlutterActivity() {
         startupHandler.post {
           if (!startupResultCompleted.compareAndSet(false, true)) return@post
           serviceRegistrationTimeout?.let(startupHandler::removeCallbacks)
+          if (activityDestroyed) return@post
 
           if (status != BluetoothGatt.GATT_SUCCESS) {
             serverServiceReady = false
@@ -1117,7 +1127,7 @@ class MainActivity : FlutterActivity() {
   }
 
   @SuppressLint("MissingPermission")
-  private fun resetNativeServer(result: MethodChannel.Result) {
+  private fun resetNativeServer(result: MethodChannel.Result?) {
     Log.d(TAG, "[SERVER] Resetting GATT server to release leaked connection slots...")
     // Raise the guard flag BEFORE close() so the DISCONNECTED callbacks fired
     // by close() are silently swallowed instead of cascading into cancelConnection() calls.
@@ -1176,7 +1186,7 @@ class MainActivity : FlutterActivity() {
     // completes, so return asynchronously after a short teardown settling window.
     // Keep the reset guard active until the replacement service is registered; the
     // stress runner pauses scans on all peers before reaching this point.
-    Handler(Looper.getMainLooper()).postDelayed({
+    if (result != null) Handler(Looper.getMainLooper()).postDelayed({
       traceBle("SERVER_RESET_SETTLED", fields = mapOf("WAIT_MS" to 500))
       Log.d(TAG, "[SERVER] GATT server reset complete.")
       result.success(null)
@@ -1580,6 +1590,15 @@ class MainActivity : FlutterActivity() {
               currentAdvertisingSet?.setAdvertisingData(
                 buildActivePrimaryAdvertisingData(currentAdvertiserHash),
               )
+              // Legacy-mode AdvertisingSet puts the mirrored busy bit in its
+              // scan response. Refresh both copies when the inbound slot
+              // changes, otherwise peers can keep seeing "busy" after the
+              // connection closes until another database hash update occurs.
+              if (!usesExtendedConnectableAdvertising()) {
+                currentAdvertisingSet?.setScanResponseData(
+                  buildScanResponseData(currentAdvertiserHash, currentNodeIdPrefix),
+                )
+              }
           } catch (_: Throwable) {}
       }
   }
