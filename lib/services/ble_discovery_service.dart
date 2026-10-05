@@ -2360,16 +2360,28 @@ class BleDiscoveryService {
   }
 
   /// Reconcile persistent hash drift with bucket repair over the held link.
-  void requestHashRepair(String myNodeId, String peerId, int remoteHash) {
+  bool requestHashRepair(
+    String myNodeId,
+    String peerId,
+    int remoteHash, {
+    bool requireIdle = false,
+  }) {
+    if (requireIdle &&
+        (isConnecting ||
+            hasRecentLocalWrite ||
+            (_urgentRadioHoldUntil != null &&
+                DateTime.now().isBefore(_urgentRadioHoldUntil!)))) {
+      return false;
+    }
     final now = DateTime.now();
     final last = _lastHashRepairAttempt[peerId];
     if (last != null && now.difference(last) < const Duration(seconds: 2)) {
-      return;
+      return false;
     }
     final mac = preferredDialMac(peerId);
     if (mac == null || mac.isEmpty) {
       debugPrint('🗄️ [SYNC] Hash repair skipped: no dial address for $peerId');
-      return;
+      return false;
     }
     _lastHashRepairAttempt[peerId] = now;
     unawaited(
@@ -2383,6 +2395,7 @@ class BleDiscoveryService {
         forceNewestPush: false,
       ),
     );
+    return true;
   }
 
   Timer? _urgentSyncDebounce;

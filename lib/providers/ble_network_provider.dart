@@ -309,7 +309,9 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
     // Scans with matching recent hashes skip the discovery/handshake callback.
     // If our deep digest finished before this neighbor appeared, probe it here
     // rather than waiting for the 90-second periodic anti-entropy handshake.
-    for (final peerId in DeepCatchup.unprobedNeighbors(direct)) {
+    // Also retry a follow-up skipped by a busy radio, repair cooldown or stale
+    // address. Only requests that actually schedule spend the bounded budget.
+    for (final peerId in direct) {
       _continueDeepCatchup(peerId);
     }
   }
@@ -617,13 +619,19 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
       if (theirTail == null) return;
       // Recent messages always come first.
       if (theirTail != await db.getDatabaseHash()) return;
+      if (!_meshSessionActive || _localNodeId != myId) return;
+      bool request() => _discovery.requestHashRepair(
+        myId,
+        peerId,
+        theirTail,
+        requireIdle: true,
+      );
       final peer = DeepCatchup.peer(peerId);
       if (peer == null) {
         // Matching recent windows never trigger a handshake by themselves, so
         // offer our digest once per neighbor and learn theirs in the reply.
-        if (DeepCatchup.claimProbe(peerId)) {
+        if (DeepCatchup.claimProbe(peerId, request: request)) {
           debugPrint('🗄️ [SYNC] Deep catch-up probe to $peerId');
-          _discovery.requestHashRepair(myId, peerId, theirTail);
         }
         return;
       }
@@ -632,11 +640,11 @@ class BleNetworkNotifier extends StateNotifier<BleNetworkState> {
         peerId,
         ourHash: ours.hash,
         theirHash: peer.hash,
+        request: request,
       )) {
         return;
       }
       debugPrint('🗄️ [SYNC] Older-history catch-up round with $peerId');
-      _discovery.requestHashRepair(myId, peerId, theirTail);
     }());
   }
 
